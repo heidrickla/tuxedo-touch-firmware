@@ -563,7 +563,7 @@ Those are indistinguishable from outside, and the log v4 writes to
 `/opt/tuxedo/configuration` cannot be read without the SSH it is trying to
 start.
 
-## v5: diagnostics on the SD card
+## v5/v6: diagnostics on the SD card
 
 The card can be pulled and read. v5 writes the same log to
 `/mnt/sd/tuxedo-boot.log`, retrying for ten seconds in case the card is not
@@ -587,7 +587,19 @@ and after:
 The block is tagged `IMAGE TAG v5` so the log identifies which image produced
 it. If the tag is absent from the card, the image did not apply.
 
-Image: 125,397,712 bytes, checksum `0xaeac`.
+v6 also records `md5sum /opt/webserver/Barracuda`, which answers a larger
+question in the same pass: **whether any patched image has ever been applied.**
+
+| md5 | meaning |
+|---|---|
+| `324209e1fdfe2d61925a1bb4a7115452` | stock Barracuda; no image of ours has ever applied |
+| `197b7e41daeedd849d6353bd0fb26059` | patched; the lockout fix is live |
+
+That matters because the lockout patch was never confirmed either. If the log
+shows the stock hash, every flash so far has been a no-op and the problem is
+the flasher skipping the image, not the `rc.local` block.
+
+Image: 125,397,712 bytes, checksum `0x78e8`.
 
 ### Procedure
 
