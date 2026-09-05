@@ -551,3 +551,49 @@ around should never be able to reach the host's own `/`. The chroot scripts now
 in the scratchpad build under `/work/<name>` with an explicitly set variable,
 but the real protection would be to run them in a container or a throwaway
 distro rather than the one holding the toolchain.
+
+---
+
+## v4 flashed, port 22 still refused
+
+Web server, 80, 443 and 6280 all up. So `rcS` reached `startup`, which means
+`rc.local` ran. Dropbear is therefore either absent or exited.
+
+Those are indistinguishable from outside, and the log v4 writes to
+`/opt/tuxedo/configuration` cannot be read without the SSH it is trying to
+start.
+
+## v5: diagnostics on the SD card
+
+The card can be pulled and read. v5 writes the same log to
+`/mnt/sd/tuxedo-boot.log`, retrying for ten seconds in case the card is not
+mounted when `rc.local` runs.
+
+It records, before starting dropbear:
+
+    ls -l /usr/sbin/dropbear /usr/sbin/dropbearkey
+    ls -l /etc/dropbear/
+    ls -l /root/.ssh/authorized_keys
+    cat /etc/passwd
+    DROPBEAR_ARGS
+    grep -E ' / |mtdblock|/mnt/sd' /proc/mounts
+
+and after:
+
+    dropbear's own stderr (via -E)
+    its exit status
+    netstat -ltn | grep ':22 '
+
+The block is tagged `IMAGE TAG v5` so the log identifies which image produced
+it. If the tag is absent from the card, the image did not apply.
+
+Image: 125,397,712 bytes, checksum `0xaeac`.
+
+### Procedure
+
+1. Flash.
+2. Power down, pull the card, read `tuxedo-boot.log`.
+
+That answers, in one pass: whether the image applied, whether the binary is
+present and executable, whether the keys and account are right, and what
+dropbear said before exiting.
