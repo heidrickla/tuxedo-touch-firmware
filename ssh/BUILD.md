@@ -456,3 +456,103 @@ Three deliberate properties:
 
 If `/` turns out to be mounted read-only, `put --remount` issues
 `mount -o remount,rw /` first rather than assuming either way.
+
+---
+
+## Third revision: the log that would have told us nothing
+
+An adversarial review of the `rc.local` block, run before flashing rather than
+after, found three real defects. Two of them would have made a fourth failed
+attempt as uninformative as the first three.
+
+### 1. Dropbear logs to syslog, and no syslogd runs here [CONFIRMED]
+
+`opts.usingsyslog` defaults to 1, and with `DEBUG_TRACE` off dropbear writes
+**nothing** to stderr. `syslog` appears in `rc.conf`'s `all_services` but not in
+`cfg_services`, so no syslogd is ever started on this panel.
+
+The log would therefore have contained only the block's own `echo` lines, on
+every boot, **identical whether dropbear started or died**. Every message that
+would actually diagnose a failure — `Failure reading random device
+/dev/urandom`, `No listening ports available`, host key load errors — goes to
+syslog and vanishes. All of them are emitted *before* daemonising, so they are
+reachable.
+
+**Fix:** `DROPBEAR_ARGS="-p 22 -E"`. `-E` sends logging to stderr, which is
+where the block already redirects.
+
+### 2. The log target gated the daemon [CONFIRMED, was BLOCKS_SSH]
+
+`/usr/sbin/dropbear $ARGS >> $DBLOG 2>&1 || true` makes the **log redirect** a
+precondition for running dropbear. When a redirection cannot be opened, the
+shell never executes the command, and `|| true` erases the evidence. If
+`/opt/tuxedo/configuration` were unwritable — full, remounted read-only after
+ECC errors, or failing to mount — SSH would silently not start.
+
+The block's own comment claimed "fail-open throughout". This was the one line
+where the fail-open ran backwards: the failure of the logging prevented the
+thing being logged.
+
+**Fix:** resolve the target once, with fallbacks, before anything uses it:
+
+```sh
+DBLOG=/opt/tuxedo/configuration/dropbear.log
+: >> $DBLOG 2>/dev/null || DBLOG=/tmp/dropbear.log
+: >> $DBLOG 2>/dev/null || DBLOG=/dev/null
+```
+
+### 3. `$?` after `|| true` always reads 0 [CONFIRMED]
+
+The one line meant to report whether dropbear started would have said
+`returned 0` even when it exited immediately. Capture the status before the
+`||` consumes it. Dropping `|| true` there is safe: there is no `set -e`
+anywhere under `/etc/rc.d`, and `rcS` ignores `rc.local`'s exit status.
+
+### Also fixed
+
+With `-E` the daemon holds the log fd open for its lifetime, so the first write
+now truncates (`>` not `>>`) and the log holds exactly the most recent boot.
+And the block is guarded on `$1 = start`, because `inittab` runs
+`rcS stop` at runlevel 0 and the block was also executing at shutdown, after
+`umount -a -r`.
+
+### What the review confirmed was already fine
+
+No CRLF anywhere on the boot path, which is the classic failure for a repo
+living on a Windows host. No `set -e` or `set -u` under `/etc/rc.d`, so no line
+can abort `rc.local`. No construct in the block can hang, which matters because
+`rc.local` runs *before* the alarm application starts and a hang would mean the
+panel never comes up. Account and key permissions pass dropbear's strict
+checks. The binary is static, so glibc 2.5 is irrelevant.
+
+---
+
+## A self-inflicted detour worth recording
+
+Partway through, one of the chroot test harnesses overwrote the **build
+distro's own system binaries** with the panel's ARM ones. `ls`, `df`, `head`,
+`dpkg` and `apt` all became ARM binaries; in-place repair was impossible
+because the package manager itself was among the casualties.
+
+Nothing outside the build environment was affected: the panel, the SD card and
+this repository were untouched.
+
+Recovery, in order:
+
+1. **Salvage first.** `cat` still worked, so the built artifacts were copied out
+   through `/mnt/c` using only shell redirection. The rescued `dropbear`
+   hashes to `62d3bfe6906d91be…2460b837`, identical to the verified build, so
+   no recompilation was needed.
+2. Unregister and reinstall the distro.
+3. Reinstall the toolchain. Two traps here: WSL resolved the Debian mirrors to
+   IPv6 only with no IPv6 route, so `apt` failed while DNS looked healthy; and
+   `qemu-user-static` does not register its binfmt handler without
+   `binfmt-support` or systemd, neither of which runs in WSL, so chrooted ARM
+   binaries report `cannot execute binary file` until it is registered by hand.
+4. Re-extract from the stock image and rebuild.
+
+**The lesson for the harnesses:** a test that copies a foreign root filesystem
+around should never be able to reach the host's own `/`. The chroot scripts now
+in the scratchpad build under `/work/<name>` with an explicitly set variable,
+but the real protection would be to run them in a container or a throwaway
+distro rather than the one holding the toolchain.
