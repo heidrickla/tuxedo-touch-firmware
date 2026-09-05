@@ -525,3 +525,67 @@ are a separate job from the binary patch.
 - **Nothing here has been flashed yet.** Every claim above is about files on
   disk, verified against each other. The first real flash is still the first
   real test.
+
+---
+
+## 10. FLASHED — first successful run, 2026-09-05
+
+The first attempt was rejected: `File app2.hdr Checksum Error`, cleanly, with
+nothing written and a normal boot offered. Cause and fix are in §1 above. The
+second attempt, with the corrected checksum `0x6836`, **succeeded**.
+
+### Post-flash verification
+
+Done without credentials and without a single login attempt:
+
+| Check | Result |
+|---|---|
+| Reachable, ports 80 / 443 / 6280 | all listening |
+| `GET /login2.html` | 200, **15,258 bytes** — matches that entry's uncompressed size in the embedded web archive exactly |
+| `GET /eventhandler.html` | 200, 6,311 bytes |
+| `GET /tuxedoapi.html` | 302 to `/authenticated/index.html?url=tuxedoapi.html` — auth gate intact |
+| `GET /SimpleDebugger.interface/G.` | holds the connection open until the client's read timeout, which is correct for a long-lived multipart stream |
+
+The panel boots, serves its real application, enforces authentication, and the
+push stream is alive.
+
+### The clock resets
+
+`Date:` came back as **23 Feb 2014**. The flash cleared
+`/opt/tuxedo/configuration/datetime`, and the panel falls back to a built-in
+date until it re-syncs. Anything reasoning about panel timestamps must
+tolerate a wildly wrong clock immediately after a flash.
+
+This makes one design choice in the lockout patch load-bearing rather than
+theoretical. The 300-second lock computes elapsed time with **unsigned**
+arithmetic and treats `time() == 0` as "do not arm". A backward clock jump
+underflows to a huge elapsed value and unlocks *early*. Both are deliberate
+fail-open, so a wrong clock can never hold a lock open longer than intended.
+On a panel that has just reset its clock, that matters.
+
+### What is NOT verified
+
+**That the lockout patch is actually active.** The flash completed and the
+panel is healthy; the new behaviour has not been observed. The only way to
+observe it is to fail six logins, which is safe if the patch is live and
+disables every web account if it is not. That test needs someone at the
+touchscreen who can recover, and it should not be run on the strength of
+static analysis alone — this document already records two occasions today
+where static analysis of this firmware was confidently wrong.
+
+Until it is observed, **treat the panel as stock**: never retry a rejected
+credential automatically.
+
+### Pre-flight, so the wasted trip does not repeat
+
+`tuxedo_hdr.py preflight` replicates every check the validator at `0x800074c0`
+performs and diffs each header field against a stock template. Run it against
+the files **on the card**, not the staging directory:
+
+```bash
+python tuxedo_hdr.py preflight G:\app2.hdr --template-dir stock/
+```
+
+For the image that flashed successfully it reports three header bytes changed
+from the vendor's (one in the size field, two in the checksum), every other
+checked field identical, and `WOULD PASS`.

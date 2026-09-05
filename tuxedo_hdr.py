@@ -150,11 +150,67 @@ def build(payload, out, template):
     return verify(out)
 
 
+# Every check ProgCV's validator at 0x800074c0 performs, in order. Anything
+# that fails reports the same generic "Checksum Error" on the touchscreen, so
+# checking them here is the only way to know WHICH one would trip.
+CHECKS = [
+    ("magic",        0x00, 7,  "7-char strcmp against appl000 / boot000 / prog000"),
+    ("flashaddress", 0x0c, 4,  "mmc_header.flashaddress != flashAddress (0x800077b8)"),
+    ("loadaddr",     0x10, 4,  "carried through; not observed to be compared"),
+    ("filename",     0x30, 13, "its EXTENSION is strcmp'd against the expected component (0x80007904)"),
+    ("type",         0x4e, 4,  "component type tag"),
+    ("platform",     0x52, 14, "platform tag"),
+]
+
+
+def preflight(path, template):
+    """Full pre-flash gate: every ProgCV check, plus a field-by-field diff
+    against a known-good stock header.
+
+    Run this on the files ON THE CARD. A staged copy that verifies proves
+    nothing about what actually got written."""
+    ok = True
+    hdr = open(path, "rb").read(HDR_SIZE)
+    ref = open(template, "rb").read(HDR_SIZE)
+    h = parse(hdr)
+    print(f"{os.path.basename(path)}")
+
+    for name, off, ln, why in CHECKS:
+        same = hdr[off:off + ln] == ref[off:off + ln]
+        print(f"  {'ok ' if same else 'ALTERED'} {name:13} {why}")
+        if not same:
+            ok = False
+            print(f"       stock {ref[off:off+ln].hex(' ')}")
+            print(f"       ours  {hdr[off:off+ln].hex(' ')}")
+
+    actual = os.path.getsize(path)
+    size_ok = actual == HDR_SIZE + h["size"]
+    print(f"  {'ok ' if size_ok else 'BAD'} size          header says {h['size']}, "
+          f"file is {actual} (= header + {actual - HDR_SIZE})")
+    ok &= size_ok
+
+    got = checksum(path, HDR_SIZE, h["size"])
+    ck_ok = got == h["checksum"]
+    print(f"  {'ok ' if ck_ok else 'BAD'} checksum      header 0x{h['checksum']:04x}, "
+          f"computed 0x{got:04x}")
+    ok &= ck_ok
+
+    changed = [i for i in range(HDR_SIZE) if hdr[i] != ref[i]]
+    print(f"  {len(changed)} header byte(s) differ from the template: "
+          f"{[hex(i) for i in changed] if changed else 'none'}")
+    print(f"  ==> {'WOULD PASS' if ok else 'WOULD BE REJECTED'}")
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("show"); p.add_argument("files", nargs="+")
     p = sub.add_parser("verify"); p.add_argument("files", nargs="+")
+    p = sub.add_parser("preflight")
+    p.add_argument("files", nargs="+")
+    p.add_argument("--template-dir", required=True,
+                   help="directory of stock .hdr files to compare against")
     p = sub.add_parser("build")
     p.add_argument("payload"); p.add_argument("out")
     p.add_argument("--template", required=True,
@@ -166,6 +222,11 @@ def main():
         for f in a.files:
             show(f)
         return 0
+    if a.cmd == "preflight":
+        res = [preflight(f, os.path.join(a.template_dir, os.path.basename(f)))
+               for f in a.files]
+        print("ALL FILES WOULD PASS" if all(res) else "*** AT LEAST ONE WOULD BE REJECTED ***")
+        return 0 if all(res) else 1
     if a.cmd == "verify":
         print("verifying as ProgCV does:")
         return 0 if all([verify(f) for f in a.files]) else 1
