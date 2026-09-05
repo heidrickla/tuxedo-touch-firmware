@@ -91,6 +91,26 @@ stricter one. In practice that means never retrying a rejected credential
 automatically. `TUXEDO-LOCKOUT-PATCH.md` has the byte-level detail and the
 recovery procedure.
 
+**A client can, however, tell the two situations apart after the fact.** Every
+login outcome is HTTP 200, because the server forwards internally rather than
+redirecting, so the status code distinguishes nothing. The body does:
+
+| Body contains | Meaning | Recovery |
+|---|---|---|
+| `reactivate an account` | stock 3-strike lockout has disabled every account | touchscreen only |
+| `create an user account`, without `reactivate` | no web accounts configured | create one |
+| neither | ordinary authentication failure | on a patched panel this also covers the 300-second lock |
+
+The rule is correct on both builds without detecting which is running, because
+the patched lock lives in memory and never writes the account file. The login
+page itself is served normally in every case, so a locked-out panel looks
+reachable rather than down. Traced in the appendix to `TUXEDO-AUDIT-BUGS.md`.
+
+An oddity found while tracing it: the panel contains a message that names the
+cause exactly, "deactivated due to maximum number of failed logins attempted",
+and it is **unreachable code**. Users get a vaguer variant instead, which is
+part of why this state is hard to diagnose from a browser.
+
 ## Relationship to the Home Assistant integration
 
 `ha-tuxedo-touch` is the consumer, not part of this repo. Its own

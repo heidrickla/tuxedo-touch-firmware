@@ -9,6 +9,31 @@
 Analysis of `script/consoleRequest.js` and `consolekeypad.html` from the panel's
 own web application. All **[CONFIRMED]** by reading the shipped code.
 
+## Where these files actually live, and why it changes the effort estimate
+
+They are **not loose files on the filesystem**. `/opt/webserver/` contains one
+thing, the `Barracuda` binary. The entire web application is a **776-entry ZIP
+archive embedded inside that binary**, occupying file offsets
+`0x8a948`-`0x4f0113` (about 4.6 MB), which is how the Barracuda App Server's
+ZIP filesystem works.
+
+Consequences for anyone planning to fix these bugs:
+
+* Editing a page is **ZIP surgery inside an ELF**, not a text edit.
+* The archive sits in the middle of the file, so it **cannot change size**.
+  Everything after it would shift and the ELF would break.
+* Therefore each modified entry must recompress to **exactly** its current
+  compressed size. `script/consoleRequest.js` is 17,130 bytes raw and 3,625
+  deflated. The practical technique is to make the edit, recompress, then pad
+  the source with spaces inside a comment and binary-search the padding length
+  until the deflated size lands exactly on the original.
+* Both the local file header and the central directory record the sizes, so
+  both must agree.
+
+This is all doable, and the required edits are small. It is simply a different
+and larger job than "edit a JavaScript file", which is what the fix list below
+implies if read without this section.
+
 The owner reports the virtual console is unreliable and that "the timeout was
 problematic". There is a specific cause, and several contributing defects.
 
@@ -38,15 +63,32 @@ problematic" exactly.
 
 ### Why it was probably disabled rather than fixed
 
-The commented-out lines reference **`SessionPage.htm`**. The file that actually
-ships is **`SessionPage.html`**. The active mobile code uses `.html`.
+The commented-out line, verified in the shipped archive, is
+`script/consoleRequest.js` line 105:
 
-So the desktop redirect pointed at a filename that does not exist. The likely
-history is that it 404'd, and someone commented it out instead of correcting the
-extension.
+```javascript
+//document.getElementById("framConsole").src="/SessionPage.htm";
+```
 
-**Fix:** re-enable the redirect and correct the filename to `SessionPage.html`.
-One character and one comment marker.
+It references **`SessionPage.htm`**. **CORRECTION to an earlier draft of this
+file:** I previously wrote that the file which actually ships is
+`SessionPage.html`. That is wrong. There is no `SessionPage.htm` *or*
+`SessionPage.html` anywhere in the web archive. The session-expiry page that
+does ship is **`sessiontimeout.html`**, a 299-byte page whose entire body is
+the heading "Your Session Has Expired".
+
+So the redirect pointed at a filename that has never existed under either
+extension. The likely history is that it 404'd and someone commented it out
+instead of correcting the name.
+
+**Fix:** re-enable the line and point it at the page that exists:
+
+```javascript
+document.getElementById("framConsole").src="/sessiontimeout.html";
+```
+
+Net change is +2 characters of source, which matters because of where the file
+lives (see below).
 
 ---
 

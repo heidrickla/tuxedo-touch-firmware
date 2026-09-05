@@ -605,3 +605,115 @@ Ranked by what actually touches attacker-influenced input on Lewis's LAN.
 ---
 
 **Z-Wave.** Out of scope per the owner, and nothing here depends on it. For completeness only: Types 103-153 prefixed `SERV_ZW_` are the Z-Wave command band and were ignored throughout; the code-504 registration broadcast's last field carries a `zwaveControllerStatus` value; and `/BookmarksHandler.interface` (`initAndInstallBookmarksServlet` @0x0001d0d8) is a second, structurally identical EventHandler push channel with its own interface `BookmarksServer2ClientIntf` — unrelated to security status, but a live second push endpoint if it ever matters.
+---
+
+## APPENDIX: what the web server actually returns on a failed login
+
+Traced 2026-09-05 to answer a concrete question: can an HTTP client tell a
+locked-out account from a wrong password? Yes, and by an unexpected route.
+
+### Every outcome is HTTP 200
+
+`LoginResp_service` (`0x133dc`) ends in `HttpResponse_incOrForward`
+(`0x6e5c4`), an **internal forward**, not a redirect. The status code is
+identical in all cases. Only the body differs. Anything keying on the status
+code will see no difference at all.
+
+The two destinations are `/login.shtml` and `/Invalid.html`. Neither is a file
+in the embedded web archive; both are Barracuda compiled server pages living
+as code (`login_shtml076EF::service`, `Invalid_html076EF::service`).
+
+### The selection ignores the attempt and looks at stored account state
+
+At `0x134b0` it calls `checkTotalUserAccount(int*,int*,int*)` (`0x2c3f8`),
+which reads `/opt/tuxedo/configuration/webuseraccountsenc.json` and counts,
+across the five WEBUSERS entries:
+
+- entries with a non-empty `userName` — total configured
+- entries with `userName` **and** `status == 1` **and** `accountLocked == 0`
+  — usable
+
+Then, with the third out-parameter being dead (stored as literal `0` at
+`0x2c5f0`, so the `cmp r2,#1` at `0x134b8` never fires):
+
+| usable | forward to |
+|---|---|
+| `> 0` | `/login.shtml` — an ordinary failed login |
+| `== 0` | `/Invalid.html` — an account-state problem |
+
+A wrong password does not change either count. The stock 3-strike lockout
+does: it writes `status = 0` into every entry, which drives usable to 0.
+
+### The credential check itself cannot distinguish anything
+
+Inside `readUserNamePasswordFromJSON` (`0x14bf8`) all three rejections target
+the same address, `0x14e78`, which is the loop-continue:
+
+```
+0x14dc4  ble #0x14e78    ; u8UserId <= 0
+0x14dec  bne #0x14e78    ; status != 1        <- the locked-out account
+0x14e28  bne #0x14e78    ; userName mismatch
+```
+
+A disabled account is skipped exactly as if it did not exist. The observable
+difference comes entirely from the separate `checkTotalUserAccount` call.
+
+### The message that would have explained it is dead code
+
+`Invalid_html076EF::service` (`0x38604`) re-counts the same two things and
+emits one of three warnings through `httpWriteSection`:
+
+| selector | string |
+|---|---|
+| 1 | "…deactivated due to **maximum number of failed logins attempted**. Please go to your Tuxedo's login account setup to reactivate user accounts." |
+| 2 | "…deactivated. Go to your Tuxedo's login setup to **create an user account**." |
+| 3 | "…deactivated. Go to your Tuxedo's login setup to create an user account **or reactivate an account**." |
+
+**Selector 1 is unreachable.** Every write to that register in the function
+sets it to 2 (`0x38688`, `0x38824`), 3 (`0x38844`), or 0 (`0x38874`); the
+remaining candidate, `movne r4, r6` at `0x386f8`, is reached only when `r6`
+is provably 0, because `subs r6, r0, #0` at `0x3869c` branches away otherwise.
+
+So the one message that names the actual cause never appears. A user locked
+out by three failed logins is shown selector 3 instead, which mentions
+reactivation but not why it is needed. That is a genuine usability defect on
+top of the lockout itself, and it is the reason the condition is so hard to
+diagnose from the browser.
+
+### The login PAGE is served normally regardless of account state
+
+Asked because a client's reconnect path may branch differently on a connection
+error than on an auth error, and it matters which one a dead-account panel
+produces.
+
+`login_shtml076EF::service` (`0x3835c`) **never opens
+`webuseraccountsenc.json` and never reads `status` or `accountLocked`.** It
+writes its sections, checks for the `Random` / `RandomID` cookies, and emits
+
+```
+var login="%s";var myID="%s";var timeOut=%d;var server="%s";
+```
+
+A `GET` of the login page therefore returns a normal HTTP 200 page whether the
+accounts are healthy, all disabled, or absent. A locked-out panel is still
+fully reachable and still serves its login form. It does not look like a
+network failure, and a client should expect the auth branch, not the
+connection-error branch.
+
+That page also carries its own inline banner,
+`<span style="color:red;">Invalid UserName/Password</span>` (`0x38480`), which
+is a third distinguishable body separate from the two `Invalid.html` variants.
+
+### Practical detection rule
+
+| Body contains | Meaning | Recovery |
+|---|---|---|
+| `reactivate an account` | stock 3-strike permanent lockout | touchscreen: login account setup, Enable All, Apply |
+| `create an user account` without `reactivate` | no web accounts configured | create one on the touchscreen |
+| neither | ordinary auth failure | check credentials; on a patched panel this also covers the 300-second lock, so retrying after five minutes is valid |
+
+This rule is correct on **both** the stock and patched builds without needing
+to detect which is running, because the patched 300-second lock lives entirely
+in `LoginTracker_validate` and the in-memory node and never writes `status` or
+`accountLocked`. Usable stays above zero, so a rate-limited attempt presents
+as an ordinary failure.

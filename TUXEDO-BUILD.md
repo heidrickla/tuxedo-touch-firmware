@@ -399,6 +399,29 @@ reflash, which is why the `/etc/hosts` block tells you to keep a copy.
 
 ---
 
+## 8b. The web application is a ZIP inside the binary
+
+Worth knowing before planning any web-page change. `/opt/webserver/` holds only
+the `Barracuda` binary. The whole web UI is a **776-entry ZIP embedded inside
+it**, at file offsets `0x8a948`-`0x4f0113`, roughly 4.6 MB. That is the
+Barracuda App Server's ZIP filesystem.
+
+Because the archive sits in the middle of the ELF rather than appended to it,
+**it cannot change size**: anything after it would shift. A modified entry must
+recompress to exactly its current compressed size, and both the local file
+header and the central directory must be updated to agree.
+
+The workable technique is: edit the source, deflate it, then pad the source
+with spaces inside a comment and binary-search the padding length until the
+compressed size lands exactly on the original. `script/consoleRequest.js`, for
+example, is 17,130 bytes raw and 3,625 deflated.
+
+This is why the virtual-console JavaScript fixes are not in the current image.
+They are small edits in a container that makes them fiddly, not risky, and they
+are a separate job from the binary patch.
+
+---
+
 ## 9. Open items
 
 - **The 16-bit header field at `0x14`** is carried through unchanged. It is not
