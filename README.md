@@ -51,6 +51,7 @@ edited out.
 | `TUXEDO-FIX-STATUS.md` | Which bugs are actually fixed and where: mostly client-side, one in firmware |
 | `TUXEDO-VIRTUAL-CONSOLE-BUGS.md` | Why the virtual console is unreliable |
 | `TUXEDO-ZONE-PROGRAMMING.md` | Zone types and the descriptor vocabulary |
+| `TUXEDO-NTP-PROPOSAL.md` | Setting the clock from NTP: the vendor already built it and left it switched off |
 
 ## The tools
 
@@ -63,6 +64,7 @@ edited out.
 | `tuxedo_wake_experiment.py` | Repeated quiet/active cycles, for replication |
 | `fw_extract.py` | Carves filesystems out of header-wrapped firmware |
 | `tuxedo_jffs2.py`, `tuxedo_jffs2_extract.py` | JFFS2 handling for the root filesystem |
+| `tuxedo_hdr.py` | Reads, verifies and rebuilds the vendor firmware header, including the checksum the flasher enforces |
 
 Credentials are never hardcoded. Every tool takes `--password`, or reads
 `TUXEDO_PASSWORD`, or prompts. Note that on this panel **the web password is
