@@ -842,3 +842,39 @@ kernel load in `bootcmd_nand` reads from `0x220000`, which is exactly
 SD diagnostics ever prove insufficient, a serial adapter would show the U-Boot
 and kernel messages directly, including whether `ProgCV` runs at all. That is
 the channel that would have answered the last three questions immediately.
+
+---
+
+## 12. Boot arguments, from seconboot
+
+`seconboot` is U-Boot 2009.01 (built 17 Jun 2015). Its environment:
+
+```
+bootargs=noinitrd console=ttymxc0,115200 root=/dev/mtdblock16 rw rootfstype=jffs2
+bootcmd=run bootcmd_nand
+bootcmd_nand=run bootargs;nand read 0x80800000 0x220000 0x300000; bootm
+bootdelay=1
+uboot_addr=0xa0000000
+```
+
+**The root filesystem is mounted `rw`** by the kernel command line, so
+`tuxedo_remote.py put` needs no remount and `rc.local` can create device nodes.
+
+**Root is `/dev/mtdblock16`, not `mtdblock8`.** An earlier note recorded
+`mtdblock8`; the boot arguments say otherwise. Do not rely on the earlier
+figure.
+
+**The `flashaddress` field at header offset `0x0c` is the NAND offset.**
+`bootcmd_nand` reads the kernel from `0x220000`, which is `app1.hdr`'s `0x0c`
+value exactly. The others follow: `app2` `0xb20000`, `app3` `0xbf20000`,
+`seconboot` `0x120000`. That is what the check at `0x800077b8` compares.
+
+**There is a serial console** on `ttymxc0` at 115200, `bootdelay=1`. It would
+show the U-Boot and kernel messages directly, including whether `ProgCV` runs.
+
+## Timestamps on the SD card mean nothing
+
+`camrecord/` and `metadata/` on the card carry a fixed constant date, not the
+time they were written. Do not infer from them when the panel last touched the
+card, or whether it booted with the card present. [Corrected by the owner after
+this document claimed otherwise.]
