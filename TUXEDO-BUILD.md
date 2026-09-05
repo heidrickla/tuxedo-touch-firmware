@@ -807,3 +807,38 @@ has spent considerable effort finding holes in. `TUXEDO-AUDIT-BUGS.md` §(b)
 lists nine findings on the interface that already exists. A second listener
 should at minimum be bound to the LAN and require a credential, and it should
 be a deliberate decision rather than a convenience.
+
+---
+
+## 12. Boot arguments, from seconboot
+
+`seconboot` is U-Boot 2009.01 (built 17 Jun 2015). Its environment:
+
+```
+bootargs=noinitrd console=ttymxc0,115200 root=/dev/mtdblock16 rw rootfstype=jffs2
+bootcmd=run bootcmd_nand
+bootcmd_nand=run bootargs;nand read 0x80800000 0x220000 0x300000; bootm
+bootdelay=1
+uboot_addr=0xa0000000
+```
+
+Three things follow.
+
+**The root filesystem is mounted `rw`.** Not inferred: it is in the kernel
+command line. So `tuxedo_remote.py put` can write to `/` without remounting,
+and `rc.local` can create device nodes.
+
+**Root is `/dev/mtdblock16`, not `mtdblock8`.** An earlier note in this project
+recorded `mtdblock8`; the boot arguments say otherwise. The earlier figure
+should not be relied on.
+
+**The `flashaddress` field at header offset `0x0c` is the NAND offset.** The
+kernel load in `bootcmd_nand` reads from `0x220000`, which is exactly
+`app1.hdr`'s `0x0c` value. The others follow: `app2` `0xb20000`, `app3`
+`0xbf20000`, `seconboot` `0x120000`. That also explains the check at
+`0x800077b8` comparing the header field against the target address.
+
+**There is a serial console** on `ttymxc0` at 115200, and `bootdelay=1`. If the
+SD diagnostics ever prove insufficient, a serial adapter would show the U-Boot
+and kernel messages directly, including whether `ProgCV` runs at all. That is
+the channel that would have answered the last three questions immediately.
