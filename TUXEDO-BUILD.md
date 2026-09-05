@@ -751,3 +751,19 @@ Two things make it more attractive than it sounds:
   DNS server.
 - Nothing here has been attempted. The mechanism is read from the binary and
   from live port scanning; no update has been served to this panel.
+
+### Why not an upload page on the panel instead
+
+Asked, and the answer is no. **The web server has no file-upload capability at
+all — not disabled, absent.**
+
+Searched the whole binary: no `multipart/form-data`, no `Content-Disposition`,
+no `filename=`, no multipart request parser. The only `upload` string is
+`uploadDevicesToOtherTuxedos`, which is Z-Wave panel-to-panel sync. The only
+`boundary=` is the push stream's own `multipart/x-mixed-replace` **response**
+header, not request parsing.
+
+Adding one would mean writing a multipart parser and a handler into
+`Barracuda`, plus adding a page to a ZIP embedded mid-ELF that cannot change
+size (§8b). That is strictly more work than serving the download the panel
+already knows how to perform.
