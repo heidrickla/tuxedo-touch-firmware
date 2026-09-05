@@ -240,3 +240,91 @@ will be available at boot. Interactive shells should work, not merely
 
 That is a static check, not an observation of the running panel, so it stays
 `[CONFIRMED statically]` until someone actually opens a shell.
+
+---
+
+## The first SSH flash did not work, and why
+
+Port 22 was refused after flashing. The panel was otherwise healthy: 80, 443
+and 6280 all listening.
+
+**Cause, and it is the same mistake as the `-s` flag.** I put dropbear in
+`rc.conf`'s `all_services` and treated "registered in the service list" as
+meaning it starts. It is not the list the boot uses. `/etc/rc.d/rcS` line 14:
+
+```sh
+services=$cfg_services
+```
+
+and
+
+```sh
+cfg_services="mount-proc-sys  udev hostname  depmod modules filesystems"
+```
+
+Six entries. No dropbear, no `network`, no `settime`, no `inetd`. **`all_services`
+is a reference list that nothing iterates.** That also explains why the vendor
+removed the `boa`, `inetd`, `dropbear` and `sshd` binaries but kept the scripts:
+none of them were ever going to run.
+
+### The actual boot sequence
+
+```
+/etc/rc.d/rcS
+  1. loop over cfg_services            (six entries, as above)
+  2. source ifcfgeth.conf
+  3. /etc/rc.d/init.d/network start    <- interfaces come up here
+  4. /etc/rc.d/rc.local $mode          <- runs if present and executable
+  5. /etc/rc.d/init.d/startup          <- launches /supervis and /tuxedo
+```
+
+`startup` is not a service either; `rcS` calls it directly at the end.
+
+### The fix
+
+`rc.local` is the right hook and the vendor's own comment says so: *"This
+script will be executed after all the other init scripts. You can put your own
+initialization stuff in here."* It runs **after** networking and **before** the
+application, which is exactly the window wanted, and appending to it changes no
+vendor logic.
+
+The added block is fail-open throughout: every branch ends `|| true`, so a
+missing binary, a missing key or a refused bind costs remote access and cannot
+stop the panel booting.
+
+### Tested through the real boot path this time
+
+Rather than starting dropbear by hand, `rc.local` is now executed the way `rcS`
+executes it — through the panel's own `/bin/sh`, which is ARM `bash`, under
+`qemu-user` in a chroot of the patched rootfs:
+
+```
+chroot $T /usr/bin/qemu-arm-static /bin/bash -c \
+    '. /etc/rc.d/rc.conf; /etc/rc.d/rc.local start'
+```
+
+Result:
+
+```
+LISTEN 0 1000 0.0.0.0:2222   users:(("dropbear",pid=228,fd=3))
+uid=0(root) gid=0(root)
+BOOT_PATH_WORKS
+```
+
+`rc.local` starts it, it binds, the key authenticates, a command runs. The one
+error in the log, `chown: 'user.user': invalid user`, is from the vendor's own
+pre-existing block and is harmless — there is no `user` account.
+
+### Image
+
+`app2.hdr`, size 125,397,712, checksum `0x1bfb`. Round trip clean, metadata
+identical across 3,493 entries, dropbear byte-identical after the round trip.
+
+### The lesson, which is now three for three on this firmware
+
+Twice in one build I read a mechanism partly and generalised: `-s` looked like
+a flag because it is documented as one, and `all_services` looked like the
+service list because of its name. Both times the fix was to run the thing
+rather than reason about it. **Anything that has to work at boot on this panel
+should be executed through `qemu-user` in a chroot first.** It costs two
+minutes and it has now caught two failures that would each have cost a flash.
