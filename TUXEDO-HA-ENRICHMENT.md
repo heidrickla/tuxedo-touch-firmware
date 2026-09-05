@@ -762,3 +762,50 @@ credentials.
 
 That is a materially smaller problem than it first looked, and worth stating
 plainly rather than leaving an open-port list to imply otherwise.
+
+
+---
+
+## POST-FLASH RETEST, 2026-09-05: command 12 still returns no zone data
+
+Retested on the patched firmware with a live authenticated session, sending
+command 12 ("all zone current status") and command 138 ("get system time") and
+watching the push stream for 60 seconds.
+
+**Neither produced a single reply frame.** 140 frames arrived in that window
+and not one carried command id 12 or 138. What did arrive:
+
+| Command | Frames | What it is |
+|---|---|---|
+| 55 / 80 | 28 each | camera and UPnP device discovery, unsolicited |
+| 21 | 3 | partition status, `Ready To Arm` |
+| 18 | 2 | home partition |
+| -1 | 12 | unsolicited status updates |
+| 504 | 1 | registration |
+
+So the earlier correction in this file stands, and now stands against live
+hardware rather than a reading of the binary: **command 12 exists in the
+symbol table but returns nothing on this firmware.** Finding a command id in
+the binary is evidence that the vendor implemented a handler, not that the
+handler answers.
+
+That leaves the scope limit unchanged. The push stream carries partition and
+alarm state. **Zone data is not obtainable from it, from the REST API, or from
+`/Config/`.** For zones, use the Envisalink.
+
+`tuxedo_zone_tables.json` in this repo still has the zone *type* numbering and
+the descriptor vocabulary, extracted statically from the binary. That is the
+part a field programmer needs to pre-populate its dropdowns, and it does not
+depend on the panel answering anything at runtime.
+
+### Also retested: `panelinfo.txt` is not served
+
+Nine candidate paths were tried with a valid session cookie
+(`/panelinfo.txt`, `/authenticated/...`, `/Config/...`, `/config/...`,
+`/tuxedo/...`, and variants). **All returned 404.**
+
+The claim recorded earlier — that the file containing the installer code in
+plaintext is one unauthenticated GET away — **does not reproduce**. It was
+marked `[CONFIRMED]` statically and `[UNTESTED]` live; the live test has now
+been done and it is negative. `CreatePnlInfoFlashTable()` does write that file,
+but nothing appears to publish it over HTTP.
