@@ -89,7 +89,7 @@ Binaries are in the session scratchpad under `/build/db2`, not committed here.
 
 ## Image built 2026-09-05, verified, not yet flashed
 
-`app2.hdr`, size 125,389,888, checksum `0x473b`. Preflight says WOULD PASS.
+`app2.hdr`, size 125,389,888, checksum `0xa12a`. Preflight says WOULD PASS.
 
 ### What changed from stock
 
@@ -101,7 +101,7 @@ Binaries are in the session scratchpad under `/build/db2`, not committed here.
     etc/shadow                           created: root:!:...   ('!' = no password login)
     etc/group                            created
     root/.ssh/authorized_keys            added, mode 600, dir 700
-    etc/rc.d/rc.conf                     DROPBEAR_ARGS="-s -g -w -p 22"
+    etc/rc.d/rc.conf                     DROPBEAR_ARGS="-p 22"
     etc/hosts                            OTA redirection block (previous build)
     opt/webserver/Barracuda              lockout + heap patch (previous build)
 
@@ -136,3 +136,84 @@ account has `!` in its password field. Public key only.
 
 The key is dedicated to this panel rather than reused, so it cannot widen the
 blast radius of a key that already unlocks anything else.
+
+
+---
+
+## Tested under emulation before flashing, and it caught a real bug
+
+`qemu-user-static` plus a `chroot` of the panel's own root filesystem runs the
+real ARM binary against the real `/etc/passwd`, the real host keys and the real
+`authorized_keys`. Doing this before flashing was worth the effort immediately.
+
+### The bug it caught
+
+The first build set `DROPBEAR_ARGS="-s -g -w -p 22"`, which looked like careful
+hardening. Dropbear refused to start:
+
+```
+Invalid option -s
+```
+
+**Compiling password authentication out removes the flags that disable it.**
+`-s`, `-g` and `-w` do not exist in a build with `DROPBEAR_SVR_PASSWORD_AUTH 0`.
+Flashing that image would have produced a panel with no SSH at all, and the only
+way to find out would have been to flash it.
+
+Corrected to `DROPBEAR_ARGS="-p 22"`. Password auth is already impossible: it is
+compiled out, and the sole account carries `!` in its password field.
+
+### What the test proves
+
+```
+Dropbear v2022.83                            <- ARM binary executes
+LISTEN 0 1000 0.0.0.0:2222                   <- accepts connections
+Pubkey auth succeeded for 'root' with ssh-ed25519 key SHA256:ORKzpmMC...
+uid=0(root) gid=0(root)                      <- shell runs
+Linux ... armv7l GNU/Linux
+```
+
+Host keys load. The `Failed loading ... dss_host_key` and `... ecdsa_host_key`
+lines are harmless: only RSA and ed25519 are shipped, and dropbear tries all
+four by default.
+
+### scp does NOT work, and does not need to
+
+```
+sh: line 1: /usr/libexec/sftp-server: No such file or directory
+```
+
+Modern OpenSSH `scp` speaks SFTP, and the panel has no `sftp-server`. Rather
+than ship another binary, use redirection, which needs nothing that is not
+already there:
+
+```bash
+# upload
+ssh -i ~/.ssh/tuxedo_ed25519 root@<panel> 'cat > /mnt/sd/app2.hdr' < app2.hdr
+# download
+ssh -i ~/.ssh/tuxedo_ed25519 root@<panel> 'cat /mnt/sd/app2.hdr' > app2.hdr
+```
+
+Both **verified byte-for-byte** through the emulated panel with a 200,000-byte
+random payload: uploaded, hashed on disk, downloaded, hashed again, all three
+matching.
+
+### Reproducing the test
+
+`test_ssh.sh` and `test_xfer.sh` in the session scratchpad. The shape is:
+
+```bash
+cp -a root_patched sshtest
+cp /usr/bin/qemu-arm-static sshtest/usr/bin/
+mount -t proc proc sshtest/proc; mount -t devpts devpts sshtest/dev/pts
+mknod sshtest/dev/ptmx c 5 2; mknod sshtest/dev/urandom c 1 9
+chroot sshtest /usr/bin/qemu-arm-static /usr/sbin/dropbear -F -E -p 2222
+ssh -i <key> -p 2222 root@127.0.0.1 'id'
+```
+
+Note the `/dev` nodes. The shipped image has only `console`, `initctl`, `mtab`,
+`null` and `tty`; the chroot needs `ptmx` and `urandom` created by hand. On the
+real panel those come from `mdev`/`udev` and the `devpts` mount at boot, which
+**remains the one unverified assumption** in this build. If it turns out to be
+wrong, authentication still succeeds and the `cat` transfers above still work;
+only interactive shells would fail.
