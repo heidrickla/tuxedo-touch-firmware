@@ -549,6 +549,25 @@ Done without credentials and without a single login attempt:
 The panel boots, serves its real application, enforces authentication, and the
 push stream is alive.
 
+### Authenticated verification
+
+With credentials, on the flashed firmware:
+
+| Check | Result |
+|---|---|
+| Login as a normal web user | **works** |
+| Push stream `/SimpleDebugger.interface/G.` | connects, assigns a cid, **19 frames in 30 s** |
+| Partition status on the stream | `cmd 21 part 1 ready/disarmed green Ready To Arm` |
+| REST `GetSecurityStatus` | `{"Status":"Ready To Arm","Color":"Green"}` — **not** `"Not available"` |
+| REST `GetSceneList` | `{"Status":"No scenes found"}` |
+
+That login is worth more than it looks. The Tier 2 patch redirects the
+`LoginTrackerIntf_Validate_func` stub at `0x13af0` into a hand-written routine
+in a code cave at `0x15074`, and **every** login validation now runs through
+it. A successful login proves that routine executes and returns "allow"
+correctly. A mis-encoded branch or a bad cave would have produced a failed
+login or a dead web server, not a working one.
+
 ### The clock resets
 
 `Date:` came back as **23 Feb 2014**. The flash cleared
@@ -565,8 +584,9 @@ On a panel that has just reset its clock, that matters.
 
 ### What is NOT verified
 
-**That the lockout patch is actually active.** The flash completed and the
-panel is healthy; the new behaviour has not been observed. The only way to
+**That the lockout patch's DENY path works.** The allow path is proven by
+every successful login. The deny path — five attempts then a 300-second lock —
+has not been observed. The only way to
 observe it is to fail six logins, which is safe if the patch is live and
 disables every web account if it is not. That test needs someone at the
 touchscreen who can recover, and it should not be run on the strength of
@@ -575,6 +595,15 @@ where static analysis of this firmware was confidently wrong.
 
 Until it is observed, **treat the panel as stock**: never retry a rejected
 credential automatically.
+
+There is also no safe remote way to tell the two builds apart. Both write the
+cosmetic `accountLocked` flag on the same schedule, so an early failed attempt
+looks identical on either. And `webuseraccountsenc.json` lives on `mtdblock17`,
+which **survives the flash**, so any failure count recorded before the flash
+survived with it — a test attempt may not even start from zero.
+
+The safe way to observe it is at the touchscreen, where account setup, Enable
+All, Apply recovers from a mistake in under a minute.
 
 ### Pre-flight, so the wasted trip does not repeat
 
