@@ -78,12 +78,55 @@ by evidence rather than argument.
     polling. He had made no such claim — he was describing a billing error and I
     read a contradiction into it. The misattribution was mine.
 
+**Wrong four more times on flash day, all in the same register:**
+
+13. **"The flasher does not verify a payload checksum."** It does. I read the
+    per-component loader, saw it set a flag literally named "checksum OK"
+    unconditionally after a successful read, and concluded no verification
+    existed. That flag means *the file was present and readable*; it is there
+    so the error reporter can choose between "not found" and "checksum error".
+    The real routine is elsewhere. **The panel refuted this**, cleanly,
+    rejecting the image with nothing written. Cost: one wasted trip to the
+    panel. The algorithm is now in `tuxedo_hdr.py` and reproduces all five
+    vendor files.
+14. **"Every login outcome is HTTP 200, so only the body differs."** Half true.
+    An ordinary failure is a 200 forward, but a locked-out panel returns 302
+    with a redirect. I had already resolved the symbol at `0x6e024` as
+    `HttpResponse_sendRedirect` earlier in the same session and wrote "forward"
+    anyway. Caught by verification agents before it reached anyone's code.
+15. **"The flash cleared `/opt/tuxedo/configuration/datetime`."** It cannot.
+    That directory is `mtdblock17` and survives a reflash — a fact I had
+    established myself four hours earlier and failed to apply. The panel simply
+    has no clock across a power cycle. Caught by me, unprompted, which is the
+    only one of the four that was.
+16. **"The console JavaScript is a text edit."** The web application is a
+    776-entry ZIP embedded mid-ELF inside the `Barracuda` binary, so it cannot
+    change size and every edit must recompress to its exact original byte
+    count. Caught before promising the work, not after.
+
 ## The pattern
 
 Reading the code and reading the device disagreed repeatedly, and **the device
 won every time.** Where no device test was possible, I reached for a mechanism
 before finishing the code that implements it — which is how items 10 and 11
 happened within an hour of each other.
+
+Items 13 to 15 are one failure mode with three faces, and a collaborator named
+it better than I did: **reading a mechanism partly, then describing it in the
+confident register the fully-resolved parts had earned.** Each time the
+instructions I actually read were reported correctly. What was wrong was the
+generalisation from them — who else writes that flag, what else that symbol
+resolves to, which partition that path is on.
+
+The rule that follows, and the standard now applied to the word CONFIRMED here:
+**it is not enough to have read the instructions at the site. Every branch into
+and out of the thing has to be traced.** Both flash-day misses would have
+failed that test. Neither would have survived asking "what else writes this?"
+
+A second rule, from item 13: **absence of an obvious access pattern is not
+absence of a check.** I searched for `ldrh [rX, #0x14]` and found nothing,
+because the header is `memcpy`'d to a scratch buffer first and read from there.
+The search was sound and the conclusion drawn from its emptiness was not.
 
 The one thing that consistently worked: name what would falsify a claim, then go
 and try it.
