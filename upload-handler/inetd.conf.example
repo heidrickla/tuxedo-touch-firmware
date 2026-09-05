@@ -1,0 +1,15 @@
+# Add this line to the panel's /etc/inetd.conf.
+#
+# Fields: service  socket-type  proto  wait/nowait[.max]  user  server  args
+#
+# nowait.2 caps concurrent connections at 2, which is the only rate limit this
+# service has. Keep it low.
+#
+# The port name must resolve, so either add it to /etc/services or use a
+# numeric port directly as shown.
+
+8081  stream  tcp  nowait.2  root  /usr/sbin/tuxedo-upload.sh  tuxedo-upload.sh
+
+# The telnet line already present in the shipped /etc/inetd.conf points at a
+# /usr/sbin/telnetd that does not exist in the image. Leave it removed unless
+# you deliberately want a telnet server on an alarm panel.
