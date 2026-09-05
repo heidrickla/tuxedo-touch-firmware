@@ -767,3 +767,45 @@ Adding one would mean writing a multipart parser and a handler into
 `Barracuda`, plus adding a page to a ZIP embedded mid-ELF that cannot change
 size (§8b). That is strictly more work than serving the download the panel
 already knows how to perform.
+
+### Adding an upload handler: yes, but not to Barracuda
+
+The vendor shipped **init scripts for `boa`, `inetd`, `dropbear`, `sshd`,
+`smb` and `dhcpd` and removed the binaries.** Each script starts with a guard
+like `if [ ! -x /usr/sbin/boa ]; then exit 0; fi`, so they run at every boot
+and silently do nothing. `boa` and `inetd` are already registered in
+`rc.conf`'s service list.
+
+The userland is better equipped than expected:
+
+| Present | Notes |
+|---|---|
+| `/bin/bash` | 757 KB, full bash; `/bin/sh` is a symlink to it |
+| `/bin/dd`, `cat`, `cp`, `mv`, `mkdir`, `chmod`, `df`, `netstat` | a usable coreutils set |
+| `/sbin/portmap` | the one service binary that was NOT removed |
+
+So the cheapest upload path is **`inetd` plus a shell script**, not a patch to
+the web server:
+
+1. Add a small static `inetd` to `/usr/sbin` — same ABI as §2's `ntpclient`:
+   ARM EABI, soft-float (`armel`), statically linked.
+2. Add one line to `/etc/inetd.conf`, which today contains only a `telnet`
+   entry for a `telnetd` that is also absent.
+3. Point it at a `bash` script that reads the connection on stdin and writes to
+   `/mnt/sd`. `inetd` does the listen, accept and fork; the script does not
+   have to speak HTTP at all if a raw stream is acceptable.
+
+That is one small binary and two text files, against a multipart parser and a
+URI handler hand-assembled into `Barracuda` plus a new page in a ZIP that
+cannot change size.
+
+**Two things to weigh before doing it.**
+
+It does not bootstrap itself. Installing the handler needs one SD flash, so
+this makes *future* updates easier at the cost of one more manual flash now.
+
+It adds a listening service to an alarm panel whose web stack this repository
+has spent considerable effort finding holes in. `TUXEDO-AUDIT-BUGS.md` §(b)
+lists nine findings on the interface that already exists. A second listener
+should at minimum be bound to the LAN and require a credential, and it should
+be a deliberate decision rather than a convenience.
