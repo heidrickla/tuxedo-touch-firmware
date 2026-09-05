@@ -1,0 +1,22 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # check_attribution needs full history
+
+      - name: install
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3 python3-numpy git
+
+      - name: run checks
+        run: bash ci/checks.sh

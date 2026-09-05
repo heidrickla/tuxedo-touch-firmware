@@ -75,6 +75,7 @@ def checksum(path, start=HDR_SIZE, length=None):
     if length is None:
         length = os.path.getsize(path) - start
     acc = 0
+    odd = b""
     with open(path, "rb") as f:
         f.seek(start)
         remaining = length
@@ -82,12 +83,19 @@ def checksum(path, start=HDR_SIZE, length=None):
             buf = f.read(min(remaining, CHUNK))
             if not buf:
                 break
-            even = buf[: len(buf) & ~1]
-            if np is not None:
-                acc += int(np.frombuffer(even, dtype=">u2").sum(dtype=np.uint64))
-            else:
-                acc += sum(struct.unpack(f">{len(even)//2}H", even))
             remaining -= len(buf)
+            if odd:                     # pair a carried byte with this chunk
+                buf = odd + buf
+                odd = b""
+            if len(buf) & 1:            # hold the tail for the next chunk
+                odd, buf = buf[-1:], buf[:-1]
+            if np is not None:
+                acc += int(np.frombuffer(buf, dtype=">u2").sum(dtype=np.uint64))
+            else:
+                acc += sum(struct.unpack(f">{len(buf)//2}H", buf))
+    if odd:
+        # 0x800038bc: trailing odd byte is added as the high half of a word.
+        acc += odd[0] << 8
     acc %= 1 << 32                      # the ARM accumulator is 32 bits
     acc = (acc >> 16) + (acc & 0xFFFF)  # fold
     acc = acc + (acc >> 16)             # fold again
