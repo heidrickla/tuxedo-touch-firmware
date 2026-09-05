@@ -421,3 +421,38 @@ content. That is useful to know — it means a failed attempt cannot be retried
 by simply reflashing the identical card, and it explains why re-running a flash
 to watch for errors produced no output. Each new attempt needs a genuinely
 different image, which this one is.
+
+---
+
+## Ending the reflash cycle
+
+Reflashing by hand is the expensive part of this work: build a 125 MB image,
+write a card, carry it to the panel, power-cycle, and find out afterwards
+whether it worked. Three attempts so far, two of them wasted.
+
+**SSH is what ends that**, and `ssh/tuxedo_remote.py` is the tool that uses it:
+
+```bash
+python tuxedo_remote.py info                       # mounts, partitions, free space
+python tuxedo_remote.py get /etc/rc.d/rc.local ./rc.local
+python tuxedo_remote.py put ./rc.local /etc/rc.d/rc.local --mode 755 --backup
+python tuxedo_remote.py backup ./panel-backup/     # pull the files worth keeping
+```
+
+A change that previously meant a card and a walk becomes a verified file copy.
+
+Three deliberate properties:
+
+- **It refuses `scp`'s job the hard way.** The panel has no `sftp-server`, so
+  modern `scp` fails. Everything goes through `ssh host 'cat > file'`.
+- **Every write is verified before it replaces anything.** Content goes to a
+  `.part` name, the byte count and hash are checked from the panel side, and
+  only then is it renamed. A dropped connection cannot leave a truncated file.
+  That is the same reasoning as the SD path, where a truncated component is the
+  one failure the header checksum cannot catch.
+- **It will not write `/tuxedo`, `/supervis` or `Barracuda`.** Those stay on the
+  SD path, where a mistake is recoverable by reflashing. A bad write to the
+  alarm application over SSH could remove the very access needed to fix it.
+
+If `/` turns out to be mounted read-only, `put --remount` issues
+`mount -o remount,rw /` first rather than assuming either way.

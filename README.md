@@ -65,6 +65,8 @@ edited out.
 | `fw_extract.py` | Carves filesystems out of header-wrapped firmware |
 | `tuxedo_jffs2.py`, `tuxedo_jffs2_extract.py` | JFFS2 handling for the root filesystem |
 | `tuxedo_hdr.py` | Reads, verifies and rebuilds the vendor firmware header, including the checksum the flasher enforces |
+| `ssh/tuxedo_remote.py` | Changes the panel's root filesystem over SSH, so a change stops needing an SD card |
+| `tuxedo_ota_server.py` | Serves firmware to the panel's own update client (untested) |
 
 Credentials are never hardcoded. Every tool takes `--password`, or reads
 `TUXEDO_PASSWORD`, or prompts. Note that on this panel **the web password is
