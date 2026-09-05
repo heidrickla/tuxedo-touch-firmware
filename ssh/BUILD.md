@@ -609,3 +609,25 @@ Image: 125,397,712 bytes, checksum `0x78e8`.
 That answers, in one pass: whether the image applied, whether the binary is
 present and executable, whether the keys and account are right, and what
 dropbear said before exiting.
+
+### Where "nothing new to apply" came from
+
+Searched `ProgCV` for it: no such string. The flasher has no
+"already up to date" message. What was seen on the panel was its normal boot,
+i.e. the programmer either did not run or ran without displaying anything.
+
+`ProgCV` is loaded by `seconboot`, not by Linux, so a flash that does nothing
+looks identical to a normal boot from outside. The only strings it has in this
+area are the type-mismatch ones:
+
+    Hardware Version is New ,But Critical file app1.hdr is old type
+    Hardware Version is Old ,But Critical file app1.hdr is new type
+
+and `0x800004d8` turns out to be the platform-tag matcher (TEST, 6280,
+6280PLUS, INNOVA, INNOVAPLUS, TUXEDO, TUXEDOPLUS, LINUXINNOVA, MSGW,
+TUXEDOPLUSR2, TUXEDOPLUSVA, TUXEDOPLUSMSR2, TUXEDOPLUSMSVA), not a version
+comparison. Our header carries `TUXEDOPLUSVA` unchanged, so it matches.
+
+No skip-if-same-version logic has been found. That does not prove none exists,
+which is why v6 records the Barracuda hash rather than continuing to reason
+about it.
