@@ -631,3 +631,55 @@ comparison. Our header carries `TUXEDOPLUSVA` unchanged, so it matches.
 No skip-if-same-version logic has been found. That does not prove none exists,
 which is why v6 records the Barracuda hash rather than continuing to reason
 about it.
+
+---
+
+## Version tracking
+
+`/etc/tuxedo-build` is written into every image:
+
+```
+BUILD=v6
+BUILT=2026-09-05T23:22:34Z
+BASE=TUXW_V5.3.21.0_VA
+BARRACUDA_MD5=197b7e41daeedd849d6353bd0fb26059
+DROPBEAR_MD5=642b6a1040e90c175bdb783b41493042
+CHANGES=lockout-patch,heap-fix,ota-hosts-block,ssh
+```
+
+`rc.local` cats it into the boot log, so the log identifies its own image.
+Stock has no such file, so its absence is also an answer.
+
+Image: 125,397,712 bytes, checksum `0x02f5`.
+
+## Reading the version over HTTP: not possible without patching Barracuda
+
+`installVirtualDir` (`0x14598`) binds three **disk-backed** directories:
+
+| Root | URL prefix |
+|---|---|
+| `/tmp/` | `VideoFiles` |
+| `/mnt/sd` | `Videos` |
+| `/opt/tuxedo/configuration/` | `Config` |
+
+`DiskIo_constructor` at `0x1480c`, `0x14870`, `0x148d4`, each followed by
+`DiskIo_setRootDir` and `HttpResRdr_constructor`, then
+`HttpServer_insertDir` (`0x6e8ac`).
+
+`/opt/tuxedo/configuration/` being bound to `Config` would have been ideal: the
+boot log is written there, so it could be fetched without SSH or pulling the
+card.
+
+**They do not serve.** Tested live with a valid session, on 443, 80 and 6280:
+every known-present file under `/Config/` returns 404
+(`webuseraccountsenc.json`, `Tuxedo.json`, `registereddevMAClist.json`,
+`CRCdata.json`, `ipupdate.txt`). `/VideoFiles/` and `/Videos/` likewise. A
+name that does *not* exist returns 302 to itself with a trailing slash, which
+is the only response that differs.
+
+So the directories are installed but something downstream refuses to serve
+them, and the web application is a size-locked ZIP embedded mid-ELF, so a new
+page cannot be added either. Serving the version over HTTP would mean patching
+`Barracuda`.
+
+The boot log on the SD card remains the delivery path.
