@@ -690,3 +690,25 @@ page cannot be added either. Serving the version over HTTP would mean patching
 `Barracuda`.
 
 The boot log on the SD card remains the delivery path.
+
+## v7: two independent start hooks
+
+Four attempts have failed without establishing which stage breaks. v7 starts
+dropbear from `startup` as well as `rc.local`. `rcS` calls both, in that order,
+so either alone suffices; the second hook checks whether dropbear is already
+running before starting another.
+
+The `startup` hook is inserted immediately before `/tuxedo &` and logs to
+`/tmp/dropbear-startup.log`, copied to the SD card.
+
+Image: 125,397,712 bytes, checksum `0x064e`, `BUILD=v7`.
+
+### What the boot log will settle
+
+| Observation | Conclusion |
+|---|---|
+| no `tuxedo-boot.log` on the card | the image never applied; the problem is the flasher |
+| log present, `BUILD=v7` | the image applied; read on for why dropbear did not start |
+| `NOT EXECUTABLE: /usr/sbin/dropbear` | the binary did not survive the image build |
+| `dropbear returned` non-zero plus its stderr | dropbear's own reason |
+| `nothing listening on 22` after a zero return | it daemonised and then died |

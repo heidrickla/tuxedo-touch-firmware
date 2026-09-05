@@ -61,29 +61,68 @@ There is **no** self-healing: `accLockedTime` is written by three functions and 
 ## RANKED BY REAL RISK ON THIS OWNER'S LAN
 
 ### 1. Installer code readable over HTTP with no authentication — `/Config/panelinfo.txt`
-**Verdict: REFUTED ON HARDWARE.** The static analysis below is sound and its
-four kill attempts all failed, but the live panel does not serve the directory.
+**Verdict: SURVIVES as a stock-firmware risk. NOT REPRODUCIBLE on this unit.**
 
-**Live result, 2026-09-05, with and without a session, on ports 80, 443 and
-6280:** every path under `/Config/` returns **404**, including files that
-certainly exist (`webuseraccountsenc.json`, `Tuxedo.json`,
+The static analysis below is sound and its four kill attempts all failed:
+`installVirtualDir` binds `/opt/tuxedo/configuration/` to the URL prefix
+`Config` as a sibling of `authenticated`, with no authenticator. That is the
+shipped code on every 5.3.21.0 panel.
+
+**Live result on this unit, 2026-09-05**, with and without a session, on ports
+80, 443 and 6280: every path under `/Config/` returns **404**, including files
+that certainly exist (`webuseraccountsenc.json`, `Tuxedo.json`,
 `registereddevMAClist.json`, `CRCdata.json`, `ipupdate.txt`). The sibling
 disk-backed prefixes `/VideoFiles/` (`/tmp/`) and `/Videos/` (`/mnt/sd`) behave
-the same. Only a name that does *not* exist responds differently: 302 to itself
-with a trailing slash.
+the same.
 
-So `installVirtualDir` does bind the directories exactly as described below,
-and something downstream refuses to serve them. The mechanism was traced
-correctly; the conclusion that it is reachable was not tested until later.
+**Do not read that as the vulnerability being absent.** Something downstream on
+this panel refuses to serve those directories and the cause has not been
+identified. Another unit, another configuration, or another firmware revision
+may serve them, and the binding itself is unconditional at every boot. Treat
+this as a live risk on stock firmware and keep the network-layer advice in step
+3.
 
-**The finding as originally written should not be acted on.** The installer
-code is not one GET away on this firmware. Keep the network-layer advice in
-step 3 anyway: it costs nothing and the rest of section (b) still applies.
+An earlier revision of this section marked the finding REFUTED. That was an
+over-correction: one unit returning 404 does not refute a mechanism confirmed
+in the shipped code.
 
-Recorded in `TUXEDO-HA-ENRICHMENT.md` as well. This was re-derived a second
-time from scratch before anyone re-read the earlier result, which is the
-argument for putting live outcomes next to the static claim rather than in a
-separate document.
+### Status in the custom firmware: NOT YET FIXED
+
+The custom images built in `ssh/BUILD.md` do **not** address this. The fix is
+identified but unimplemented, because it carries real risk and cannot be tested
+without flashing.
+
+The insertion is at `0x14934`:
+
+```
+00014914  ldr r2, =0x86160        ; "Config"
+00014918  ldr r0, =0x55b1c4       ; readDir2
+0001491c  ldr r1, =0x55b188       ; ioConfig
+00014924  bl  0x72e8c             ; HttpResRdr_constructor
+0001492c  ldr r2, =0x55b1c4       ; readDir2
+00014934  bl  0x6e8ac             ; HttpServer_insertDir(server, readDir2)
+```
+
+against how the protected directory is set up at `0x147b8`:
+
+```
+000147b8  str r6, [r5, #0x18]     ; authenticator
+000147bc  str r8, [r5, #0x14]     ; realm
+```
+
+Two options, neither verified:
+
+1. Write the same authenticator and realm into `readDir2` (`0x55b1c4`) before
+   `0x14934`. Needs a code cave, because the registers holding them at
+   `0x147b8` are reused by `0x14914`.
+2. Insert `readDir2` into the `authenticated` directory instead of the server
+   root.
+
+**Caveat that makes this non-trivial:** the web application fetches its own
+recorded video through `Config/cri_vidrec/...`. Putting the prefix behind
+authentication breaks those fetches unless they carry the session. On a panel
+where the directory does not serve anyway, the patch changes nothing
+observable, so it cannot be validated here before shipping it.
 
 **Original claim and reasoning, retained:**
 
