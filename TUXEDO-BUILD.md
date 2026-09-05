@@ -27,8 +27,16 @@ sumtool  -i app2.raw     -o app2.jffs2 -e 0x20000 -l -n
 python3 tuxedo_jffs2_extract.py app2.jffs2 root_verify        # then diff -r
 ```
 
-Then wrap `app2.jffs2` in the vendor 128-byte header with the size field
-updated, and copy it to a FAT32 SD card alongside the five other vendor files.
+Then wrap `app2.jffs2` in the vendor 128-byte header with the size field AND
+the checksum updated, and copy it to a FAT32 SD card alongside the five other
+vendor files:
+
+```bash
+python tuxedo_hdr.py build app2.jffs2 app2.hdr --template stock/app2.hdr
+copy *.hdr MCU.hex G:python tuxedo_hdr.py verify G:\*.hdr      # verify the CARD, not the staged copy
+```
+
+Skipping that last step costs a wasted trip to the panel. It did once.
 
 ---
 
@@ -70,7 +78,88 @@ offsets, confirmed against all five headers:
 Magic values are `appl000` for the three apps, `boot000` for `seconboot`,
 `prog000` for `ProgCV`. The flasher compares 7 characters of this.
 
-### The 16-bit field at 0x14 is not checked
+### The 16-bit field at 0x14 IS a checksum, and it IS enforced
+
+**This section previously said the opposite. It was wrong, and the panel
+proved it wrong.** A rebuilt `app2.hdr` carrying the vendor's original
+checksum was rejected on the touchscreen with:
+
+```
+File app2.hdr Checksum Error: Please remove the SD card and Format SD card
+using PC. Copy image again, insert SD card to unit and reboot the system for
+reprogramming.
+```
+
+The failure was clean: nothing was written, and the unit offered to boot
+normally after 30 seconds. That is the fail-safe behaviour §1 predicted, and
+it is the only part of the original reasoning that survived.
+
+**Why the wrong conclusion was reached.** The per-component loader at
+`0x800074c0` sets its "checksum OK" flag (`0x83f1eca4`) unconditionally after
+a successful read, at `0x8000761c`. Reading only that, it looks as though no
+verification happens. In fact `0x83f1eca4` means *"the file was present and
+readable"*, and it exists so the error reporter at `0x80006410` can choose
+between "not found" and "checksum error". The real verification is a separate
+routine, and the search that missed it looked for `ldrh [rX, #0x14]`, which
+never appears because the header is `memcpy`'d to `0x83f1dddc` first and the
+field is read from there.
+
+**The algorithm**, at `0x80003864`, called in chunks from the validator with a
+final-chunk flag:
+
+```
+80003884  ldrb  r6, [ip]        ; high byte
+80003888  lsls  r6, r6, #8
+80003894  ldrb  r6, [ip]        ; low byte  -> big-endian 16-bit word
+80003898  orrs  lr, r6, lr
+800038a0  uxtah r0, r0, lr      ; 32-bit accumulator, NO folding during the loop
+800038a4  subs  r4, r4, #2
+...                             ; finalisation, last chunk only:
+800038d0  lsrs  r6, r0, #0x10
+800038d4  uxtah r0, r6, r0      ;   acc = (acc >> 16) + (acc & 0xffff)
+800038d8  adds  r0, r0, r0, lsr #16
+800038dc  mvns  r0, r0          ;   complement
+800038e0  uxth  r0, r0          ;   truncate to 16 bits
+```
+
+Sum big-endian 16-bit words into a **32-bit** accumulator, fold twice at the
+very end, complement, truncate. It is the internet checksum with a deferred
+fold, computed over the **payload only** — not the header, not the whole file.
+
+**The subtlety that produced a near-miss.** An earlier attempt accumulated in
+16 bits with end-around carry on every addition. That is the textbook internet
+checksum and it gives the *same* answer for short inputs and a *different* one
+for long ones. It reproduced `app3.hdr` and `seconboot.hdr` exactly, missed
+`ProgCV.hdr` by 1 and `app1.hdr` by 8, and missed `app2.hdr` badly. Two
+matches out of five looked like a coincidence rather than a nearly-right
+algorithm, and the wrong lesson was drawn. Deferring the fold reproduces all
+five exactly.
+
+`tuxedo_hdr.py` in this repo implements it, and `verify` checks a file the way
+`ProgCV` will before the card ever goes near the panel:
+
+```bash
+python tuxedo_hdr.py build app2.jffs2 app2.hdr --template stock/app2.hdr
+python tuxedo_hdr.py verify *.hdr
+```
+
+**Always run `verify` on the card itself, not on the staged copy.** The card is
+what the panel reads.
+
+### What is actually validated, in order
+
+`0x800074c0` performs these checks after loading a component. Any failure
+reports the same generic "Checksum Error" message, so the message does not
+tell you which one tripped:
+
+| Check | Where | Notes |
+|---|---|---|
+| `mmc_header.flashaddress != flashAddress` | `0x800077b8` | header field `0x0c`; leave it alone |
+| payload filename extension matches the expected component | `0x80007904` | `strrchr(name, '.')` then `strcmp` |
+| header size field vs measured size | `0x80007928` | tautological as written |
+| **payload checksum** | `0x80003864` | the one that bites |
+
+### The old, incorrect reasoning, kept for the record
 
 It looks like a checksum, and the flasher does contain the strings
 `SOURCE CHECKSUM ERROR!!!` and `File %s Checksum Error: ...`. It is tempting to
@@ -285,12 +374,15 @@ Two files inside the root filesystem differ from stock. Nothing else.
 | `opt/webserver/Barracuda` | the login-lockout and heap-overflow patch |
 | `etc/hosts` | a commented block for redirecting firmware updates |
 
-| Artifact | sha256 | Size |
+| Artifact | sha256 / value | Size |
 |---|---|---|
 | stock `Barracuda` | `b9bf50d8d1cfe198...60186b` | 5,680,361 |
 | patched `Barracuda` | `af9d34d2b694ef79...d273d6be` | 5,680,361 |
 | patched `app2.jffs2` | `fee5e687638c312a...2e8260ab` | 124,103,172 |
-| `sdcard/app2.hdr` | `ea5b5198d30f1c5a...9d6900f7` | 124,103,300 |
+| its header checksum | `0x6836` (vendor's was `0x8ad5`) | — |
+
+The header carries size `124,103,172` and checksum `0x6836`; every other field
+is the vendor's, byte for byte.
 
 The binary patch itself is 131 bytes across six sites and is specified in
 `TUXEDO-LOCKOUT-PATCH.md` section 3, with the build record in section 6. The

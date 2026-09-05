@@ -612,12 +612,26 @@ Ranked by what actually touches attacker-influenced input on Lewis's LAN.
 Traced 2026-09-05 to answer a concrete question: can an HTTP client tell a
 locked-out account from a wrong password? Yes, and by an unexpected route.
 
-### Every outcome is HTTP 200
+### Status code DOES discriminate — correcting an earlier claim in this file
 
-`LoginResp_service` (`0x133dc`) ends in `HttpResponse_incOrForward`
-(`0x6e5c4`), an **internal forward**, not a redirect. The status code is
-identical in all cases. Only the body differs. Anything keying on the status
-code will see no difference at all.
+An earlier draft of this appendix said every outcome is HTTP 200 because
+`LoginResp_service` ends in an internal forward. **That is wrong**, and it was
+wrong in a self-inflicted way: the symbol at `0x6e024` had already been
+resolved as `HttpResponse_sendRedirect` in the same session, and the claim was
+written anyway. Four independent verification agents refuted it.
+
+The two destinations use *different* mechanisms:
+
+| Outcome | Call site | Mechanism | On the wire |
+|---|---|---|---|
+| ordinary failed login | `0x13528` | `HttpResponse_incOrForward` (`0x6e5c4`) | **200**, body is `/login.shtml` |
+| accounts unusable | `0x134fc` | `HttpResponse_sendRedirect` (`0x6e024`) | **302** + `Location: /Invalid.html` |
+| successful login | — | `sendRedirectI` (`0x6df5c`), status `0x12e` at `0x6dff4` | **302** + `Location` |
+
+So the status code is the primary signal and the body is a secondary check.
+
+**A client must not auto-follow redirects.** Following the 302 fetches
+`/Invalid.html`, which returns 200, and the distinction disappears entirely.
 
 The two destinations are `/login.shtml` and `/Invalid.html`. Neither is a file
 in the embedded web archive; both are Barracuda compiled server pages living
@@ -706,11 +720,31 @@ is a third distinguishable body separate from the two `Invalid.html` variants.
 
 ### Practical detection rule
 
-| Body contains | Meaning | Recovery |
+Primary rule, on status and `Location`:
+
+| Response | Meaning | Recovery |
 |---|---|---|
-| `reactivate an account` | stock 3-strike permanent lockout | touchscreen: login account setup, Enable All, Apply |
-| `create an user account` without `reactivate` | no web accounts configured | create one on the touchscreen |
-| neither | ordinary auth failure | check credentials; on a patched panel this also covers the 300-second lock, so retrying after five minutes is valid |
+| **200** | ordinary auth failure. On a patched panel this also covers the 300-second lock, because that lock never writes `status` or `accountLocked` | check credentials; retry after five minutes is valid on a patched panel |
+| **302** to `/Invalid.html` | account-state problem, in practice the stock 3-strike lockout | touchscreen: login account setup, Enable All, Apply |
+| **302** elsewhere | success | — |
+
+Secondary check, on the body of `/Invalid.html` if it is fetched:
+
+| Body contains | Meaning |
+|---|---|
+| `reactivate an account` | stock 3-strike lockout has disabled every account |
+| `create an user account` without `reactivate` | no web accounts configured |
+
+Two further signals on the 200 path, both real but both fragile:
+
+- The failed POST emits `<span style="color:red;">Invalid UserName/Password</span>`,
+  preceded by a "Login failed." span whose style differs by **one character**:
+  `color:red;;` (doubled semicolon) when the username was found and enabled,
+  `color:red;` when it was unknown or already disabled. Do not build a
+  user-facing message on a one-character difference.
+- A failed POST does **not** set the `_zFL` cookie; an unauthenticated GET of a
+  protected page does. That separates "my POST was rejected" from "the server
+  handed me the login form" without parsing the body.
 
 This rule is correct on **both** the stock and patched builds without needing
 to detect which is running, because the patched 300-second lock lives entirely
