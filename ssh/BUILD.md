@@ -212,8 +212,31 @@ ssh -i <key> -p 2222 root@127.0.0.1 'id'
 ```
 
 Note the `/dev` nodes. The shipped image has only `console`, `initctl`, `mtab`,
-`null` and `tty`; the chroot needs `ptmx` and `urandom` created by hand. On the
-real panel those come from `mdev`/`udev` and the `devpts` mount at boot, which
-**remains the one unverified assumption** in this build. If it turns out to be
-wrong, authentication still succeeds and the `cat` transfers above still work;
-only interactive shells would fail.
+`null` and `tty`; the chroot needs `ptmx` and `urandom` created by hand.
+
+### The pty assumption, now RESOLVED
+
+This was the last unverified thing in the build, so it was checked in the
+kernel image rather than left as a caveat. `vmlinux.bin` reports itself as
+`Linux version 2.6.31-207-g7286c01`, and it contains:
+
+```
+devpts: get root dentry failed
+devpts: called with bogus options
+/dev/ptmx
+Couldn't register /dev/ptmx driver
+Couldn't allocate Unix98 ptm driver
+Couldn't allocate Unix98 pts driver
+```
+
+Those are the failure strings from the kernel's own registration paths, which
+only exist when the feature is compiled in. **Unix98 ptys and `devpts` are both
+built into this kernel, and `/dev/ptmx` is registered by the kernel itself.**
+
+Together with the `devpts /dev/pts devpts gid=5,mode=620` line already in
+`/etc/fstab` and the `devpts` mount in the `mdev`/`udev` init scripts, ptys
+will be available at boot. Interactive shells should work, not merely
+`cat`-based transfer.
+
+That is a static check, not an observation of the running panel, so it stays
+`[CONFIRMED statically]` until someone actually opens a shell.
