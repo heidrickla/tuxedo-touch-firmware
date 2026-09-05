@@ -673,11 +673,65 @@ them, for exactly this. Uncommenting one line and pointing it at a local
 server is the whole client-side change. `/srv_info.conf` is the other lever,
 and is the better one if the same name should resolve to a different address.
 
+### The manifest format, recovered
+
+Calling this "a well-defined project" without defining it would have been a
+hand-wave, so the fields were pulled out of the binary. In order, as the
+parser reads them:
+
+| Field | Meaning |
+|---|---|
+| `size` | payload size |
+| `checksum` | verified per file — see `Verify_Checksum:` in the binary |
+| `folderpath` | where the files live on the server |
+| `version` | remote version, compared against the panel's own |
+| `filenumber` | how many files make up the update |
+| `platform` | matched against the panel's board type |
+| `notes` | shown to the user as release notes |
+
+The panel identifies itself with `Local ver-%s,boardType-%s`, which for this
+unit is `TUXW_V5.3.21.0` and `TUXEDOPLUSVA` — the same platform tag that
+appears at offset `0x52` of every `.hdr`.
+
+Two request shapes, both plain HTTP:
+
+```
+GET /%s HTTP/1.1        Host:%s:%d                      <- the product XML
+GET %s HTTP/1.1         Host:%s:%d                      <- each file,
+                        Range:bytes=%d-%d                  fetched in ranges
+```
+
+Port `10086` appears alongside them. Version comparison is logged as
+`local_ver - %s,ver_remote %s`, and an update is classified `Critical` or
+`Optional` (`Upgrade Type is %s.`), which decides whether the panel forces a
+reboot or offers one.
+
+The user-facing strings show what a served update looks like on the
+touchscreen: `Version: <v>_VA is available now.`, `Release date: `,
+`Release Notes for `, then `Files downloaded successfully` and
+`The system will reboot in 15 seconds to upgrade the unit.`
+
+Failure handling is forgiving. `HTTP error in Get product XML. 2 hour query
+timer start.` and `DNS error 2 hour query timer start.` — both non-fatal, both
+retried in two hours. A server that is simply absent costs nothing.
+
+### One requirement that is easy to miss
+
+```
+The SD card has been removed unexpectly!
+Please insert a blank SD card and restart the keypad.
+```
+
+**The card must be blank.** That matches the vendor's manual-flash instruction
+that the firmware files be the only contents, and it means an update cannot be
+staged onto a card that is also holding camera recordings. The panel checks
+separately for card-absent, card-full and card-write-protected, and has a
+distinct message for each.
+
 ### What would still have to be built
 
-This is a real project, not a switch flip. Serving an update means reproducing
-the redirector handshake and the manifest format, then serving the `.hdr`
-files over HTTP with byte-range support.
+Serving an update means answering the redirector, emitting that XML, and
+serving the `.hdr` files over HTTP with byte-range support.
 
 Two things make it more attractive than it sounds:
 
