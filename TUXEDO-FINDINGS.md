@@ -452,3 +452,42 @@ and is corroborated by ten hours of polled data pointing the same way, so I am
 recording it as settled. Had it come back DARK I would have demanded a repeat
 before anyone acted on it, and `tuxedo_wake_experiment.py` exists to run exactly
 that.
+
+---
+
+## Observed again live, 2026-09-05, minutes after a reboot
+
+Worth recording because it is the clearest sighting yet, and because the
+circumstance explains the mechanism rather than just exhibiting it.
+
+Shortly after the panel came back from a firmware flash, two checks were run
+minutes apart against the same panel with the same credentials:
+
+| Transport | Result |
+|---|---|
+| REST `GetSecurityStatus` | `{"Status":"Not available","Color":"Green"}` |
+| Push stream `/SimpleDebugger.interface/G.` | `cmd 21 part 1 ready/disarmed green Ready To Arm`, 19 frames |
+
+**Be precise about what this is and is not.** These were two sequential runs,
+not one simultaneous capture, so it is not a controlled paired measurement. It
+is a strong observation, not a designed experiment.
+
+What makes it worth keeping is the timing. A reboot is exactly the condition
+the mechanism predicts:
+
+- `GetSecurityStatus` returns a cache that only an inbound ECP message fills.
+- A reboot empties it.
+- Until the panel next hears from the VISTA, the cache has nothing in it, and
+  the firmware substitutes the constant string `"Not available"`.
+- The push stream never reads that cache, so it reports real state immediately.
+
+So the bug is not random. It is the visible edge of a cache with no
+initialisation path, and a reboot is the most reliable way to see it. That also
+explains why it was historically hard to reproduce on demand: it needs the
+cache to be empty, and once an ECP message has arrived the cache stays filled.
+
+**Consequence for any client:** treat REST `GetSecurityStatus` as unavailable
+after a panel restart until proven otherwise, and take state from the push
+stream. A client polling only REST will report `unknown` for an unbounded
+period after every reboot, which is the original complaint that started this
+project.
