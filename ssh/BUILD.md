@@ -670,7 +670,14 @@ Image: 125,397,712 bytes, checksum `0x02f5`.
 boot log is written there, so it could be fetched without SSH or pulling the
 card.
 
-**They do not serve.** Tested live with a valid session, on 443, 80 and 6280:
+**They do not serve, and this was already documented.**
+`TUXEDO-HA-ENRICHMENT.md` recorded `/Config/` returning 404 on every casing and
+file before this section was written; it was re-derived from scratch rather than
+looked up. `TUXEDO-VERIFIED.md` finding 1 has been corrected accordingly: it
+presented the same path as a confirmed unauthenticated disclosure of the
+installer code, which the live result refutes.
+
+Tested live with a valid session, on 443, 80 and 6280:
 every known-present file under `/Config/` returns 404
 (`webuseraccountsenc.json`, `Tuxedo.json`, `registereddevMAClist.json`,
 `CRCdata.json`, `ipupdate.txt`). `/VideoFiles/` and `/Videos/` likewise. A

@@ -61,7 +61,31 @@ There is **no** self-healing: `accLockedTime` is written by three functions and 
 ## RANKED BY REAL RISK ON THIS OWNER'S LAN
 
 ### 1. Installer code readable over HTTP with no authentication — `/Config/panelinfo.txt`
-**Verdict: SURVIVES.** Highest real risk of the ten: unconditional, no preconditions beyond network reach, and it discloses a live secret.
+**Verdict: REFUTED ON HARDWARE.** The static analysis below is sound and its
+four kill attempts all failed, but the live panel does not serve the directory.
+
+**Live result, 2026-09-05, with and without a session, on ports 80, 443 and
+6280:** every path under `/Config/` returns **404**, including files that
+certainly exist (`webuseraccountsenc.json`, `Tuxedo.json`,
+`registereddevMAClist.json`, `CRCdata.json`, `ipupdate.txt`). The sibling
+disk-backed prefixes `/VideoFiles/` (`/tmp/`) and `/Videos/` (`/mnt/sd`) behave
+the same. Only a name that does *not* exist responds differently: 302 to itself
+with a trailing slash.
+
+So `installVirtualDir` does bind the directories exactly as described below,
+and something downstream refuses to serve them. The mechanism was traced
+correctly; the conclusion that it is reachable was not tested until later.
+
+**The finding as originally written should not be acted on.** The installer
+code is not one GET away on this firmware. Keep the network-layer advice in
+step 3 anyway: it costs nothing and the rest of section (b) still applies.
+
+Recorded in `TUXEDO-HA-ENRICHMENT.md` as well. This was re-derived a second
+time from scratch before anyone re-read the earlier result, which is the
+argument for putting live outcomes next to the static claim rather than in a
+separate document.
+
+**Original claim and reasoning, retained:**
 
 **Claim (unchanged):** `/opt/tuxedo/configuration/` is mapped to the URL prefix `/Config/` with no authenticator, so `panelinfo.txt` — whose 7th CSV field is the **installer code in plaintext** — is one unauthenticated GET away.
 
@@ -78,11 +102,10 @@ The payload holds up read as bytes: `CreatePnlInfoFlashTable` (`0x58f0a8`) emits
 **Preconditions:** network reach to port 80 (opened unconditionally at boot); no credentials/session/cookie; URL segment is **case-sensitive** (`/config/` 404s); `panelinfo.txt` must exist, which happens once the Tuxedo completes an info sync with a paired Vista panel; field 7 is real only if the panel answered the CAL request, otherwise it is the literal `0000`.
 
 **Owner action:**
-1. Settle it in one command from another host — I did not run it:
+1. ~~Settle it in one command from another host~~ — **done, returns 404.**
    ```
    curl -sS http://<tuxedo-ip>/Config/panelinfo.txt
-   ```
-   Count commas; field 7 is the installer code. Also check `/Config/Tuxedo.json` and `/Config/registereddevMAClist.json` — the latter is directly relevant to findings 4 and 5.
+   ``` Also check `/Config/Tuxedo.json` and `/Config/registereddevMAClist.json` — the latter is directly relevant to findings 4 and 5.
 2. If it returns the real code, **treat the installer code as disclosed** to anything that has ever been on that network segment. If the panel has ever been port-forwarded or on a flat network with untrusted devices, change it at the panel and re-sync.
 3. **Fix at the network layer.** 5.3.21.0 is terminal; there is no vendor fix coming and nothing to disable in the UI — the `/Config/` mapping is created unconditionally at every boot. Remove any port-forward, put the panel on a VLAN/SSID untrusted clients cannot reach.
 4. Do **not** rely on the web login. It protects `/authenticated/`; `/Config/` is a sibling of it.
