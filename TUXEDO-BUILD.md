@@ -618,3 +618,82 @@ python tuxedo_hdr.py preflight G:\app2.hdr --template-dir stock/
 For the image that flashed successfully it reports three header bytes changed
 from the vendor's (one in the size field, two in the checksum), every other
 checked field identical, and `WOULD PASS`.
+
+---
+
+## 11. Delivering a build over the network instead of by hand
+
+Question asked after the first flash: with an SD card left in the panel, can a
+build be pushed to it over the network so the card never has to be carried?
+
+**Not by writing to the card directly. Yes, by making the panel fetch it.**
+
+### Nothing exposes the card as a filesystem
+
+Scanned live: the panel listens on **80, 443 and 6280 only**. All three are the
+same application. There is no SSH, no Samba, no FTP and no telnet, despite
+`dropbear`, `sshd` and `smb` appearing in `rc.conf`'s `all_services` list —
+that list is not the one the boot actually uses. So there is no way to mount,
+copy to, or otherwise write to `/mnt/sd` from another machine.
+
+### But the OTA client writes firmware to that card itself
+
+From the application binary:
+
+```
+SD CARD INSERTED FW DOWNLOAD QUERY START ############
+/mnt/sd/%s                        <- downloaded files land here, by name
+cp %s /mnt/sd/%s
+df -t vfat                        <- free-space check
+Sd card full
+SD write protected
+Files downloaded successfully
+mv /mnt/sd/ProgCV.hdr /mnt/sd/ProgCV_bkp.hdr    <- backs up the flasher first
+mv /mnt/sd/ProgCV_bkp.hdr /mnt/sd/ProgCV.hdr    <- and restores it
+```
+
+So the intended remote-update path is exactly the one wanted: **the panel
+downloads the `.hdr` files onto its own inserted SD card and then reprograms
+itself from them.** The card is the staging area either way; the only question
+is who puts the files on it.
+
+The transfer is plain HTTP with `GET` and `Range: bytes=` requests against
+`Host:%s:%d`, preceded by a manifest XML carrying `checksum`, `folderpath`,
+`version`, `filenumber`, `platform` and `notes`.
+
+### The switch for pointing it at your own server is already in the image
+
+The panel holds no literal firmware-download hostname. It asks an AlarmNet
+redirector where to go. Those names — `auiredir1..3.alarmnet.com`,
+`auiredirtest.alarmnet.com` — are resolvable through `/etc/hosts`, because
+`nsswitch.conf` reads `hosts: files nisplus nis dns`.
+
+The flashed image already carries a commented block in `/etc/hosts` naming
+them, for exactly this. Uncommenting one line and pointing it at a local
+server is the whole client-side change. `/srv_info.conf` is the other lever,
+and is the better one if the same name should resolve to a different address.
+
+### What would still have to be built
+
+This is a real project, not a switch flip. Serving an update means reproducing
+the redirector handshake and the manifest format, then serving the `.hdr`
+files over HTTP with byte-range support.
+
+Two things make it more attractive than it sounds:
+
+- **The OTA path verifies a checksum** (`Verify_Checksum:` in the binary, plus
+  the manifest's own `checksum` field), so a truncated download is caught. The
+  SD path's header checksum is already understood and implemented in
+  `tuxedo_hdr.py`.
+- **It backs up the flasher before replacing it**, which is a safety net the
+  manual path does not give you.
+
+### Constraints
+
+- The **card must be inserted**, must not be write-protected, and must have
+  room. The panel checks all three and reports each separately.
+- DNS does not resolve as shipped (see `TUXEDO-NTP-PROPOSAL.md` §3), so the
+  redirection has to go through `/etc/hosts` or `/srv_info.conf` rather than a
+  DNS server.
+- Nothing here has been attempted. The mechanism is read from the binary and
+  from live port scanning; no update has been served to this panel.
