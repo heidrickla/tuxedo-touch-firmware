@@ -36,6 +36,9 @@ against the live panel, the document says so and gives the numbers. Where a
 conclusion was later retracted, the retraction is left in place rather than
 edited out.
 
+Conventions for working in this repo, including the writing style and the
+pre-push checks, are in `CONTRIBUTING.md`.
+
 ## The documents
 
 | File | What it answers |

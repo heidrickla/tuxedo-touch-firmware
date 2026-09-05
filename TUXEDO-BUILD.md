@@ -161,9 +161,8 @@ tell you which one tripped:
 
 ### The old, incorrect reasoning, kept for the record
 
-It looks like a checksum, and the flasher does contain the strings
-`SOURCE CHECKSUM ERROR!!!` and `File %s Checksum Error: ...`. It is tempting to
-assume you must recompute it. **You do not.**
+The flasher contains `SOURCE CHECKSUM ERROR!!!` and
+`File %s Checksum Error: ...`, but does not recompute this field.
 
 The flag that selects between the "not found" and "checksum error" messages is
 a byte at `0x83f1eca4`, and the only code that writes it is the per-component
@@ -763,10 +762,9 @@ no `filename=`, no multipart request parser. The only `upload` string is
 `boundary=` is the push stream's own `multipart/x-mixed-replace` **response**
 header, not request parsing.
 
-Adding one would mean writing a multipart parser and a handler into
-`Barracuda`, plus adding a page to a ZIP embedded mid-ELF that cannot change
-size (§8b). That is strictly more work than serving the download the panel
-already knows how to perform.
+Adding one means writing a multipart parser and handler into `Barracuda`, plus a
+page in a ZIP embedded mid-ELF that cannot change size (§8b). More work than
+serving the download the panel already performs.
 
 ### Adding an upload handler: yes, but not to Barracuda
 

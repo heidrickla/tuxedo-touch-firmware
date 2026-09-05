@@ -142,9 +142,8 @@ blast radius of a key that already unlocks anything else.
 
 ## Tested under emulation before flashing, and it caught a real bug
 
-`qemu-user-static` plus a `chroot` of the panel's own root filesystem runs the
-real ARM binary against the real `/etc/passwd`, the real host keys and the real
-`authorized_keys`. Doing this before flashing was worth the effort immediately.
+`qemu-user-static` plus a `chroot` of the panel's root filesystem runs the real
+ARM binary against the real `/etc/passwd`, host keys and `authorized_keys`.
 
 ### The bug it caught
 
@@ -364,9 +363,7 @@ Those two lines existed to make the chroot work and had the side effect of
 hiding the exact dependency that was about to fail. **A test environment
 prepared to make the subject work cannot tell you whether the subject works.**
 
-That is the third time in this build that a partially-read mechanism produced a
-confident wrong answer, and the second time the test itself was the thing that
-concealed it.
+Third partial-read failure in this build; second time the test concealed it.
 
 ### Fix
 
@@ -415,12 +412,10 @@ identical across 3,493 entries.
 
 ### Note on the "nothing new to apply" reflash
 
-A second flash of the *same* image booted straight through without programming
-anything. So the flasher does track what it has applied and skips unchanged
-content. That is useful to know — it means a failed attempt cannot be retried
-by simply reflashing the identical card, and it explains why re-running a flash
-to watch for errors produced no output. Each new attempt needs a genuinely
-different image, which this one is.
+A second flash of the same image booted straight through without programming
+anything: the flasher tracks what it applied and skips unchanged content. A
+failed attempt cannot be retried with the identical card; each attempt needs a
+different image.
 
 ---
 

@@ -7,8 +7,9 @@ that happened in this project.
     ci/checks.sh --list     names only
     ci/install-hooks.sh     install as a pre-push hook
 
-`.gitea/workflows/ci.yml` runs the same script on push. If no Actions runner is
-registered, use the hook.
+``.gitea/workflows/ci.yml` runs the same script on push. **No Actions runner is
+currently registered** (Gitea 1.24.7 supports them; none found on this host), so
+the pre-push hook is the working path until one is added.
 
 | Check | Failure it prevents |
 |---|---|
