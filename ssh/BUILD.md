@@ -84,3 +84,55 @@ would succeed and an interactive shell would fail. `scp` and
 `ssh <host> <command>` need no pty and would work regardless.
 
 Binaries are in the session scratchpad under `/build/db2`, not committed here.
+
+---
+
+## Image built 2026-09-05, verified, not yet flashed
+
+`app2.hdr`, size 125,389,888, checksum `0x473b`. Preflight says WOULD PASS.
+
+### What changed from stock
+
+    usr/sbin/dropbear                    added, 1,187,028
+    usr/sbin/dropbearkey                 added, 1,023,928
+    etc/dropbear/dropbear_rsa_host_key   added, mode 600
+    etc/dropbear/dropbear_ed25519_host_key   added, mode 600
+    etc/passwd                           created: root:x:0:0:root:/root:/bin/sh
+    etc/shadow                           created: root:!:...   ('!' = no password login)
+    etc/group                            created
+    root/.ssh/authorized_keys            added, mode 600, dir 700
+    etc/rc.d/rc.conf                     DROPBEAR_ARGS="-s -g -w -p 22"
+    etc/hosts                            OTA redirection block (previous build)
+    opt/webserver/Barracuda              lockout + heap patch (previous build)
+
+### Verification
+
+- Round trip: **0 content differences**, metadata identical across 3,493 entries.
+- `dropbear` sha256 is byte-identical after the JFFS2 round trip:
+  `62d3bfe6906d91be...2460b837`.
+- Permissions survived: `/root` and `/root/.ssh` 700, `authorized_keys` and both
+  host keys 600.
+- Device nodes intact (`console 5,1`, `null 1,3`, `tty 5,0`), 159 symlinks.
+
+### Size
+
+The image grew 1.29 MB, from 124,103,176 to 125,389,888. That matters because
+the flasher enforces a limit, so it was decoded from the instruction rather
+than assumed:
+
+```
+80007e08  mov r1, #1              -> 1
+80007e0c  orr r1, r1, #180, #12   -> 188743680
+80007e10  cmp r0, r1              -> limit = 188,743,681 = 180.00 MiB
+```
+
+At 125 MB the image uses 66% of that. Roughly 60 MB of headroom remains.
+
+### Security posture of this build
+
+Password authentication is impossible three times over: it is compiled out
+(`DROPBEAR_SVR_PASSWORD_AUTH 0`), refused at runtime (`-s -g -w`), and the only
+account has `!` in its password field. Public key only.
+
+The key is dedicated to this panel rather than reused, so it cannot widen the
+blast radius of a key that already unlocks anything else.
