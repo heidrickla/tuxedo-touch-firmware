@@ -1,0 +1,17 @@
+# This repo is worked on from Windows but its scripts run on an ARM Linux
+# alarm panel and in WSL. A CR breaks them invisibly, so force LF on checkout
+# regardless of core.autocrlf.
+*.sh            text eol=lf
+*.py            text eol=lf
+*.conf          text eol=lf
+*.example       text eol=lf
+*.yml           text eol=lf
+*.md            text eol=lf
+rc.local        text eol=lf
+tuxedo-upload.sh text eol=lf
+
+# Firmware images and binaries.
+*.hdr           binary
+*.bin           binary
+*.jffs2         binary
+*.hex           binary
