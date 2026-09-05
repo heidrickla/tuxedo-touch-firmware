@@ -328,3 +328,96 @@ service list because of its name. Both times the fix was to run the thing
 rather than reason about it. **Anything that has to work at boot on this panel
 should be executed through `qemu-user` in a chroot first.** It costs two
 minutes and it has now caught two failures that would each have cost a flash.
+
+---
+
+## Second SSH flash also failed: `/dev/urandom` does not exist
+
+The `rc.local` fix was correct and necessary, but not sufficient. After
+flashing it, port 22 was still refused while the panel was otherwise healthy.
+
+### Cause
+
+**Dropbear opens `/dev/urandom` at startup and exits if it cannot.** The
+shipped image's `/dev` contains exactly five entries:
+
+```
+console  initctl  mtab  null  tty
+```
+
+No `urandom`. No `ptmx`. At boot, `/etc/rc.d/init.d/udev` mounts a **fresh
+tmpfs over `/dev`**, creates only `console` and `null` by hand, and then relies
+on `udevd` and `udevtrigger` to populate everything else. Whether that produces
+`/dev/urandom` on this 2.6.31 system with this udev version was never
+established — and it evidently does not, or does not before `rc.local` runs.
+
+### Why the emulation test did not catch it
+
+Because the test created the nodes by hand:
+
+```bash
+mknod $T/dev/ptmx c 5 2
+mknod $T/dev/urandom c 1 9
+```
+
+Those two lines existed to make the chroot work and had the side effect of
+hiding the exact dependency that was about to fail. **A test environment
+prepared to make the subject work cannot tell you whether the subject works.**
+
+That is the third time in this build that a partially-read mechanism produced a
+confident wrong answer, and the second time the test itself was the thing that
+concealed it.
+
+### Fix
+
+`rc.local` now creates what dropbear needs rather than assuming udev did:
+
+```sh
+[ -c /dev/urandom ] || mknod /dev/urandom c 1 9 2>/dev/null || true
+[ -c /dev/random ]  || mknod /dev/random  c 1 8 2>/dev/null || true
+[ -c /dev/ptmx ]    || mknod /dev/ptmx    c 5 2 2>/dev/null || true
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+```
+
+Each is conditional and each swallows failure, so if udev did create them the
+lines are harmless.
+
+It also **logs to `/opt/tuxedo/configuration/dropbear.log`** instead of
+discarding output. That partition survives a reflash, so a future failure
+leaves evidence that can be read once SSH works, rather than vanishing.
+
+### Retested with a bare `/dev`
+
+The new test starts from `/dev` exactly as the image ships it and pre-creates
+nothing:
+
+```
+=== /dev before rc.local ===
+console initctl mtab null tty
+
+=== /dev after rc.local ===
+console initctl mtab null ptmx pts random tty urandom
+
+--- rc.local starting dropbear Sat Sep  5 22:06:22 UTC 2026 ---
+crw-rw-rw- 1 root root 5, 2 /dev/ptmx
+crw-rw-rw- 1 root root 1, 9 /dev/urandom
+--- dropbear invocation returned 0 ---
+
+listening: YES
+uid=0(root) gid=0(root)
+NO_PREBUILT_DEV_NEEDED
+```
+
+### Image
+
+`app2.hdr`, size 125,397,712, checksum `0xeca8`. Round trip clean, metadata
+identical across 3,493 entries.
+
+### Note on the "nothing new to apply" reflash
+
+A second flash of the *same* image booted straight through without programming
+anything. So the flasher does track what it has applied and skips unchanged
+content. That is useful to know — it means a failed attempt cannot be retried
+by simply reflashing the identical card, and it explains why re-running a flash
+to watch for errors produced no output. Each new attempt needs a genuinely
+different image, which this one is.
