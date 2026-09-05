@@ -4,8 +4,10 @@ Answering a request for the next firmware build: can the panel set its own
 date and time instead of coming up in 2013?
 
 **Short answer: the vendor already built the entire mechanism and shipped it
-switched off.** Two small things are missing. Neither requires touching a
-binary.
+switched off.** Two things are missing: a small NTP client binary, and one
+shell variable. **No existing binary needs patching**, and no boot script needs
+restructuring — the invocation, the service registration and the boot ordering
+are all already there and correct.
 
 ---
 
@@ -73,8 +75,9 @@ the right point in the boot, with networking up.
 **What is needed, in full:**
 
 1. Drop a static `ntpclient` binary into `/bin`. It is a small, single-purpose
-   program; against a 124 MB image the size is immaterial.
-2. Set `NTP_SERVER` in `/etc/rc.d/rc.conf`.
+   program; against a 124 MB image the size is immaterial. See the ABI section
+   below for what it has to be built as.
+2. Set `NTP_SERVER` in `/etc/rc.d/rc.conf` to a LAN **IP address**.
 
 No binary patching, no new init script, no change to the boot order.
 
