@@ -82,6 +82,42 @@ There is no busybox on this system at all, so there is no applet to enable and
 no `ntpd`, `ntpdate`, `rdate` or `sntp` anywhere in the image. The client has
 to be added.
 
+### What that binary has to be, exactly
+
+Recommending "add a binary" is worthless without the ABI, so it was checked
+rather than assumed. From `readelf` on shipped executables:
+
+| Property | Value |
+|---|---|
+| Class / endianness | ELF32, little-endian |
+| Machine | ARM |
+| Flags | `0x4000002` — **EABI version 4**, `HASENTRY` |
+| Float ABI | **soft-float**. Neither `EF_ARM_ABI_FLOAT_HARD` (`0x400`) nor `EF_ARM_ABI_FLOAT_SOFT` (`0x200`) is set, i.e. the legacy soft-float convention |
+| Interpreter | `/lib/ld-linux.so.3` |
+| C library | **glibc 2.5** (`libc-2.5.so`, `ld-2.5.so`) |
+| Linkage | everything in the image is **dynamic**; there is not one static binary |
+| Kernel | 2.6.31 |
+
+Two consequences that decide the build:
+
+1. **It must be `armel` (soft-float), not `armhf`.** A stock Debian/Ubuntu
+   armhf binary will not run here. This is the most likely way to get it
+   wrong, because armhf is what a modern cross-toolchain gives you by default.
+2. **Link it statically.** glibc 2.5 dates from 2006; building dynamically
+   against it needs an equally old toolchain, whereas a static binary carries
+   its own libc and does not care what is installed. `ntpclient` uses only
+   socket, `gettimeofday`/`settimeofday` and `adjtimex`, all of which long
+   predate 2.6.31, so a modern static build is safe on that kernel. Modern
+   toolchains emit EABI v5, which the kernel accepts alongside v4.
+
+A static `ntpclient` is roughly 50 KB against musl or under a megabyte against
+glibc. The extracted tree is 180 MB of content compressing to a 124 MB image,
+so either is noise.
+
+If a static build proves awkward, the fallback is to build dynamically against
+the panel's own `lib/` directory, which is present in the extracted rootfs and
+can be pointed at with `--sysroot`. That is more work and buys nothing.
+
 ---
 
 ## 3. Use an IP address, not a hostname
@@ -183,7 +219,8 @@ the weak key survived today's flash.
 
 ## Recommended shape
 
-1. Add `/bin/ntpclient`, static, in the next image.
+1. Add `/bin/ntpclient` to the next image: **ARM EABI, soft-float (armel),
+   statically linked**. See the ABI table above; armhf will not run.
 2. Set `NTP_SERVER` in `/etc/rc.d/rc.conf` to a **LAN IP address**.
 3. Change nothing else. Do not touch the boot order, do not remove the
    fallback date, do not make the boot wait on the network.
