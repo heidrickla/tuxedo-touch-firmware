@@ -14,6 +14,7 @@
 // Connections are handled in sequence with a short read timeout.
 
 mod frame;
+mod ipc;
 
 use std::fs::File;
 use std::io::{BufReader, Read, Write};

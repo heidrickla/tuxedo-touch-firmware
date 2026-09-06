@@ -1031,8 +1031,9 @@ the payload shapes are `setCid` (once, on connect), `statusMessageText` and
    `D:/temp/tux-arm.py` and `D:/temp/tux-disarm.py`. They live outside the repo
    because they need the panel code, and `tux-disarm.py` exits non-zero unless
    it confirms the panel actually reached a disarmed state.
-2. *The 404-byte command encoder.* **Started 2026-09-06 — the outbound
-   structure is recovered.** See below.
+2. ~~*The 404-byte command encoder.*~~ **Done 2026-09-06**, with the reply
+   decoder, in `tuxweb/src/ipc.rs`. Structure recovered below; the library is
+   13 passing tests.
 
 #### The 404-byte command, from the binary
 
