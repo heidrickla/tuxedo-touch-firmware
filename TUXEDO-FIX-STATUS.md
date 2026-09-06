@@ -102,3 +102,51 @@ The build pipeline now exists and is proven end to end, so adding a second fix
 to a future image is a much smaller job than the first one was. The expensive
 part was never the patch; it was establishing that a rebuilt filesystem is
 byte-correct and that the flasher cannot be made to write the bootloader.
+
+---
+
+## a-3 assessed for patching, and declined
+
+a-3 is the dead web-facing partition-status poller: `getPartitionDetails` at
+`0x140480` creates the timer, connects the signal, sets 2000 ms and starts it,
+and **nothing calls it**. Confirmed again here — `callers()` returns nothing.
+
+It is the second independent cause of the stale-remote-status symptom, so
+reconnecting it is tempting. It should not be done.
+
+**It does not reduce to one instruction.** The natural hook is
+`CReceiverThread::registerclient` at `0x13c2f8`, called from `run()` when a web
+client registers, which is exactly the right moment. But `getPartitionDetails`
+takes a `char*` and returns into `r0`, and the only redundant slot nearby is the
+second of two consecutive `bl GetOperationMode` calls:
+
+    0x13c32c  bl GetOperationMode
+    0x13c330  strb r0, [sp, #0xb1]
+    0x13c334  bl GetOperationMode      <- redundant, r0 already holds it
+    0x13c338  cmp r0, #3
+
+Overwriting that call would clobber `r0` before the `cmp r0,#3` that follows.
+So the patch needs argument setup and register preservation, which means a code
+cave and a multi-instruction insert — in `/tuxedo`, the alarm application
+itself, not in the web server.
+
+**Cost against benefit:**
+
+- The practical problem is already solved and running: a client on the push
+  stream never consults the cache that returns "Not available". Captured live
+  with both transports side by side.
+- The patch target is the process that talks to the VISTA over the alarm bus and
+  kicks the watchdog. A mistake there is a rebooting alarm panel, not a broken
+  web page.
+- The beneficiary is a client that polls REST instead of using the stream, and
+  the only such client here has already moved to the stream.
+
+So a-3 stays open as **documented and deliberately unpatched**, which is a
+different state from unsolved. If a future client genuinely needs the REST cache
+to be fresh, `RequestPartitionStatus(int,bool)` at `0x585c28` is the mechanism
+and it works; the missing piece is only the connection.
+
+**Worth keeping for any future `/tuxedo` patch:** the redundant
+`bl GetOperationMode` at `0x13c334` is a free instruction slot in a function that
+runs on every web client registration, as long as whatever replaces it leaves
+`r0` holding the operation mode.
