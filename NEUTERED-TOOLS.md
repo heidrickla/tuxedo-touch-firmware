@@ -201,3 +201,59 @@ The JFFS2 summary warning is benign but recurring, on a rootfs at 70% (125 MB of
 Kernel messages also confirmed the `peek` tool behaving correctly:
 `SIGNAL in KERNEL 19 for Process 907 Process Name tuxedo` is the `SIGSTOP` that
 `PTRACE_ATTACH` sends, appearing exactly when it was run.
+
+---
+
+# The card no longer has to move
+
+`RemoteUpgradeHelper` in `/tuxedo` is a complete OTA client: root XML, product
+XML, `download_file`, `Verify_Checksum`, `CheckUpgradeViability`, then a reboot
+into the flasher. Reading `ru_download_file` settles what it actually does:
+
+    'Starting files download'
+    '/mnt/sd/%s'                                   <- downloads TO THE SD CARD
+    'mv /mnt/sd/ProgCV.hdr /mnt/sd/ProgCV_bkp.hdr'
+    'New FW downloaded. Type-Critical Ver-%s_VA.'
+
+So the vendor's own OTA does not avoid the card. It fetches over the network
+*onto* the card, then reboots and lets ProgCV flash from it. Config lives in
+`/opt/tuxedo/configuration/remotefwupgradeconf.json` and
+`remotefwdownloadconf.json`.
+
+Which means there is nothing to reimplement. **The card can simply stay in the
+panel**, mounted `rw` at `/mnt/sd`, and we write to it over SSH.
+
+## Two tools, and which to use
+
+**`deploy.py`** — for anything that is a file. The rootfs is JFFS2 mounted rw,
+so changes persist across reboots and need no flash at all.
+
+    python deploy.py            # dry run
+    python deploy.py --apply
+
+It compares 36 known paths by md5, or by link target for symlinks, and pushes
+only what differs. Symlinks must be compared by target: `md5sum` follows a link,
+and an absolute target resolves against the *builder's* filesystem, so every
+symlink otherwise looks changed.
+
+`/etc/hosts` is skipped by default. The panel rewrites it at boot to substitute
+the real gateway, so it always differs and pushing ours back would undo that.
+
+**`push-image.sh`** — for a full image, when a flash is genuinely needed
+(a Barracuda patch, or making changes survive the next flash).
+
+    ./push-image.sh stage_v10/app2.hdr [--reboot]
+
+Measured: 125,685,236 bytes in 64 s, 1.9 MB/s, md5 verified **on the panel**
+after transfer. It writes to `/mnt/sd/.app2.new` and renames only after the
+checksum matches, because a half-copied `app2.hdr` is exactly what the flasher
+must never find.
+
+## A note on the shell
+
+`deploy` was a shell script first. Getting a file list out of
+`wsl.exe -- bash -c` and back through `ssh` meant three layers of quoting, every
+`"$f"` arrived empty, and the comparison silently compared nothing while
+reporting all 36 files as changed. Two rounds of patching did not fix it. The
+Python rewrite reports `35 already match, 1 changed` on the same input, and the
+one change is real.
