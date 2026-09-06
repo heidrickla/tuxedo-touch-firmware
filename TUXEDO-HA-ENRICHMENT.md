@@ -906,10 +906,50 @@ accepted". It confirms dispatch, not outcome.
 captured and the accept message was never emitted on the push stream, even
 though the code was valid and the panel armed. So the earlier reading — that
 `sltSendUserCodeAcceptedMsg` reaching `osal_MqSend` means a stream client sees
-it — does not hold for a REST-initiated arm. Those slots are reached from
-`wsigUserCodeAccepted`, and something on that path does not fire for this route;
-the virtual keypad is the likely trigger. **Anyone planning to replace an
+it — does not hold for a REST-initiated arm. **Anyone planning to replace an
 optimistic state with a confirmation must not rely on that frame.**
+
+### Correction 3: the trigger is a message type, not a UI surface
+
+The first write-up of correction 2 said "the virtual keypad is the likely
+trigger". That was speculation and it is wrong. Read out of `/tuxedo`:
+
+`CUiReceiverThread::run` @`0x804d4` is the sole emitter of both the web and the
+local user-code signals. It is a `msgrcv` loop on the queue held in the global
+at `0xd2eb38`, reading `0xd0`-byte messages, and it switches on word 0 of the
+message (`mtype`) through an 88-entry jump table at `0x80574` indexed by
+`mtype - 1`:
+
+| `mtype` | emits |
+|---|---|
+| 9 | `wsigUserCodeDeclined` / `sigUserCodeDeclined` |
+| 11, 13 | `wsigUserCodeAccepted` / `sigUserCodeAccepted` |
+
+Which of each pair fires is decided by a **flag byte inside the message**, at
+message offset `0xcc` — the last word of the `0xd0` payload, read as
+`ldrb r3, [sp, #0x1a8]`. Nonzero takes the `wsig` (web) variant, zero takes the
+local one. The same byte guards 13 signal sites in `run()`, so it is a general
+web/local discriminator rather than anything specific to user codes.
+
+So the accept/decline signal is not owned by the keypad screen. It fires
+whenever `mtype` 9/11/13 arrives on that queue, from any origin. The reason a
+REST arm produced no accept frame is that **nothing posted those message types
+for that route** — not that some other UI surface owns the path.
+
+Two limits worth stating rather than papering over:
+
+- **The sender was not identified.** `ui_sendMsgToUi` @`0x80044` is the only
+  writer to that queue (`osal_MqSend`, `0xd0` bytes, `r0` = `mtype`). All 87 of
+  its call sites build the message in memory and load `r0`-`r3` with `ldm`, so
+  no call site carries a statically-resolvable `mtype`. Which component emits
+  9/11/13 is an open question that static reading will not answer cheaply.
+- **Whether driving the virtual keypad *would* produce the frame is untested.**
+  It does not follow from the above and is not implied by it. That is a live
+  test, not an inference.
+
+`CKeyPadWin::sltHandleUserCodeAccepted` / `Declined` having no direct callers is
+**not** evidence here — they are Qt slots reached through the meta-object
+system, so zero direct callers is the expected reading for any slot.
 
 What the stream *does* give, and it is enough to be useful:
 
