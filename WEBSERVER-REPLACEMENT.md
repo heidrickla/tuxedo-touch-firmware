@@ -308,7 +308,23 @@ is `flags: 02` = `O_RDWR`, **MEASURED**). Operating rule, conservative:
   monotonic clocks, `SystemTime`, 16 threads, HashMap/RandomState, file I/O, TCP
   accept/echo, server thread: all ok. **MEASURED**
 - `rustls` 0.23.43 with the `ring` 0.17.14 provider builds for ARMv6 and
-  completes TLS 1.3 handshakes on ARM1136 with no `SIGILL`. **MEASURED**
+  completes TLS 1.3 handshakes on ARM1136 with no `SIGILL`. **MEASURED**, and
+  **re-verified independently on the live panel 2026-09-06** by pushing the
+  built probe to `/tmp` and running it. Since the whole architecture rests on
+  this one claim, it was checked rather than taken on the label:
+
+  ```
+  ring provider ok, 9 cipher suites
+  FULL (resumption OFF)  mean 111.24ms   9.0 conn/sec  TLSv1_3 TLS13_AES_256_GCM_SHA384
+  with resumption ON     mean  26.36ms  37.9 conn/sec  TLSv1_3 TLS13_AES_256_GCM_SHA384
+  RSS after std init: 220 KB      RSS at exit: 1084 KB (peak 1160 KB)
+  RESULT: ALL OK   exit=0
+  ```
+
+  Both client and server ran on this CPU simultaneously, so the per-side cost is
+  lower than shown. **~1.1 MB peak RSS on a 126 MB box, and 38 resumed
+  handshakes/sec, is comfortably enough for a keypad's web interface.** The probe
+  was removed from `/tmp` afterwards.
 - Go 1.17-1.19 run stock. Go 1.20 through 1.27.1 crash at startup with
   `runtime: netpoll failed`, because this ARM syscall table stops at 363 and
   `epoll_pwait` (346) is absent inside that range. **MEASURED**, and confirmed by
