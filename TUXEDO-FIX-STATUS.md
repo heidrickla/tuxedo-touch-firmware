@@ -57,9 +57,10 @@ deprioritised, not because they are unsolved.
 
 - **a-2** First visit to the web keypad permanently disables Back and Home.
 - **a-3** The web-facing partition-status poller is dead code.
-- **a-4** The web interface is effectively single-client. **Needs re-checking:**
-  two concurrent push-stream clients were later measured to coexist without
-  displacing each other, so this claim is at least too broad.
+- ~~**a-4** The web interface is effectively single-client.~~ **Refuted
+  2026-09-06.** Four concurrent authenticated sessions, distinct session ids, all
+  still valid after the others connected. Two push-stream clients also coexist.
+  See `LIVE-RESULTS.md`.
 - **a-5** Event-log retrieval retries forever every 20 s with no cap.
 
 ### Virtual console
