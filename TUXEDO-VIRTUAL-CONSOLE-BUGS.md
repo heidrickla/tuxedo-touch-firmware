@@ -467,3 +467,76 @@ writers and that two of them are reachable slots; that mode 1 == safe mode is
 read from the function names and the restart path, not confirmed by observation.
 
 Modes 2 and 3 remain unaccounted for. No writer of either was found.
+
+## The fix is one byte, and it does not need safe mode
+
+Established 2026-09-06. Safe mode turns out to be the wrong lever entirely.
+
+**The operation mode is effectively binary.** All 28 readers of `0xd96ea4` were
+classified, and 27 use the identical test:
+
+```
+ldrb r3, [rN, #0x6c]      ; the mode
+sub  r3, r3, #2
+cmp  r3, #1
+bls  <mode is 2 or 3>
+```
+
+(The two apparent outliers are the same test with different register
+allocation.) So the only distinction any of them draws is **mode 2 or 3 vs
+everything else**, and mode 0 and mode 1 are treated *identically* by all of
+them — including `sltRequestArmAway`, `ArmStay`, `ArmNight` and `Disarm`.
+
+Working the arithmetic: mode 0 gives `0-2 = 0xFFFFFFFE > 1`, mode 1 gives
+`1-2 = 0xFFFFFFFF > 1`. Neither takes the branch. **Entering safe mode would not
+change the arm or disarm code path at all** — which is reassuring, but also means
+safe mode buys nothing except the console gate.
+
+`GetOperationMode`'s callers include `SimulatedPanelFunc`,
+`SendToEmulationScreen` and `SafeModeCheck`, so modes 2/3 look like a
+simulation/emulation state. Nothing writes either.
+
+### The actual gate
+
+`CReceiverThread::wsltHandleRawDataFromPanel` @`0x13da00`:
+
+```
+0x13da0c  ldrb r2, [r3]          ; subscribe flag - zero returns immediately
+0x13da18  bne  0x13da24          ; (set by cmd 1125 CONSOLEMODESTATUSADD)
+0x13da34  bl   GetOperationMode
+0x13da38  cmp  r0, #1
+0x13da3c  beq  0x13da50          ; mode == 1 goes straight to the console path
+0x13da40  bl   GetCurrentPartition
+0x13da44  bl   GetCurrentArmingState
+0x13da48  cmp  r0, #0xff
+0x13da4c  beq  0x13db20          ; bail - mode 0 always yields 0xff
+0x13da50  bl   apl_getEcpConsoleModeData
+```
+
+Making the `beq` at `0x13da3c` unconditional takes the console path regardless
+of mode, with no global state change and nothing else affected.
+
+| | |
+|---|---|
+| Binary | `/tuxedo` |
+| VA | `0x13da3c` |
+| File offset | `0x135a3f` (one byte) |
+| Before | `03 00 00 0a` (`beq 0x13da50`) |
+| After | `03 00 00 ea` (`b 0x13da50`) |
+
+Only the condition nibble changes, EQ to AL; the target is untouched.
+
+### Why this is low risk
+
+`apl_getEcpConsoleModeData` @`0x59c5d0` is 116 bytes and calls exactly
+`osal_MutexLock`, `memcpy`, `memcpy`, `osal_MutexUnlock` — a mutex-protected
+copy of two cached 17-byte buffers. **It transmits nothing to the VISTA.** The
+patch enables *reading* a cached copy of the keypad display; it does not enable
+sending keystrokes, which is the separate `apl_sendEcpConsoleModeData`.
+
+The handler being patched currently always returns early, so the patch cannot
+change behaviour on any path that works today.
+
+**Not yet deployed.** It requires restarting `/tuxedo`, which blanks the
+touchscreen on a live alarm for a few seconds — worth timing deliberately rather
+than doing unannounced.
