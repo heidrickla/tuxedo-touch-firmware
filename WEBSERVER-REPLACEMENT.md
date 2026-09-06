@@ -1129,6 +1129,77 @@ visible at all. It is produced by `/tuxedo` rather than Barracuda, so it should
 survive replacement for free -- but losing it silently would reintroduce a defect
 the integration has already shipped and fixed once.
 
+### 4.10.6 The capability endpoint, settled
+
+    GET /system_http_api/API_REV01/GetCapabilities
+
+    stock:  404  {Status:"Not Found"}     MEASURED, with AND without a session
+    custom: 200  application/json
+
+    {
+      "contract": 1,
+      "firmware": "tuxweb/0.1.0",
+      "panel_model": "TUXW",
+      "capabilities": ["panel_link_state", "command_result", "status_refresh"]
+    }
+
+**Inside `API_REV01`, not outside.** MEASURED on the live panel while it was
+still running stock: an unknown endpoint there returns a 20-byte
+`{Status:"Not Found"}`, while unknown *top-level* paths 302 to a trailing-slash
+variant. `/Config/` only 404s because it already carries the slash. So the
+vendor namespace is the clean option and outside it is the messy one -- the
+opposite of what both of us assumed.
+
+A GET against an endpoint that exists returns `405 {Status:"Method Not Allowed"}`,
+so 404 / 405 / 200 are three distinguishable answers for free.
+
+**The endpoint is session-OPTIONAL, and the reason is structural rather than
+aesthetic.** Session-required would make custom firmware answer 401 without a
+session. The integration treats 401 as an expired session and responds with a
+re-login -- so capability detection would become a path from "check what this
+panel supports" to "spend a login attempt", on a device where three refused
+logins disable every web account and the count survives a reflash.
+
+Stock structurally cannot do that: MEASURED, an unknown endpoint returns 404 with
+or without a session, never 401 and never 302. Session-optional makes custom
+match, so the property holds on every firmware rather than on one. The
+fingerprinting cost is accepted and is small next to what the panel already
+announces -- hostname `Tux<MAC>`, a Resideo OUI, six open ports and a
+distinctive login page.
+
+**Hard constraint, recorded because a client keys its silent path on it:** 404
+must remain the absence answer permanently. A future build answering anything
+else for an unsupported capability query is a breaking change. `200` with an
+empty capability list is fine; anything else is not, and must be flagged before
+it ships.
+
+`contract` is an integer that moves only when the SHAPE of this document changes
+incompatibly, never for feature changes. Clients branch on `capabilities`, never
+on `firmware` or `contract`; the list is unordered and unknown strings are
+ignored. Called once at setup and cached.
+
+Reference copy lives in `docs/wire-contract.json` in `ha-tuxedo-touch`, marked
+NOT PRESENT ON ANY FIRMWARE YET.
+
+### 4.10.7 Console mode arrives free
+
+Established while testing a `/tuxedo` patch that did not work (see
+TUXEDO-VIRTUAL-CONSOLE-BUGS.md): the two-line keypad display is emitted by
+`/tuxedo` as reply message **type 20**, and Barracuda's reply dispatcher
+`gettuxedoIPCCommFunc` has no case for 20 among the 42 types it handles. It is
+discarded at the edge, not withheld by the alarm application.
+
+A replacement reading `/Q_ServCmdTrsmtr` directly receives type 20 with no
+additional work. That is a far richer status source than `GetSecurityStatus` --
+the actual keypad display text -- and it costs nothing beyond not throwing it
+away.
+
+Reading it is passive. **Sending keystrokes is a separate write path
+(`apl_sendEcpConsoleModeData`, keys carried pipe-delimited in `pID`) and is a
+control surface equivalent to standing at the keypad.** If the replacement
+exposes it at all, it needs the same treatment as arm/disarm, not the treatment
+of a diagnostic read-out.
+
 ### 4.10.5 Why compatibility is a hard requirement, not courtesy
 
 Almost no user of `ha-tuxedo-touch` will run this firmware. If the replacement
