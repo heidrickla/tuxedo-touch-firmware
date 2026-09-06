@@ -878,3 +878,29 @@ show the U-Boot and kernel messages directly, including whether `ProgCV` runs.
 time they were written. Do not infer from them when the panel last touched the
 card, or whether it booted with the card present. [Corrected by the owner after
 this document claimed otherwise.]
+
+---
+
+## Correction: mtd-utils version is not the cause of the four-byte difference
+
+This document attributed a four-byte difference between a control image and the
+vendor's to "the newer mtd-utils packing nodes very slightly differently",
+2.3.0 against an older release. That attribution is wrong.
+
+Tested directly. The same `root_patched` tree, built twice:
+
+    mtd-utils 2.2.0 (Ubuntu 24.04)   124,810,624 bytes
+      sha256 353e0322b78a95efd2daefa26f0292d04888a8b76161cbdd60a5730f73ce3ca3
+    mtd-utils 2.3.0 (Debian trixie)  124,810,624 bytes
+      sha256 353e0322b78a95efd2daefa26f0292d04888a8b76161cbdd60a5730f73ce3ca3
+
+Byte identical, with `-e 0x20000 -l -n` and `sumtool` on both sides.
+
+So the two versions are interchangeable for this work, and whatever produced the
+original four-byte difference remains **unexplained**. It is not the toolchain
+version. Anyone repeating the control-image method should not spend time matching
+mtd-utils releases.
+
+Practical consequence: the build VM needs no source build of mtd-utils. Its
+distro package reproduces the shipped v9 image exactly, which is the strongest
+available check that a new build environment is correct.

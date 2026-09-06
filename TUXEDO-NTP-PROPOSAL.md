@@ -305,3 +305,79 @@ in `rc.conf` to a LAN server.
 Moving the clock forward twelve years on a live alarm panel will change how
 event log entries are stamped, and anything the panel schedules by date. That
 is the point of the change, but it is not a silent one.
+
+---
+
+# v9 flashed: NTP works, and cannot win
+
+v9 is running. The NTP path does exactly what it was built to do, and it is not
+enough, for a reason that was not visible until the panel could be watched.
+
+## What v9 does
+
+From `/mnt/sd/tuxedo-time.log`, written by `rc.local` on the first v9 boot:
+
+    before: Tue Sep  8 02:54:45 UTC 1970
+    Setting time from ntp server: pool.ntp.org
+    after:  Sun Sep  6 01:25:05 UTC 2026
+    rtc0:   Sun Sep  6 01:25:07 2026
+
+ntpclient resolved `pool.ntp.org`, set the clock correctly, and
+`hwclock -w -f /dev/rtc0` persisted it. `rtc0` has held the correct 2026 time
+ever since. The mechanism is sound.
+
+## What overrides it
+
+The running system clock reads February 2014 anyway. Something re-asserts it
+after `rc.local` finishes.
+
+Measured twice, deliberately, with ntpclient run by hand from a shell:
+
+    baseline            1393212897   Mon Feb 24 03:34:57 UTC 2014
+    ntpclient set it to 1788658605   Sun Sep  6 01:36:45 UTC 2026
+    reverted after ~48s              Mon Feb 24 03:36:01 UTC 2014
+
+The first run reverted inside 30 seconds; the second inside 48.
+
+**The important detail is not that it reverts, it is what it reverts to.** The
+restored value, 03:36:01, is 64 seconds after the 03:34:57 baseline, and roughly
+64 seconds of wall time had passed. The 2014 clock kept running throughout the
+excursion and the system clock was put back onto **its own continuous timeline**.
+
+A static default, or a value read from `DateTimeConfig.txt`, would jump back to a
+fixed instant. A continuous timeline means a **live time source** is being pushed
+into the system clock every 48 seconds or less.
+
+This also corrects an inference recorded earlier the same evening. Seeing the
+2014 clock advance normally, I concluded it had been set once at startup. It had
+not. It advances normally *because* it is continuously re-asserted from something
+that is itself running.
+
+## Which means the panel is not the thing to fix
+
+Of the three vendor binaries, only `/tuxedo` references `DateTimeConfig`, and
+`/tuxedo` is the process that talks to the VISTA-21iP over the alarm bus. The
+most probable reading is that **the keypad syncs its clock from the alarm panel**,
+and the alarm panel's clock is set to February 2014.
+
+That has not been confirmed. It is the hypothesis that fits a live source, a
+continuous timeline, and a sub-minute re-assertion interval.
+
+If it is right, adding NTP to the keypad can never hold, and the fix is to set
+the date and time on the **VISTA-21iP**, from the keypad's own programming
+screens, after which the keypad follows it. That is a change to the alarm system
+rather than to this firmware, and it is the owner's to make.
+
+## What to do with the v9 NTP path
+
+Leave it. It costs nothing, it correctly sets `rtc0`, and it gives the panel a
+sane clock for the window before the override lands. If the VISTA clock is ever
+corrected, this becomes redundant rather than wrong.
+
+Do **not** add a loop-mode ntpclient to fight the override. `ntpclient -l` would
+re-set the clock every interval and lose again within a minute, leaving the
+system clock oscillating between 2014 and the present. That is worse than a clock
+that is simply wrong, because event log entries would then be non-monotonic.
+
+Still unidentified: the exact call that writes the clock, and whether the source
+really is the alarm bus.
