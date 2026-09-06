@@ -167,20 +167,22 @@ attack, but it is the failure mode most likely to be hit by accident.
 
 ## The honest summary
 
-After this work the panel has **a real certificate and a modern TLS stack**. It
-still has an unauthenticated live-alarm-state feed and no meaningful separation
+After this work the panel has **a real certificate and a modern TLS stack**, and
+as of v13 the live-alarm-state feed **is authenticated** — section 3 is closed on
+this unit and section 4 closed with it. It still has no meaningful separation
 between processes. The permanent account lockout is **already fixed here by P1**
 and is a live issue only on stock firmware.
 
 TLS was worth doing because the alternative was a published private key. It is
-the first item on a list, not the end of one. The unauthenticated stream (§3) is
-the highest-value remaining fix and it is already designed; it ships with the
-Barracuda replacement.
+the first item on a list, not the end of one.
 
-Priority order, if the list is ever worked:
+Priority order, with what has shipped struck out:
 
-1. §3 authenticate the push stream — costs the known consumer nothing
-2. §6 bound the remaining 300 s in-memory lockout by source address — the
-   permanent on-disk one is already fixed by P1
-3. §5 refuse plaintext login, so a misconfigured client fails loudly at the door
-4. §4 falls out of §3
+1. ~~§3 authenticate the push stream~~ — **DONE, v13, 2026-09-06.** P13. Anonymous
+   gets `401` on all four listeners; Home Assistant was observed holding a stable
+   stream across the change. It did not wait for the Barracuda replacement.
+2. ~~§4 the camera scan broadcasting the LAN inventory~~ — **closed by the above**,
+   as predicted: it rode the same stream, so the same gate covers it.
+3. §6 bound the remaining 300 s in-memory lockout by source address — the
+   permanent on-disk one is already fixed by P1. **Now the top open item.**
+4. §5 refuse plaintext login, so a misconfigured client fails loudly at the door
