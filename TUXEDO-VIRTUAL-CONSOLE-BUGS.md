@@ -635,4 +635,47 @@ So the remaining candidates are, in order of likelihood:
 keypad presses on a live alarm, and this is the control path, not the read path.
 That needs the owner's explicit say-so and a chosen key, not an arbitrary guess.
 
-(1) is the next thing to read, and it costs nothing.
+### ANSWERED: candidate (1). Barracuda discards message type 20
+
+`gettuxedoIPCCommFunc` @`0xd5d0` (12336 bytes) is the Barracuda thread that
+reads the tuxedo reply queue with `osal_MqRecv` and turns replies into push
+frames. It dispatches on message type through a **compare chain, not a jump
+table**, covering 42 distinct values:
+
+```
+0-10, 18, 19, 21, 22, 25-27, 29, 51, 55, 56, 59, 61, 62, 103-105,
+109, 111, 112, 125, 130, 132, 133, 147, 154, 160-162, 504, 716
+```
+
+**Type 20 -- `SERV_CONSOLE_MSG_BROADCAST` -- is not among them.** Type 21 is,
+which is why `0:21:` partition frames arrive. Type 18 is, which is why `0:18:`
+arrives. Type 20 has no case and falls through the chain, so the console display
+is discarded before it can reach any client.
+
+That closes the chain end to end:
+
+| step | outcome |
+|---|---|
+| `cmd=19` to `handlerequest.html` | Barracuda forwards it, `0x3cd54`, unconditional |
+| tuxedo `CReceiverThread::run` | sets both gates, calls `requestconsolemode` |
+| `wsltHandleRawDataFromPanel` | copies the display, `osal_MqSend` type 20 |
+| Barracuda `gettuxedoIPCCommFunc` | **no case for 20 -- dropped** |
+
+**Console mode cannot be reached through Barracuda by any means, and no patch to
+`/tuxedo` can change that.** The one-byte patch at `0x13da3c` was never going to
+be sufficient; the reason is now known rather than suspected.
+
+It also fits the wider pattern exactly: the capability is intact on the panel
+side and cut off at the edge -- the same shape as the other vendor dev tools left
+in place but disabled.
+
+**Consequence for the replacement, and it is a good one.** A server reading
+`/Q_ServCmdTrsmtr` directly sees type 20, because the discard is Barracuda
+behaviour and not anything the alarm application does. That moves console mode
+from "not fixable" to **free once Barracuda is gone** -- the two-line keypad
+display, which is a far richer status source than `GetSecurityStatus`, arrives
+on a queue the replacement is already reading.
+
+Reading the display is passive. Sending keystrokes is the separate
+`apl_sendEcpConsoleModeData` write path and remains a control surface to be
+treated with the same care as arm/disarm.
