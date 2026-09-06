@@ -571,11 +571,50 @@ Captured across a live arm/disarm cycle. **[CONFIRMED]**
 |  |  | |   |  +-- COLOUR: 1 green, 2 red  (matches the REST API's "Color")
 |  |  | |   +----- the same flag again, as a RAW BYTE
 |  |  | +--------- state flag as hex TEXT: fe = ready/disarmed, ff = arming/armed
-|  |  +----------- partition number
+|  |  +----------- panel status code, NOT the partition number.
+|  |                It is -1 when the ECP link to the Vista is down.
+|  |                Corrected 2026-09-06, see below.
 |  +-------------- command id: 21 partition status, 18 home partition,
 |                  504 initial data, -1 unsolicited update
 +----------------- 0 in everything observed
 ```
+
+### Correction, 2026-09-06: field 3 is a panel status code, not the partition
+
+The diagram above labelled the third colon-delimited value the partition number.
+That was wrong, and on a single-partition panel no capture can show it, because
+both readings render `1`.
+
+`/tuxedo` carries a full symbol table, so the producer can be read directly. It
+is `CReceiverThread::sltSendChangedPartitionStatus(int)` at `0x144880`:
+
+    0x144a7c  bl     PanelIsTalking()
+    0x144a80  cmp    r0, #0
+    0x144a84  mvneq  r3, #0          ; link down -> -1
+    0x144a88  streq  r3, [sp, #8]    ; written into the message field
+    0x144a8c  bne    0x144ae8        ; otherwise the real value
+    ...
+    0x144aa0  bl     osal_MqSend(int, char*, int)
+
+**When `PanelIsTalking()` returns 0 the field becomes -1, and the frame is sent
+anyway.** So it reports whether the panel is answering, not which partition the
+message concerns.
+
+Live capture agrees. An authenticated `GET /eventhandler.html` taken during a
+concurrent stream returned
+
+    curStatus = "21:a1Ready To Arm:1"
+
+against the frame `0:21:1:fe:þ1Ready To Arm:2`. The value `eventhandler.html`
+itself names `panelStatusCode` is `1`, matching the field above; the frame's
+trailing value is `2`, which rules out the trailing value being that code and
+leaves the colour reading intact.
+
+**Consequence for any consumer.** Do not use this field as a partition
+discriminator. A guard comparing it to a partition number rejects every frame
+the moment the ECP link drops, while the stream stays connected and healthy
+looking. Handle `-1` explicitly: it means the panel is not answering, which is
+worth surfacing rather than discarding.
 
 **The stream must be decoded latin-1, not utf-8.** The state flag is a raw
 0xFE/0xFF byte; utf-8 turns it into U+FFFD and the value is lost. I hit this
