@@ -1302,9 +1302,25 @@ deliberately wrong code, which the tooling excludes by construction, so it
 cannot be observed at all.
 
 This also explains the 55 senders with no `[sp,#4]` store: **the struct base is
-per-function**. Any future sweep must locate the base from the
-`add rB, sp, #N` / `add rT, rB, #0xe` idiom and read `[sp, #N+4]`, rather than
-assuming the message sits at the stack pointer.
+per-function.**
+
+**Do not trust either sweep as a census — this was tested, not assumed.** An
+earlier version of this section proposed locating the base from the
+`add rB, sp, #N` / `add rT, rB, #0xe` idiom and reading `[sp, #N+4]`. That was
+written as a recipe and then run, and it is **worse than the scan it was meant
+to fix**: 0 types resolved, 194 functions where the idiom never appears. The
+reason is immediate in hindsight — `wsltHandleRawDataFromPanel`, the one sender
+known to be correct, builds the message at **`sp` itself** with no
+`add rB, sp, #N` anywhere, so requiring the idiom excludes the case that
+works.
+
+The honest position on method: **no sweep here is reliable.** The `[sp,#4]`
+scan matches senders whose base is `sp`; the idiom scan matches senders whose
+base is `sp+N`; neither covers both, and some senders take the type from an
+object field where no static scan can reach. The three dropped types above are
+trustworthy **because each was verified individually by reading its sender**,
+not because any sweep vouched for them. Treat the sweeps as a way to generate
+candidates and nothing more.
 
 So the replacement gains **three** capabilities the vendor stack cannot deliver
 at all, and none requires a panel-side change — all three messages already

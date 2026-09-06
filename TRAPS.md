@@ -46,6 +46,15 @@ and left sitting there saying the opposite of the truth.
   disassembly is incomplete.** The corpus held `0:18:` and `0:504:` frames whose
   handlers never call `bprintf`; that is what revealed the frame path is partly
   asynchronous. Reconcile the two rather than trusting the static read.
+- **Run the recipe before you write it down.** I documented a corrected scanning
+  method — locate a struct base from an `add rB,sp,#N` / `add rT,rB,#0xe` idiom
+  — committed it as the way forward, then ran it: 0 results against 194 misses,
+  strictly worse than what it replaced, because the one sender known to be
+  correct builds at `sp` with no such idiom. A method that has not been executed
+  is a guess with formatting.
+- **A sweep generates candidates; only reading the code confirms one.** Every
+  correct result in this project came from verifying an individual site. Every
+  wrong one came from trusting a pattern match across many.
 - **"No case for X" is not "X does not exist."** A receiver's dispatch table
   says what it handles, never what the sender emits. msgType **20 is real** —
   `/tuxedo` sends it with the keypad display — and Barracuda simply has no case,
