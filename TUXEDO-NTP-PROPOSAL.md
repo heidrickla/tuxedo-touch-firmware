@@ -487,3 +487,38 @@ reads it is armed unconditionally at startup, and everything else is downstream
 of it. Populating `internettimeservers.txt` is worth trying afterwards and is
 reversible, but expect it to lose to the poll in the same way `/bin/ntpclient`
 does.
+
+## Setting the Vista clock: attempted remotely, and it cannot be done safely
+
+Asked to set the time on the VISTA-21iP directly, I traced every remote route.
+None of them is sound, for a reason worth recording so it is not re-attempted.
+
+**There is no API for it.** Every date/time string in `/tuxedo` is a config file
+path. The embedded web application, 776 entries carved from the Barracuda binary
+at `0x8a948`, has 103 HTML and JS files and **no clock-setting page**: every
+match for "time" is a JavaScript `setTimeout` or scene scheduling.
+
+**The supported path is internal to the application.**
+`CClockSetDialog::handleApplyPress()` at `0x12b180` calls
+`AskFromPanel(...)` at `0x12b5c4` with `r0 = 0x79`, so alarm-bus command **121**
+carries the time to the panel. `AskFromPanel` is an internal function; nothing
+exposes it over HTTP.
+
+**That leaves keypad emulation, and it would be blind.** `SendKey(char)` at
+`0x126d30` and `CConcoleModeSr::sendKey(unsigned char)` exist, and console mode
+sends real keystrokes to a real alarm panel. But console mode does not return a
+display on this unit: `cmd 19` and `cmd 1125` both answer **HTTP 200 with a
+zero-byte body**, confirmed again 2026-09-06. The push stream carries only
+partition status, `0:21:1:fe:þ1Ready To Arm:2` and `0:18:1 P1  H:2` — the arm
+state, not the two-line keypad text.
+
+Setting a Vista's clock means entering a programming mode and walking through
+fields. Doing that with no view of the prompt, against a sequence that could not
+be verified from any material here, on a live security system, is the exact
+failure this project keeps paying for: acting on a mechanism that was only
+partly read.
+
+**So it is a touchscreen job, and it takes about thirty seconds.** On the
+Tuxedo: Clock Set, set the date and time, Apply. That runs the code path above
+and writes command 121 to the panel. The keypad's poll then reads the corrected
+time back, and the February 2014 clock goes away for good.
