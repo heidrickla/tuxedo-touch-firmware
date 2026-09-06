@@ -388,3 +388,41 @@ push stream while sending command 19. If `0:20:` frames appear only while that
 screen is up, the operation mode is the gate and the web console is a mirror of
 the touchscreen screen rather than an independent client. That would also explain
 why the vendor's own page is built as an iframe beside the panel status view.
+
+## Settled: the operation mode is 0, and it does not come from the UI
+
+Read out of the live process rather than reasoned about. `/proc/<pid>/mem`
+refuses a plain read on 2.6.31 and there is no debugger on the panel, so a
+thirty-line `ptrace` reader was built for it (`tools/peek.c`).
+
+    tuxedo pid 907
+    00d96ea4  736e4900  bytes 00 49 6e 73
+
+The byte `GetOperationMode` returns is the first of those: **0**.
+
+The address was checked against the ELF rather than trusted: `0xd96ea4` falls in
+`.bss` (`0xd0d110`, size `0x9e1e0`), and the words from the struct base
+`0xd96e38` read as a plausible configuration block (`1, 0x82, 0x82, 0x20, 1, 1,
+0, 0, 0x7530`) rather than string data. The `"Ins"` bytes following the mode are
+a separate char array in the same structure.
+
+With mode 0: `cmp r0, #1` fails, so `GetCurrentArmingState` is consulted;
+`(0 - 2)` unsigned is `0xfffffffe`, which is `> 1`, so it returns `0xff` and
+`wsltHandleRawDataFromPanel` bails before `osal_MqSend`. **That is the whole
+reason no `0:20:` frame is ever emitted.**
+
+**The touchscreen hypothesis was wrong.**
+`CMoreChoiceSr::sltHandleConsoleModeButtonPress` at `0xb1f90` only allocates and
+constructs `CConcoleModeSr`; it never touches the mode. Opening console mode on
+the panel would not change it.
+
+There is no `SetOperationMode` in the symbol table, only `GetOperationMode` and
+**`eil_getOperationMode`** at `0x59c320`. `eil` is the ECP interface layer, and
+the struct base is referenced from `apl_initIpSetup`, `main`, `VoiceEnableCheck`,
+`RefreshSettingsTimers` and `CHomeScreen::sltHandleInitialSetUpComplete` /
+`Cancelled` / `Timeout`. So the operation mode is a **panel-supplied state**
+tied to setup and the ECP link, not a UI mode a client can request.
+
+Which means the web console cannot be made to work by sending the right request.
+It is gated on a state the alarm panel dictates, and the next question is which
+panel states produce 1, 2 or 3 — a question about the VISTA, not the keypad.
