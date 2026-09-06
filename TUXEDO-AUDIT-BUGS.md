@@ -353,7 +353,7 @@ CONFIRMED. **For a Home Assistant integration this is arguably the better surfac
 | # | Hole | Status |
 |---|---|---|
 | H1 | **Nothing tested on hardware.** Every recipe is static analysis. | UNKNOWN |
-| H2 | **Does `/SimpleDebugger.interface` require the session cookie?** Evidence points to *no* — the EhDir is inserted into the plain root dir with no authenticator, and `newClientCon` returns 0 unconditionally so `['onClose','No access']` never fires. Neither agent could fully trace `HttpDir_authenticateAndAuthorize`'s parent walk. **If an unauthenticated `GET /SimpleDebugger.interface/G.` streams live alarm state, that is a LAN disclosure the owner must know about — test it deliberately.** | UNKNOWN, security-relevant |
+| H2 | **Does `/SimpleDebugger.interface` require the session cookie?** Evidence points to *no* — the EhDir is inserted into the plain root dir with no authenticator, and `newClientCon` returns 0 unconditionally so `['onClose','No access']` never fires. Neither agent could fully trace `HttpDir_authenticateAndAuthorize`'s parent walk. **CONFIRMED on hardware 2026-09-05: it does not require the cookie.** | CONFIRMED, security-relevant |
 | H3 | **Agents disagree on the CSRF token's provenance.** One traced `addSessionItem1` @0x2b444 fully (31 hex chars, one-per-slot, never rotates) and found its call sites in `authPage_service`/`MyPage_service`. The other found **zero BL callers** for it and declared alphabet/length/rotation UNKNOWN. The first account is more specific and internally consistent; **treat the token as opaque, re-scrape on any empty body**, and the disagreement costs you nothing. | CONFLICT (resolvable by test) |
 | H4 | **`getLocalLoginStatus()` is a runtime value.** It decides whether a cookie-less same-/24 client can drive the API with a borrowed (sessionid, tokenkey) pair. Reading of the gate says yes when the global is 0. **Do not design around it; use the cookie.** Security implication in (b)-5. | UNKNOWN |
 | H5 | **POST body decoding unproven.** Use GET. | LIKELY-not-verified |
@@ -576,7 +576,16 @@ Ranked by what actually touches attacker-influenced input on Lewis's LAN.
 
 # OPEN QUESTIONS
 
-1. **OQ-1 — Does an unauthenticated `GET /SimpleDebugger.interface/G.` stream live alarm state?** (H2.) The evidence leans yes. If so it is an unauthenticated disclosure of alarm status on the LAN. **One curl with no cookie settles it.**
+1. **OQ-1 — ANSWERED YES, 2026-09-05.** An unauthenticated `GET /SimpleDebugger.interface/G.` streams live alarm state. Tested against 203.0.113.5 with no cookie jar, no login and no prior `C.?cmd=S` — `G.` auto-registers the client on its own. Live partition state came back on **both port 80 and port 6280**:
+
+       0:21:1:fe:<0xFE>1Ready To Arm:2
+       0:-1:<0xFE>1Ready To Arm
+
+   So anything on the LAN can read armed/disarmed state, the exit-delay
+   countdown and partition status from this panel without credentials. The
+   stream is read-only — it carries no code and accepts no commands — so this
+   is a disclosure, not a control path. Not fixed: per Lewis, security work is
+   deferred until the firmware is stable, and this does not block any feature.
 2. **OQ-2 — Is `BARRACUDA[0].LocalLogin` set to 1 on Lewis's unit?** (b-5.) `Tuxedo.json` was not in the carve. If it is 0, a large chunk of section (b) is live today rather than theoretical.
 3. **OQ-3 — Is the plain-HTTP listener reachable on Lewis's LAN, and is the web UI actually being used over it?** (b-1.) Determines whether the user code is on the wire in cleartext.
 4. **OQ-4 — Does the local touchscreen's web-user editor rewrite `status:1`?** (a-1.) This is the difference between "recoverable from the panel" and "recoverable only by editing encrypted JSON off-box."
