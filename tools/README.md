@@ -54,6 +54,11 @@ directly, which cannot be mangled by any layer above it.
 
 ## Know which binary you are reading
 
+**The live panel runs v12 and has ALL EIGHT patches applied.** Any `Barracuda`
+or `tuxedo` sitting in a scratch directory is a historical snapshot from some
+earlier build — it is not what the panel is running, and it should never be
+reasoned about as though it were.
+
 **Every conclusion about "what the stock firmware does" is only as good as the
 copy it was read from, and the copies are easy to confuse.** This has already
 produced one wrong published claim: the threat model said three failed logins
@@ -67,10 +72,13 @@ Known `Barracuda` md5s:
 | `324209e1fdfe2d61925a1bb4a7115452` | **genuine stock**; no image of ours has ever applied |
 | `197b7e41daeedd849d6353bd0fb26059` | v9/v10 era — carries **P1, P2, P6**; NOT stock |
 | `d14a3358b10007dc6bbde63fa0959bb9` | v11 — adds P8 |
-| `c8971027bb9f77801d01713b4ae50b2f` | v12 — adds P11, P12 |
+| `c8971027bb9f77801d01713b4ae50b2f` | **v12 — what the panel runs now**; adds P11, P12 |
 
 `/tuxedo`: `6f8055f5cadba9d0b1582297606427a8` is pre-P10;
-`98370c310e709ba565abfce8ea0a3e17` carries P10.
+**`98370c310e709ba565abfce8ea0a3e17` carries P10 and is what the panel runs.**
+
+When in doubt, ask the panel rather than a file:
+`./verify-panel.sh` checks all eight sites against the running unit.
 
 **Check before you conclude**, in one command:
 
