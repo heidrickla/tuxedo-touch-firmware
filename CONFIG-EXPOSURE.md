@@ -102,3 +102,59 @@ latent rather than live. Verify after flashing by confirming `/Config/` still
 This supersedes the two unverified candidates near `0x14934` recorded in
 `TUXEDO-VERIFIED.md`; that address was the right neighbourhood, and this is the
 instruction.
+
+## What is actually in that directory, and why the patch is worth carrying
+
+The owner has no cameras on the panel; he uses UniFi. That was checked against
+`Tuxedo.json` rather than assumed, and it changes two earlier claims.
+
+**Downgraded.** `CAM_Login` and `CAM_Password` are **empty**. An earlier note
+described per-camera credentials sitting in a world-readable file; there are
+none to expose on this unit.
+
+**Upgraded.** `DISCOVERY_SETTINGS` holds a `UNAME_PASSWORD` field in the form
+`localadministrator,<password>` in **plaintext**, keyed by
+`CUST_ID_MODEL: "Honeywell,*"`, alongside a `SHARED_KEY`. These are the
+credentials the panel uses to log in to Honeywell-branded cameras it discovers,
+so on this unit they are a **vendor default rather than the owner's secret**,
+and with no Honeywell cameras present they open nothing here. The value is
+deliberately not recorded in this repository.
+
+That is still a plaintext administrative credential and a shared key in a
+mode-644 file, on the partition that survives reflashes, inside the directory
+`installVirtualDir` binds to `/Config` with no gate. The 404 is unexplained and
+common to all three disk-backed directories, so it is not a control. **That is
+the case for carrying the patch: not that anything leaks today, but that the
+only thing preventing it is a behaviour nobody has explained.**
+
+## The panel is inventorying the LAN
+
+`IPCAMERAS` is not empty. It holds discovered devices that are not cameras:
+
+    CAM_Mac "LaserJetPM426fd-6"   CAM_IP 203.0.113.227   an HP printer
+    CAM_Mac "brother775D7251-1"   CAM_IP 198.51.100.246   a Brother printer
+
+The second is on a **different subnet** from the panel, so discovery is not
+confined to the panel's own segment. Each entry is stamped with guessed RTSP and
+MJPEG paths and port 554.
+
+Discovery is fully enabled for a feature with nothing attached:
+
+    UPNP 1    SERCOMM 1    HONEYWELL_SERCOMM 1    EXTERNAL_CAMERAS 1
+    CAM_REC_ENABLED 0    CAM_DISCOVERED 0    DEFAULT_CAMERA "NA"
+
+`vidApp` is running, and `supervis` is listening on 6800 (`Tux_Server4Cam`),
+both for cameras that do not exist.
+
+So there is a straightforward reduction available with no loss of function:
+turn the four discovery flags off. That stops the panel probing the network and
+writing what it finds to a reflash-surviving file, and it takes the camera
+subsystem out of use.
+
+Two cautions before anyone edits `Tuxedo.json` by hand. It is validated against
+`CRCdata.json`, and `validateCRCFileOnFileRead` self-heals from the `_sec` twin
+on a mismatch, so a hand-edit is likely to be silently reverted. The supported
+route is the panel's own camera settings screen. And `EXTERNAL_CAMERAS 1` with
+`allowVideoRecordingFromConfig()` governs whether `VideoFiles` and `Videos` are
+installed at all — `Videos` binds `/mnt/sd`, and the SD card is currently
+mounted.
