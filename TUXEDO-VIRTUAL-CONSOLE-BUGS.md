@@ -612,10 +612,39 @@ The parse loop terminates on a token of **-1** (`cmn r0, #1`). So the test above
 which sent the default `pID=-1`, requested console mode with a key count of zero
 -- valid, but empty.
 
-Also established: **command 1125 (`CONSOLEMODESTATUSADD`) does not exist in
-Barracuda at all.** The dispatcher compares against 70 distinct immediates and
-1125 is not among them, so that call was silently discarded. `handlerequest.html`
-returning `(200, 0)` for it told us nothing, as usual.
+~~Also established: command 1125 does not exist in Barracuda at all.~~
+**WRONG — retracted 2026-09-06.** 1125 **is** dispatched. There is a literal-pool
+load of it at `0x3a698` inside `handlerequest_html076EF::service`, and
+`setConsoleModeAdd` / `setConsoleModeSub` / `getConsoleMode` all list that
+function among their callers.
+
+The error was a scan artifact and the mechanism is worth knowing, because it will
+recur:
+
+**ARM `cmp` takes an 8-bit value rotated by an even amount. 1125 (`0x465`) and
+1126 (`0x466`) cannot be encoded that way**, so the compiler must materialise
+them from the literal pool and compare register-to-register. A scan that collects
+`cmp #immediate` operands therefore **cannot see them at all** — not "missed
+them", *cannot represent them*. Checked:
+
+| value | hex | encodable as an ARM immediate |
+|---|---|---|
+| 19 | `0x13` | yes |
+| 500 | `0x1f4` | yes |
+| 504 | `0x1f8` | yes |
+| 1152 | `0x480` | yes |
+| **1125** | `0x465` | **no** |
+| **1126** | `0x466` | **no** |
+
+That is why 1152 appeared in the earlier list and 1125 did not, and why the
+absence looked like evidence. **A `cmp`-immediate scan is only valid for values
+that are encodable; for anything else it silently reports nothing.** Scan the
+literal pool too, or the result is a false negative by construction.
+
+This is the third scan-blindness of the same family in this project, after the
+BL-only caller scan that called 1744 reachable functions dead, and reading
+`/proc/<pid>/comm` on a kernel that has no such file. In each case the tool
+returned an empty result that read as a finding.
 
 ### What is actually still unexplained
 
