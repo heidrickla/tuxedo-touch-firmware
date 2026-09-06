@@ -789,9 +789,14 @@ gcc 10.2, glibc 2.31) is a 32-bit `time_t` armel port and can.
     debootstrap --variant=minbase bullseye /build/bullseye http://deb.debian.org/debian
     chroot /build/bullseye apt-get install -y gcc-arm-linux-gnueabi make bzip2
 
-    # sysroot from the panel's own libraries
+    # sysroot from the panel's own libraries.
+    # NOTE 2026-09-06: the tree is now /work/extracted/root_patched on the build
+    # VM, not /work/root_patched. /work/sysroot was rebuilt from it with this
+    # recipe and is present again (76 libs). The bullseye chroot at
+    # /build/bullseye is NOT on the current VM -- redo the debootstrap above if
+    # dropbear ever needs rebuilding.
     mkdir -p /work/sysroot/lib
-    cp -a /work/root_patched/lib/*.so* /work/sysroot/lib/
+    cp -a /work/extracted/root_patched/lib/*.so* /work/sysroot/lib/
     cd /work/sysroot/lib
     for n in c m dl crypt util pthread rt nsl resolv; do
         ln -sf "$(ls lib$n.so.[0-9] 2>/dev/null | head -1)" lib$n.so

@@ -73,15 +73,23 @@ held the queue facts.
 
 ## 5. The build VM and emulation
 
-- **DO NOT DELETE ANYTHING ON THE DEV VM.** It is persistent infrastructure,
-  not scratch. The extracted trees, `/work/panel-config`, the emulation chroots
-  and the stock images are expensive to rebuild and are meant to persist. I
-  removed them three times in one day — as "cleanup", as disk recovery, and as
-  "credential hygiene" — and each time Lewis had to watch the dev machine get
-  reconstituted. Leave it alone. If disk is genuinely short, say so and ask.
-- Do not remove the copied panel configuration either. It lives at
-  `/work/panel-config` on purpose, so emulation does not need a re-pull. It
-  contains real credentials and that is accepted — it is a dev VM.
+- **Archive, do not delete. The test is cost to recreate.** Keeping the VM tidy
+  is fine; destroying work is not. If regenerating something would mean a real
+  rebuild, a long download, or a fan-out, keep it — move it to `/work/archive/`
+  so it is out of the current build but still referenceable. Only genuinely
+  redundant, cheaply regenerated things may go.
+- **If space is short, grow the disk. Do not reclaim by deleting.**
+- Live paths that stay put: `/work/stock`, `/work/extracted`, `/work/v12` (the
+  rollback image), `/work/v13`, `/work/emu`, `/work/panel-config`,
+  `/work/sysroot`. Expensive artifacts elsewhere: `/build/rt`, `/build/bb`,
+  `/build/musl-1.2.5`.
+- Do not remove the copied panel configuration. It lives at `/work/panel-config`
+  on purpose so emulation needs no re-pull. It contains real credentials and
+  that is accepted — it is a dev VM.
+- I removed dev-VM state three times in one day — as "cleanup", as recovery from
+  a disk I filled myself, and as unrequested "credential hygiene" — and each
+  time it had to be rebuilt in front of Lewis. Two of the three were not
+  recovery at all.
 - **Never `cp -a` a tree with `/proc` mounted under it.** It copies
   `/proc/1/task/1/pagemap`, reported as 43 GB, and fills the disk. Unmount
   first, or copy from a pristine tree.
