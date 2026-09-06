@@ -368,6 +368,51 @@ Per `CONTRIBUTING.md`: anything that must work at boot gets executed under
 `qemu-user` in a chroot of the extracted rootfs, with `/dev` exactly as the image
 ships it, before it goes into an image.
 
+### 2.1b The build toolchain, set up and proven 2026-09-06
+
+On the build VM (`claude@203.0.113.40`, key `~/.ssh/fwbuild_ed25519`):
+
+```bash
+export RUSTUP_HOME=/build/rt/rustup CARGO_HOME=/build/rt/cargo
+export PATH=$CARGO_HOME/bin:$PATH
+# rustup, minimal profile, no PATH modification
+rustup target add arm-unknown-linux-musleabi
+```
+
+**The target is `arm-unknown-linux-musleabi`.** `armv6-unknown-linux-musleabihf`
+does not exist as a rustc target — confirmed by `rustup target list`, which
+offers only `arm-*` and `armv7-*`. Guessing the armv6 name is a documented trap
+and it is real.
+
+`.cargo/config.toml` for the crate:
+
+```toml
+[target.arm-unknown-linux-musleabi]
+linker = "rust-lld"
+rustflags = ["-C","link-self-contained=yes","-C","target-feature=+crt-static"]
+```
+
+`rust-lld` and `link-self-contained` mean **no cross-C-toolchain is needed** —
+nothing to install beyond rustup itself.
+
+**Proven end to end, not assumed.** A smoke-test crate built on the VM
+(392,780 bytes, `ELF 32-bit LSB executable, ARM, EABI5, statically linked,
+stripped`) was pushed to the panel and run:
+
+```
+tuxweb smoke: arch=arm pid=1899
+bound 127.0.0.1:46202
+threads: Ok(1)
+OK   exit=0
+```
+
+So the loop is closed: write Rust on the workstation, build on the VM, run on
+2.6.31/ARM1136. Note `available_parallelism()` reports **1** — the panel is
+single-core, so the server should not size pools by CPU count.
+
+Rust 1.98.1, the same version the rustls TLS 1.3 probe was built and verified
+with (§2.1).
+
 ### 2.2 TLS
 
 `rustls` 0.23 + `ring`. TLS 1.3 preferred, TLS 1.2 floor, ECDHE only, no static
