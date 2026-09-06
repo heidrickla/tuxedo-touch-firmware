@@ -1,0 +1,22 @@
+# Do not remove the following line, or various programs
+# that require network functionality will fail.
+127.0.0.1       localhost
+199.63.244.206     Tux002DD0006236
+192.168.0.2   gateway0
+192.168.0.3   gateway1
+192.168.0.4   gateway2
+192.168.0.5   gateway3
+192.168.0.6   gateway4
+
+# Redirect targets. Uncomment one and set the address. See
+# /etc/hosts.ota-notes. Nothing here may contain the words that
+# /etc/rc.d/init.d/network seds on, or it becomes a live entry.
+#
+#10.0.0.1   auiredir1.alarmnet.com
+#10.0.0.1   auiredir2.alarmnet.com
+#10.0.0.1   auiredir3.alarmnet.com
+#10.0.0.1   auiredirtest.alarmnet.com
+#10.0.0.1   gw.mylanconnect.com
+#10.0.0.1   tccaps.honeywell.com
+#10.0.0.1   ie3bvutux003.honeywell.com
+#10.0.0.1   www.tuxedotouchtoolkit.com

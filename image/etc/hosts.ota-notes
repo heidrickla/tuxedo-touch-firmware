@@ -1,0 +1,53 @@
+Firmware-update and cloud-service redirection
+=============================================
+
+/etc/nsswitch.conf is "hosts: files nisplus nis dns", so a name resolved in
+/etc/hosts wins over DNS. That makes /etc/hosts the switch for pointing the
+panel at your own server, with no binary patching.
+
+Do not put prose in /etc/hosts. /etc/rc.d/init.d/network rewrites it at boot:
+
+    51:  sed -e 's,.*hostname,'$IPADDR0'     '`hostname`','
+    58:  sed -e 's,.*gateway0,'$GATEWAY0'     gateway0,'
+    82,106,125,144: the same for gateway1..gateway4
+
+The patterns are unanchored, so ANY line containing "hostname" or "gateway0"
+through "gateway4" is rewritten, comments included. The v8 image shipped a
+comment containing the word "hostname" and got back the live entry
+
+    203.0.113.5     6285. It asks an
+
+6285 is the value of HOSTNAME exported by /etc/rc.d/rc.conf; the hostname
+service runs before network, so that is what the substitution used.
+
+Which names to override
+-----------------------
+
+The panel holds no literal firmware-download name. It asks an AlarmNet "AUI
+redirector" where to go, then fetches over plain HTTP with GET and Range
+requests. The redirectors are the names to override:
+
+    auiredir1.alarmnet.com
+    auiredir2.alarmnet.com
+    auiredir3.alarmnet.com
+    auiredirtest.alarmnet.com
+
+The same three names, paired with their addresses, are also in
+/srv_info.conf, which the firmware parses itself (ReadServInfo). Editing that
+file is the other route, and is the better one if you want the panel to reach
+a different address for the SAME name.
+
+Other vendor services, listed so they are not a mystery later:
+
+    gw.mylanconnect.com          remote-access IP update, /php/VAM/*.php
+    tccaps.honeywell.com         Total Connect
+    ie3bvutux003.honeywell.com
+    www.tuxedotouchtoolkit.com
+
+Redirecting a name to a host that does not answer makes the panel retry. The
+update client treats DNS failure as non-fatal and starts a two-hour retry
+timer ("DNS error 2 hour query timer start"), so a wrong entry degrades
+updates rather than breaking the panel.
+
+/etc/hosts lives in the root filesystem, so it survives reboots but is
+replaced by the next app2 reflash. Keep a copy.

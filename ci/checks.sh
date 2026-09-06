@@ -184,6 +184,57 @@ check_no_harness_leak() {
     [ -z "$bad" ] && pass "no emulator binary committed"         || fail "no emulator binary committed" "$bad"
 }
 
+
+# 14. /etc/hosts must carry no prose. /etc/rc.d/init.d/network rewrites the file
+#     at boot with unanchored seds (lines 51, 58, 82, 106, 125, 144):
+#         s,.*hostname,$IPADDR0     `hostname`,
+#         s,.*gateway0,$GATEWAY0     gateway0,      and gateway1..gateway4
+#     Any line containing those words is rewritten, comments included. The v8
+#     image shipped a comment containing "hostname" and the panel turned it into
+#     the live entry "203.0.113.5     6285. It asks an". Only the five real
+#     gateway entries may contain a trigger word.
+check_hosts_sed_triggers() {
+    local f=image/etc/hosts bad=""
+    [ -f "$f" ] || { skip "hosts file sed triggers" "no image/etc/hosts"; return; }
+    while IFS= read -r line; do
+        case "$line" in
+            \#*) case "$line" in
+                    *hostname*|*gateway0*|*gateway1*|*gateway2*|*gateway3*|*gateway4*)
+                        bad="$bad|$line" ;;
+                 esac ;;
+            *) case "$line" in
+                    *hostname*) bad="$bad|$line" ;;
+               esac ;;
+        esac
+    done < "$f"
+    [ -z "$bad" ] && pass "hosts file sed triggers"         || fail "hosts file sed triggers" "network(8) will rewrite:$bad"
+}
+
+# 15. Every non-comment, non-blank line of the shipped /etc/hosts must be a real
+#     entry: an address followed by proper DNS names. The mangled comment the
+#     panel produced, "203.0.113.5     6285. It asks an", fails here because
+#     "6285." ends in a dot, giving an empty final label.
+check_hosts_wellformed() {
+    local f=image/etc/hosts bad="" line addr rest n
+    [ -f "$f" ] || { skip "hosts file well formed" "no image/etc/hosts"; return; }
+    while IFS= read -r line; do
+        case "$line" in \#*|"") continue ;; esac
+        case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+        addr=$(printf '%s
+' "$line" | awk '{print $1}')
+        rest=$(printf '%s
+' "$line" | awk '{$1=""; print}')
+        printf '%s
+' "$addr" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[0-9a-fA-F:]+$'             || { bad="$bad|bad address: $line"; continue; }
+        [ -z "$(printf '%s' "$rest" | tr -d '[:space:]')" ]             && { bad="$bad|no name: $line"; continue; }
+        for n in $rest; do
+            printf '%s
+' "$n"               | grep -qE '^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$'               || bad="$bad|bad name '$n' in: $line"
+        done
+    done < "$f"
+    [ -z "$bad" ] && pass "hosts file well formed" || fail "hosts file well formed" "$bad"
+}
+
 echo "regression checks"
 check_python
 check_shell
@@ -198,6 +249,8 @@ check_docs_agree
 check_binary_glibc
 check_no_time64_recipe
 check_no_harness_leak
+check_hosts_sed_triggers
+check_hosts_wellformed
 
 echo
 [ "$FAIL" = "0" ] && echo "all checks passed" || echo "FAILURES PRESENT"
