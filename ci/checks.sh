@@ -67,14 +67,24 @@ check_attribution() {
     fi
 }
 
-# 5. No private keys or credentials committed.
+# 5. No private keys or credentials committed. This repo is public and is
+#    about to grow TLS tooling, so the two gaps in the original mattered:
+#    it only read the first 200 bytes, and its regex demanded an algorithm
+#    word, so it did NOT match "-----BEGIN PRIVATE KEY-----" -- the PKCS#8
+#    header openssl genpkey emits by default, i.e. the likeliest way a key
+#    would actually arrive.
+#
+#    Prose that merely mentions the header must still pass, so a hit needs
+#    the armor AND a long base64 line: documentation says the words, key
+#    files carry the payload.
 check_secrets() {
     local bad=""
     for f in $(git ls-files); do
         [ -f "$f" ] || continue
-        head -c 200 "$f" 2>/dev/null | grep -qE 'BEGIN (OPENSSH|RSA|EC|DSA|PGP) PRIVATE KEY' && bad="$bad $f"
+        grep -qE -- '-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----' "$f" 2>/dev/null || continue
+        grep -qE '^[A-Za-z0-9+/]{40,}={0,2}$' "$f" 2>/dev/null && bad="$bad $f"
     done
-    for f in $(git ls-files '*_ed25519' '*_rsa' 'id_*' '*.pem' '*.key'); do
+    for f in $(git ls-files '*_ed25519' '*_rsa' 'id_*' '*.pem' '*.key'                             '*.crt' '*.der' '*.p12' '*.pfx' '*.jks' '*.keystore'); do
         case "$f" in *.pub) ;; *) bad="$bad $f";; esac
     done
     [ -z "$bad" ] && pass "no private keys committed" || fail "no private keys committed" "$bad"
