@@ -58,6 +58,34 @@ an alarm panel that must keep working when the internet is down**. And the
 long-lived secret stays on a workstation rather than on a device in a hallway
 that anyone can unscrew.
 
+## Current state, 2026-09-06
+
+The owner CA is **`C:/Users/dev/.tuxedo-ca`** on the workstation, valid to
+2036-09-03. The panel holds a leaf for `203.0.113.5` issued from it, serial
+`25f646f4...`, sha256 `647c35bb...`, valid to 2027-10-08 and verified to chain
+to `ca.crt`.
+
+**Lewis issues certificates from this CA. Do not issue, rotate or move it.**
+It stays on workstation.
+
+`ca.key` keeps **normal inherited permissions on purpose.** It was briefly
+locked to a single account and that was wrong: other machines and accounts in
+the house are meant to be able to use this CA. Do not tighten it again without
+asking.
+
+**Back up `ca.key`.** It is the only thing that can rotate the panel's
+certificate. Lose it and the installed leaf becomes un-rotatable; the only
+recovery is a new CA plus re-trusting it everywhere.
+
+That is not hypothetical. The leaf previously on the panel was issued from a CA
+created in a session scratchpad, so it was orphaned the moment that directory
+was cleaned up. It has been removed.
+
+**Two CAs made by this tool are indistinguishable by name.** The subject is
+fixed at `O=Tuxedo Touch,CN=Tuxedo Owner CA`, so the orphaned leaf and the real
+one showed the *same* issuer string and differed only by serial and key.
+Compare serial or sha256, never the issuer name.
+
 ## Use
 
 ```bash
