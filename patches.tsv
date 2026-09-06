@@ -11,8 +11,10 @@
 # OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda the two differ
 # by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four bytes.
 #
-# COMPLETE as of 2026-09-06. Applying every row to the three GENUINE STOCK
-# binaries reproduces v12 exactly -- 11 of 11 sites, nothing unaccounted for:
+# COMPLETE as of 2026-09-06, and this was EXECUTED, not asserted. A copy of the
+# genuine stock tree at /work/extracted/root_stock was patched with every row:
+# "11 sites: 0 already patched, 11 applied, 0 needing attention", and the three
+# results matched the v12 md5s byte-exactly. Re-run it any time; see below.
 #
 #   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> c8971027bb9f77801d01713b4ae50b2f
 #   tuxedo     6f8055f5cadba9d0b1582297606427a8 -> 98370c310e709ba565abfce8ea0a3e17
@@ -52,3 +54,5 @@ P11-back-gate	/opt/webserver/Barracuda	0x333b4	a00c001a	0000a0e1	a-2: Type=502 B
 P12-home-gate	/opt/webserver/Barracuda	0x333f4	900c001a	0000a0e1	a-2: Type=503 HOME no longer dropped when consoleMode is nonzero
 P9-cam-listener	/supervis	0x45e8	b4f4ffeb	0100a0e3	remove the camera listener on port 6800
 P10-console-gate	/tuxedo	0x135a3c	0300000a	030000ea	console mode sends real display text instead of a canned placeholder
+P13-pushauth-hook	/opt/webserver/Barracuda	0x72420	47c4ffeb	26c9ffeb	push stream: EhDir_service auth call redirected into the P13 stub
+P13-pushauth-cave	/opt/webserver/Barracuda	0x648c0	30402de90050a0e104d04de2020000ead8ffffeb0400a0e11c7efeeb0500a0e16be9ffeb004050e2f8ffff1a020000ead0ffffeb0400a0e1147efeeb080085e263e9ffeb004050e2f8ffff1a030000eaa82095e54830a0e3912320e0	70402de90040a0e10150a0e11cfbffeb000050e37080bd0834309fe5030054e17080bd18080085e277e4ffeb000050e30100a0137080bd18b63bd5e1600085e210109fe5000053e361fcff0b0000a0e37080bde89cb5550091010000	SimpleDebugger.interface push stream now requires a logged-in session, else HTTP 401

@@ -6,6 +6,65 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
+## v13 — 2026-09-06
+
+**What it is: v12 plus P13, which closes the unauthenticated push stream.**
+Before this, `GET /SimpleDebugger.interface/G.` returned live alarm state —
+armed/disarmed, the exit-delay countdown, partition status — to anything on the
+LAN with no cookie and no login, on all four listeners. That was the highest
+item on `tls/THREAT-MODEL.md`'s list.
+
+### Artefacts
+
+| | |
+|---|---|
+| `app2.hdr` | 125,685,236 bytes, md5 `3ebcbbe2bac88412a3c5fe0fa528c02b` |
+| payload | 125,685,108 bytes, md5 `54b14f6831c9131b63701a8b59bae56c` -> rebuilt |
+| header | size field `125685108`, checksum `0xd6bb` computed and matching |
+| `Barracuda` | md5 `55448f05ff28520f3b68b99312126946` |
+
+Same size as v12 — the patch is a 4-byte hook plus 92 bytes written into a dead
+function, so the JFFS2 layout is unchanged.
+
+### New in v13
+
+| patch | binary | what it does |
+|---|---|---|
+| P13-pushauth-hook | `Barracuda` | `EhDir_service`'s auth call at file 0x72420 redirected into the stub |
+| P13-pushauth-cave | `Barracuda` | 92 bytes in the unreferenced `HttpServer_destructor` at file 0x648c0: calls stock `HttpDir_authenticateAndAuthorize`, and for the SimpleDebugger dir only, additionally requires the session to carry `AuthenticatedUser`, else `HTTP 401` |
+
+Design, cave analysis and the full argument are in `PUSH-STREAM-AUTH.md`.
+
+### Verified under emulation BEFORE flashing
+
+This is the first release where the change was executed before it was shipped.
+`emu/` runs the real ARM binary under `qemu-user` in a chroot of the rootfs with
+the panel's own configuration partition restored into it, and the runner asserts
+the process answering is the one it started.
+
+| path | v12 control | v13 |
+|---|---|---|
+| `/` | 200, 133 B | 200, 133 B |
+| push `:80` | 200, 526 B | **401**, 241 B |
+| push `:6280` | 200, 526 B | **401**, 241 B |
+| `/home.html` | 302 | 302 |
+| process afterwards | alive | alive, zero SIGSEGV |
+
+Then the authenticated direction, logging in against the emulated server with
+the panel's real account store: anonymous denied on all four listeners,
+authenticated OK on all four, web UI 200.
+
+That answered the two things `PUSH-STREAM-AUTH.md` §6 had recorded as
+unanswerable before a flash — whether the deny is a clean `401` rather than a
+200-with-login-page, and whether the cave faults in the request path. It cost
+none of the panel's 24-relaunch watchdog budget.
+
+**What emulation did not cover:** `qemu-user` forwards syscalls to the build
+host kernel, so 2.6.31 socket semantics are unmodelled, and with no `/tuxedo`
+the stream carries no alarm state.
+
+---
+
 ## v12 — 2026-09-06
 
 **What it is: v11 plus the three patches that had only ever existed on the

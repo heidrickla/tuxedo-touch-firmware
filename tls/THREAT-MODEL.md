@@ -62,13 +62,17 @@ change this: the plaintext port is still there, and the stream does not
 authenticate on any port.
 
 Baseline measured 2026-09-06 with `test-stream-auth.py`, which quantifies it
-rather than asserting it:
+rather than asserting it. All **four** listeners were exercised, not two — the
+harness previously only covered the plaintext pair, which would have hidden a
+split result between them:
 
 ```
-anonymous port 80    EXPOSED  17 frames, 8 carrying alarm state
-anonymous port 6280  EXPOSED   9 frames, 4 carrying alarm state
-authenticated  :80   OK        9 frames
-panel web UI         OK        HTTP 200
+anonymous port 80        EXPOSED   9 frames, 4 carrying alarm state
+anonymous port 6280      EXPOSED  17 frames, 8 carrying alarm state
+anonymous port 443  tls  EXPOSED   9 frames, 4 carrying alarm state
+anonymous port 9443 tls  EXPOSED  17 frames, 8 carrying alarm state
+authenticated  x4        OK        frames on every listener
+panel web UI             OK        HTTP 200
 ```
 
 The replacement is designed to require the session cookie on this path, and the
@@ -83,7 +87,15 @@ There is likewise only one EhDir object, at `0x55b59c`. So authenticating the
 push stream is a single change at the directory, not a per-port exercise, and a
 fix that appeared to work on port 80 alone would be a sign something was wrong.
 
-**Until that ships, this is open.**
+**Status 2026-09-06: the fix is built and verified, and not yet flashed.** P13
+(`PUSH-STREAM-AUTH.md`) gates the endpoint on the session. Run under `qemu-user`
+against the real ARM binary with the panel's own configuration, it returns
+`HTTP/1.1 401` to an anonymous client on all four listeners while an
+authenticated client still receives frames, with `/` and `/home.html` unchanged
+and no fault in the request path. The live-panel baseline it has to beat was
+measured the same day and is the table above.
+
+**Until it is flashed, this is still open on the panel.**
 
 ### 4. The camera scan broadcasts the LAN inventory
 

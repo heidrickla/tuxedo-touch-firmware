@@ -19,6 +19,7 @@ Exit status is the number of failed checks.
 import argparse
 import http.client
 import json
+import os
 import re
 import socket
 import sys
@@ -66,15 +67,21 @@ def https_get(host, path, port=443, headers=None, body_limit=4096):
         conn.close()
 
 
-def read_stream(host, path, seconds=12, limit=8192):
-    """Hold the multipart stream on a raw socket and return the bytes seen."""
+def read_stream(host, path, seconds=12, limit=8192, cookie=None):
+    """Hold the multipart stream on a raw socket and return the bytes seen.
+
+    `cookie` is required against firmware carrying P13, which gates this path on
+    a logged-in session. Without it the framing checks see a 401 body instead of
+    a stream, and fail in a way that looks like broken framing.
+    """
     import time
     s = socket.create_connection((host, 80), timeout=TIMEOUT)
     try:
-        s.sendall(
-            f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
-            f"Connection: keep-alive\r\n\r\n".encode()
-        )
+        req = f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+        if cookie:
+            req += f"Cookie: {cookie}\r\n"
+        req += "Connection: keep-alive\r\n\r\n"
+        s.sendall(req.encode())
         s.settimeout(2.0)
         buf = b""
         t0 = time.time()
@@ -91,11 +98,11 @@ def read_stream(host, path, seconds=12, limit=8192):
         s.close()
 
 
-def check_push_transport(host, contract, r):
+def check_push_transport(host, contract, r, cookie=None):
     ps = contract["transport"]["push_stream"]
     path = ps["path"]
 
-    raw = read_stream(host, path)
+    raw = read_stream(host, path, cookie=cookie)
     head, _, body = raw.partition(b"\r\n\r\n")
     head_s = head.decode("latin-1")
 
@@ -125,11 +132,44 @@ def check_push_transport(host, contract, r):
           "quirk: close delimiter after EVERY part (invalid RFC 2046)",
           f"{opens} opening boundaries, {closes} close delimiters")
 
-    # auth: stock requires none
-    r.add(len(body) > 0, "stream delivers frames with no credential",
-          f"{len(body)} body bytes")
-
     return body
+
+
+def check_push_auth(host, contract, r, cookie=None):
+    """Whether the stream is gated, reported for what it is.
+
+    The contract records VENDOR behaviour, where this path needs no credential.
+    Firmware carrying P13 deliberately diverges: anonymous gets 401. Both are
+    legitimate states, so this reports which one is in front of it rather than
+    failing on the divergence -- but it is never silent about an open one.
+
+    The check this replaces was `len(body) > 0`, which passed on a 401 as
+    happily as on a stream, because an error response also has a body. It
+    reported a gated panel as "delivers frames with no credential".
+    """
+    path = contract["transport"]["push_stream"]["path"]
+    raw = read_stream(host, path, seconds=8)
+    head, _, body = raw.partition(b"\r\n\r\n")
+    status = head.decode("latin-1").splitlines()[0] if head else "(no response)"
+    boundary = contract["transport"]["push_stream"]["boundary"].encode()
+
+    if body.count(b"--" + boundary) > 0:
+        r.add(True, "anonymous access: STOCK behaviour, stream is OPEN",
+              f"{status} -- {len(body)} body bytes with no credential. This is "
+              f"the exposure in tls/THREAT-MODEL.md section 3.")
+    else:
+        r.add(status.startswith("HTTP/1.1 401"),
+              "anonymous access: gated by P13, 401 and no frames", status)
+
+    if cookie:
+        _, _, body2 = read_stream(host, path, seconds=8,
+                                  cookie=cookie).partition(b"\r\n\r\n")
+        r.add(body2.count(b"--" + boundary) > 0,
+              "authenticated access still streams (what Home Assistant needs)",
+              f"{len(body2)} body bytes")
+    else:
+        r.add(True, "authenticated access still streams",
+              detail="no --creds given", skipped=True)
 
 
 def check_push_path_quirk(host, contract, r):
@@ -228,7 +268,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="203.0.113.5")
     ap.add_argument("--contract", required=True)
+    ap.add_argument("--creds", help="file holding the panel password. Needed "
+                                    "against P13 firmware, which gates the push "
+                                    "stream on a session. A wrong password is "
+                                    "never submitted.")
     args = ap.parse_args()
+
+    cookie = None
+    if args.creds and os.path.exists(args.creds):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from tuxedo_status_probe import TuxedoProbe
+        line = open(args.creds, encoding="utf-8").read().strip().splitlines()[0]
+        user, pw = line.split(":", 1) if ":" in line else ("lewis", line)
+        probe = TuxedoProbe(args.host, user, pw, scheme="https")
+        probe.login()
+        cookie = probe.session_cookie
 
     with open(args.contract, encoding="utf-8") as fh:
         contract = json.load(fh)
@@ -240,8 +294,9 @@ def main():
 
     r = Result()
     print("transport / framing")
-    body = check_push_transport(args.host, contract, r)
+    body = check_push_transport(args.host, contract, r, cookie)
     check_push_path_quirk(args.host, contract, r)
+    check_push_auth(args.host, contract, r, cookie)
     print("\nframe decoding")
     check_frame_cases(contract, body, r)
     print("\nendpoints")

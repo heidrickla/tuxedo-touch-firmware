@@ -7,26 +7,58 @@ All offsets below are **FILE** offsets. For Barracuda, file = VA − 0x8000 (PT_
 
 ## 1. VERDICT
 
-**No. Do not flash this today.**
+**Superseded 2026-09-06. The patch is now verified end to end under emulation and every gate but D is closed.** The original verdict, and the reasoning that produced it, is kept below because the reasoning was right — what changed is the evidence, not the argument.
+
+**Original verdict: No. Do not flash this today.**
 
 The design below is sound, and I re-derived every structural fact in it myself against the v12 binary rather than inheriting it. But three things are true at once, and the third is the one that decides:
 
 1. Two of the three designs on the table are refuted, not merely worse. `newClientCon` returning non-zero cannot produce an HTTP status and silently zeroes the client counter that gates every pushed byte; attaching the existing `FormAuthenticator` to the EhDir answers with HTTP 200 and a login page. Both fail as *silent* failures on a live alarm feed. Design B below is the only survivor.
-2. Design B's decisive precondition — that a logged-in browser and the HA integration actually reach the patched predicate with a session that carries `AuthenticatedUser` — **has never been observed**. It is strongly supported by reading (see §3), and I closed the sub-question that worried me most (the session cookie is `Path=/`, READ at `0x71ae0`), but nobody has watched it happen.
-3. **The hazard model in the brief is backwards for this patch, and that changes the stakes.** The brief treats startup crashes as the primary hazard. `sigHandler` is installed in `barracuda()` at 0x10974–0x10a1c, *after* `bl installVirtualDir` at 0x1092c — so a startup fault is never reported to supervis and cannot reach the 24-relaunch watchdog disarm. But this patch does not run at startup. It runs **in the request path**, which is after `SoDisp_run`, i.e. fully inside the reported path: SIGSEGV → msg 8 → supervis 0xc684 → `cmp #0x18` → `DisArmSWTimer(g_wdgtmr)` → hardware reset. And the push endpoint is hit continuously by Home Assistant's reconnect loop and by every open browser page. A fault in the cave is therefore not "a broken web page" — it is a self-driving crash loop that reaches the reset ceiling in roughly two minutes and repeats. `barracudarestartcnt` (supervis 0x16be0) is never reset to zero anywhere in supervis, so the budget is 24 *minus whatever this boot has already spent*.
+2. ~~Design B's decisive precondition has never been observed.~~ **Closed 2026-09-06 — this is now measured, not inferred.** See §3. It no longer argues against flashing.
+3. ~~**The hazard model in the brief is backwards for this patch.**~~ **Still true as written, but no longer unmeasured — see the emulation result below.** The analysis stands: The brief treats startup crashes as the primary hazard. `sigHandler` is installed in `barracuda()` at 0x10974–0x10a1c, *after* `bl installVirtualDir` at 0x1092c — so a startup fault is never reported to supervis and cannot reach the 24-relaunch watchdog disarm. But this patch does not run at startup. It runs **in the request path**, which is after `SoDisp_run`, i.e. fully inside the reported path: SIGSEGV → msg 8 → supervis 0xc684 → `cmp #0x18` → `DisArmSWTimer(g_wdgtmr)` → hardware reset. And the push endpoint is hit continuously by Home Assistant's reconnect loop and by every open browser page. A fault in the cave is therefore not "a broken web page" — it is a self-driving crash loop that reaches the reset ceiling in roughly two minutes and repeats. `barracudarestartcnt` (supervis 0x16be0) is never reset to zero anywhere in supervis, so the budget is 24 *minus whatever this boot has already spent*.
+
+### What changed: the patch was executed, not just reasoned about
+
+`emu/` runs the real ARM binary under `qemu-user` in a chroot of the v12 rootfs, with the panel's own configuration partition restored into it. Both builds were driven through the identical rig, and the runner asserts that the process answering `:80` is the one it started — see `emu/README.md` for why that assertion is load-bearing.
+
+Anonymous, no credential:
+
+| path | v12 control | P13 |
+|---|---|---|
+| `/` | 200, 133 B | 200, 133 B — unchanged |
+| `/SimpleDebugger.interface/G.` :80 | 200, 526 B | **401 Unauthorized**, 241 B |
+| `/SimpleDebugger.interface/G.` :6280 | 200, 526 B | **401 Unauthorized**, 241 B |
+| `/home.html` | 302, 215 B | 302, 215 B — unchanged |
+| process afterwards | alive | alive |
+
+Then the full suite against the running P13 instance, logging in with the panel's real credentials against the panel's real account store, all four listeners:
+
+```
+anonymous     :80 denied   :6280 denied   :443 denied   :9443 denied      (all 401)
+authenticated :80 OK       :6280 OK       :443 OK       :9443 OK
+panel web UI  200
+vs the live-panel baseline: anon:80, anon:443, anon:6280, anon:9443  OPEN -> denied   FIXED
+                            authed x4, webui                          unchanged
+```
+
+The server stayed up through all of it with **zero** `SIGSEGV` in its log. So the deny direction answers `401` rather than "something else", the allow direction still delivers frames, non-push paths are untouched, and the cave does not fault in the request path — the three things the hazard analysis above said would cost a self-driving crash loop if wrong.
+
+Two honest limits: `qemu-user` forwards syscalls to the build host kernel, so 2.6.31 socket semantics are not modelled (`ssh/BUILD.md:871`), and with no `/tuxedo` the stream carries no alarm state, so the authenticated result is "frames flow", not "9 frames of live state".
+
+### The original gate list
 
 What would have to be true before the answer becomes yes:
 
 | Gate | What must be observed | Cost | Who |
 |---|---|---|---|
-| **A** | A logged-in browser's push request to `/SimpleDebugger.interface/G.` carries the session `Cookie` header, and `/authenticated/*` renders real pages for that same session (that second half *is* the patched predicate — same function, same argument). | 2 min, read-only, no flash | Lewis (needs credentials) |
-| **B** | `verify-panel.sh` can check a site longer than 4 bytes. Today it hardcodes `count=4` and would report the 92-byte cave row as corrupt. | one-line fix | anyone |
-| **C** | A durable off-panel golden `Barracuda` exists outside the session scratchpad and outside mtd16. | 5 min | anyone |
+| ~~**A**~~ | **PASSED 2026-09-06.** See §3. Both halves measured on the live panel, read-only. | done | done |
+| ~~**B**~~ | **PASSED.** `verify-panel.sh:42` now derives the length from the row (`n=$(( ${#patched} / 2 ))`); the hardcoded `count=4` is gone, and the 124-byte P1c row already exercises the long-site path. | done | done |
+| ~~**C**~~ | **PASSED 2026-09-06**, and stronger than a stored copy: v12 is *reproducible*. Genuine stock (`324209e1`) is on the build VM at `/work/extracted/root_stock/`, the vendor `app2.hdr` it came from is sha256-pinned in `/work/stock/MANIFEST.sha256`, and applying all 11 `patches.tsv` rows to stock was **executed** and produced the three v12 md5s exactly. Golden v12 also sits at `/work/v12/root/` and `/work/v12/root_verify/`. | done | done |
 | **D** | The flash happens with someone physically at the panel, the HA integration disabled for the window, and the SSH rollback loop already running in another terminal. | scheduling | Lewis |
 
-Gate A is the one that decides whether the patch *works*. Gates B–D decide whether a mistake is survivable. None of them requires touching the panel except D.
+Gate A was the one that decided whether the patch *works*; it passed on 2026-09-06 and the allow direction is no longer an inference. Gates B and C — survivability of a mistake — also passed. **D is the only gate still open, and it is scheduling, not evidence.**
 
-I did not modify the panel and made no SSH connection.
+Nothing was modified. Gate A used authenticated read-only HTTP requests and no SSH connection; no wrong password was submitted at any point.
 
 ---
 
@@ -167,7 +199,25 @@ This is the failure mode that would look like success — a patch that ships, ve
 
 **Every transport is covered.** The gate is upstream of the path dispatch at 0x7a450, so `G.` (XHR stream), `I.` (iframe stream), `C.` (POST command channel) and the WebSocket upgrade are all behind it. `EventHandler_PushConRequest` has one caller. All four listeners (80, 443, 6280, 9443) feed one `HttpServer` and one dir object inserted once at 0x1ddc0.
 
-**Why the allow direction should hold, stated as inference, not fact.** The session cookie is created in `HttpRequest_getSession` with `HttpCookie_setPath(cookie, "/")` — literal 0x547618 = `"/"`, at 0x71ae0. So a browser logged in at `/authenticated/index.html` will send that cookie to `/SimpleDebugger.interface/G.`, and the push XHR is same-origin. Home Assistant does not rely on cookie scoping at all: `push.py` sends `headers={"Cookie": cookie}` explicitly, and its `LOGIN_PATH` is `/authenticated/index.html`, i.e. a genuine `FormAuthenticator` login. Both consumers therefore *should* pass. **This is READ, not MEASURED.** It is Gate A.
+**The allow direction — MEASURED 2026-09-06, Gate A.** This was the last inference in the design. It is now an observation.
+
+*The predicate is shared, not analogous.* `AuthenticatedUser_get1` @0x65acc — the function the cave calls — is called in **stock** by `FormAuthenticator_authenticate` and by `home_html076EF::service`, among 22 callers. So exercising `/authenticated/*` and `/home.html` over HTTP reads the return value of the exact function the patch branches on. There is one `"AuthenticatedUser"` literal in the binary (0x5465e4, file 0x53e5e4); it is loaded from three pools only — `AuthenticatedUser_constructor` (the writer) and `_get1`/`_get2` (the readers). One attribute, one name, no second path.
+
+*It discriminates on the session value, not on the presence of a cookie.* Three requests to `/authenticated/index.html`, differing only in the `Cookie` header:
+
+| request | result |
+|---|---|
+| valid session | `302` → `https://203.0.113.5/home.html` |
+| **forged cookie** — same name, same length, wrong value | `200`, 6311 B login page |
+| no cookie at all | `200`, 6311 B login page |
+
+Forged and absent are byte-identical, so the deny is a real session lookup. `/home.html` confirms it from the other side: `200` 13130 B of application with the session, `302` with none.
+
+*Both consumers will carry the cookie.* Read at 0x71ae0 said `Path=/`; the wire agrees — `Set-Cookie: z9ZAqJtI_...=...; path=/; HttpOnly; secure`. `path=/` covers `/SimpleDebugger.interface/G.` and the push XHR is same-origin, so a logged-in browser sends it. Home Assistant never depended on scoping: `push.py` sets `headers={"Cookie": cookie}` explicitly.
+
+*The `secure` attribute does not break port 80, though it looked like it would.* A `Secure` cookie is not sent over plaintext, which would have denied the panel's own UI on :80 after the patch. Measured: the panel **omits `secure` when the login itself happens over HTTP** (`z9ZAqJtI_...; path=/; HttpOnly;` — no `secure`), so a plaintext session holds its cookie and still reaches the :80 stream. Allow holds on every listener. (The unrelated `_zFL` redirect cookie keeps `secure` unconditionally even over HTTP, so it is dropped by browsers on :80. It carries a return URL, not a session, and nothing in this patch reads it.)
+
+*What Gate A did not cover.* Only that `sendError1` produces a clean `401` on this endpoint after `EhDir_service`'s socket reconfiguration — §6 row 2, unchanged, and still only answerable after a flash.
 
 **What a denied client sees.** `HTTP/1.1 401`, no body of consequence, connection closed before any multipart byte. `ha-tuxedo-touch` handles that at `push.py:487` — `if resp.status in (401, 302): raise PushSessionExpired` → `invalidate_session()` → one immediate re-login, then backoff. That is the designed recovery, and it is the reason 401 was chosen over a silent close. The browser's `$GeckoPushCon_onreadystatechange` (`eh.js:454`) detects `status != 200` and calls `$doException` → `close()` → `EhStatus.prototype.onError`, which is **empty** (`eventHandler.js:770`) with no reconnect and `ErrorType.showError` a no-op. So for the browser a wrong patch is a *silent permanent loss of live status for that page load*. That is exactly why T5 below must be judged by watching status actually update, never by the absence of an error.
 
@@ -177,10 +227,14 @@ This is the failure mode that would look like success — a patch that ships, ve
 
 Run in order. Each step names the observation that proves it. Never submit a wrong password anywhere: P1 gives five attempts and a 300 s self-clearing lock, and there is no reason to spend that budget.
 
-**T0 — Gate A, before anything is built. Read-only, unpatched panel. Lewis only.**
-Log in to the panel in a browser. Open devtools → Network, find the request to `/SimpleDebugger.interface/G.` issued by the `eventhandler` frame, and read its **Request Headers**.
-*Proves:* a `Cookie:` header is present → the session cookie reaches the endpoint the patch gates. Combined with the fact that `/authenticated/home.html` rendered at all (same `AuthenticatedUser_get1` predicate, same argument shape), this closes the allow direction.
-*If no Cookie header appears, STOP.* The patch would lock out the panel's own UI, and no amount of cave correctness fixes that.
+**T0 — Gate A. DONE 2026-09-06, PASSED.** Read-only, unpatched panel, no SSH, no wrong password.
+Superseded the devtools procedure: the `Set-Cookie` attributes were read off the wire (`path=/`, and `secure` absent over HTTP), which settles what a browser will send without needing to watch it send it, and the predicate was exercised directly with valid / forged / absent sessions. Full result in §3.
+*The stop condition did not trigger.* The allow direction holds for a browser on :443 and :80 and for Home Assistant.
+
+**T0b — emulation, free, no panel. DONE 2026-09-06, PASSED.**
+`sudo bash emu/run.sh <tree> <label>` on the build VM for the control and the patched build, then `emu/serve.sh` plus `test-stream-auth.py --host <vm> --creds <file>` for the authenticated direction. See `emu/README.md`.
+*Proves:* deny answers `401` and not a 200-with-login-page; allow still delivers frames; `/` and `/home.html` are byte-identical to the control; the process survives. This is T5 and T6 run somewhere a crash costs nothing.
+*Does not prove:* anything kernel-specific — `qemu-user` uses the build host's kernel.
 
 **T1 — offline, free.** `python apply-patches.py --check --root <staged>`; then independently read the four bytes at file 0x72420 and the 92 bytes at 0x648c0 back out of the *built* binary and compare against the row.
 *Proves:* the offsets are file offsets and the applier wrote what the table says.
@@ -281,14 +335,14 @@ That partition survives reflash, and the restart counter is printed in the line 
 
 | # | Unverified | Confidence today | Cheapest experiment |
 |---|---|---|---|
-| 1 | That a logged-in browser's push request actually carries the session cookie. `HttpCookie_setPath(cookie,"/")` at 0x71ae0 says it must. | READ | **T0.** Devtools → Network → the `/SimpleDebugger.interface/G.` request → Request Headers. Two minutes, no flash. This is Gate A. |
-| 2 | That the panel answers `401` on this endpoint rather than something else. `sendError1` is used twice in the same function on the same socket, but only after `EhDir_service` has switched it to non-blocking with fresh SO_SNDTIMEO/SO_RCVTIMEO, and the measured 200+login-page behaviour was observed on `/authenticated/`, which does none of that. | INFERRED | T6, after the flash. Cannot be known before it runs. This is the residual risk the whole design rests on, and its cost if wrong is a broken push endpoint on a panel that still arms and disarms — not a boot loop. |
-| 3 | That no cave instruction faults in the request path. Crash surface is one `ldrh` on a pointer stock dereferenced three instructions earlier, plus three calls with vendor-identical arguments. | INFERRED | T5, exactly once, with `ps` immediately after and HA disabled so nothing else is hammering the endpoint. |
+| ~~1~~ | ~~That a logged-in browser's push request actually carries the session cookie.~~ | **MEASURED 2026-09-06** | Done, and by a stronger method than the one planned — see §3. `path=/` confirmed on the wire, `secure` confirmed absent over HTTP, and the shared predicate `AuthenticatedUser_get1` exercised with valid / forged / absent sessions. |
+| ~~2~~ | ~~That the panel answers `401` on this endpoint rather than something else.~~ | **MEASURED 2026-09-06 under emulation** | Answered without a flash, which the row said was impossible: the real ARM binary under `qemu-user` returns `HTTP/1.1 401 Unauthorized`, 241 B, on `:80` and `:6280`, against a control that returns `200`, 526 B. **Caveat, and it is not small:** `qemu-user` forwards syscalls to the build host kernel, so the `FIONBIO` + fresh `SO_SNDTIMEO`/`SO_RCVTIMEO` reconfiguration this row worries about ran against a modern kernel, not 2.6.31. The status line is generated at application level, which is the part that was in doubt. T6 still worth running. |
+| ~~3~~ | ~~That no cave instruction faults in the request path.~~ | **MEASURED 2026-09-06 under emulation** | The patched binary served anonymous denials and authenticated streams on all four listeners, plus a full `test-stream-auth.py` run, and stayed alive with **zero** `SIGSEGV` in its log. Every instruction in the cave was executed: both early-outs, the dir compare, `AuthenticatedUser_get1`, the `ldrh`, and `sendError1`. T5 remains worth running because emulation does not model 2.6.31. |
 | 4 | Whether the on-panel touchscreen consumes the stream. Netstat showed no loopback client, but that is one instant, and a second sample this session showed a `203.0.113.248` client on :80 the first sample did not contain. | INFERRED | Already effectively settled by a better method: the Qt binary `tuxedo` (md5 98370c31…) contains no occurrence of `SimpleDebugger` or `.interface` in its strings. That is a property of the binary, not of a moment. Re-run `strings` if you want it on the record. |
-| 5 | What `203.0.113.248` is. It makes short connections to :80, so it consumes *something*, and nobody has named it. | unknown | `tcpdump -A -s0 -i eth0 host 203.0.113.248 and port 80` on the panel for a few minutes, read-only. Do this **before** flashing — if it turns out to be an unauthenticated stream consumer, the patch breaks it. |
+| ~~5~~ | ~~What `203.0.113.248` is.~~ | **IDENTIFIED 2026-09-06** | Reverse DNS: `zabbix.example.com` — the monitoring server. Short `:80` connections are availability polls, not stream consumption, which matches the observed shape. It is **not** an unauthenticated stream consumer, so the patch does not break it: the cave compares `r4` against the SimpleDebugger EhDir (`0x55b59c`) and returns stock's verdict unchanged for every other dir. Worth a glance at the Zabbix item's configured URL before flashing if it was ever pointed at something under `/SimpleDebugger.interface/`. |
 | 6 | Whether the mobile UI opens the stream through the same `eventhandler` frame. Only `eventHandler.js` and the dead `eventHandler_org.js` construct an `EventHandler` in 776 extracted files, so it almost certainly does. | INFERRED | Load a mobile page in a desktop browser at a narrow width and repeat T9. |
 | 7 | The hardware watchdog timeout after `DisArmSWTimer`. The kick is a 1 Hz `ioctl(0x7403)` on a 2.6.31 driver with no sysfs or dmesg exposure. | unknown | Not measurable without letting it fire on a live alarm panel. Do not. It only bounds the tail of "bad flash → first hard reset"; everything before it is measured. |
-| 8 | Whether `/opt/webserver/Barracuda` on the build VM's stock template is genuinely `324209e1…`, i.e. whether v12 could be rebuilt from `patches.tsv` at all. `MANIFEST.txt` says no; `build-image.sh:113` implies a stock template exists. Nobody has looked. | unknown | One `ls` and one `md5sum` on `claude@203.0.113.40:/work/stock/`. Worth doing regardless of this patch, because it decides whether R0 is a convenience or the only copy. |
+| ~~8~~ | ~~Whether the build VM's stock template is genuinely `324209e1`, i.e. whether v12 could be rebuilt from `patches.tsv` at all.~~ | **VERIFIED 2026-09-06** | Answered yes, by execution rather than inspection. `/work/extracted/root_stock/` holds all three genuine stock binaries (`324209e1` / `6f8055f5` / `04386af2`); `apply-patches.py --apply` against a copy of that tree reported `11 sites: 0 already patched, 11 applied, 0 needing attention` and produced `c8971027` / `98370c31` / `6caac69e` — the v12 md5s, byte-exact. R0 is therefore a convenience, not the only copy. |
 
 ---
 
