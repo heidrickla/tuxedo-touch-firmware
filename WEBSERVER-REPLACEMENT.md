@@ -1095,10 +1095,31 @@ msgType 504's format has 15 conversions, which is exactly the shape of the
 captured `0:504:1:P1  H:1:0:3:3` — 8 fields with 7 `':'` separators between
 them. That agreement is the check on this table.
 
-**16 is still a lower bound.** The walk stops at each handler's first
-unconditional branch, and msgType 18 emits frames — `0:18:1 P1  H:2` is in the
-capture — from code reached *after* such a branch. Handlers that share
-formatting by branching into a neighbour's tail are not counted here.
+**16 is a lower bound, and msgType 18 shows why.** Handlers may set up the
+argument frame and then **branch to a shared two-instruction tail** that does
+nothing but `bl bprintf; b 0x104a8` — `0x103bc` is one such tail. A walk bounded
+at the first unconditional branch cannot see those.
+
+msgType 18 decoded, and it matches the capture exactly:
+
+```
+0xf1bc  r5 = a global buffer;  r4 = sp+0x282 = reply+0x0E (text)
+0xf1d0  strcpy(global, text)        <- the text is COPIED to a global first
+0xf1d8  HomePartChanged(text)
+0xf1dc  setQuickArmStatus()
+0xf1e4  getQuickArmStatus()  -> [sp+0x10]
+0xf1ec  fmt = '%d%s%d%s%s%s%d'
+0xf208  b 0x103bc                   <- the shared bprintf tail
+```
+
+`sessionId : msgType : <global text> : getQuickArmStatus()` = the captured
+`0:18:1 P1  H:2`.
+
+Two things a reimplementation needs from this. **msgType 18 shares msgType 22's
+format**, so format string alone does not identify a message. And **the text it
+prints is a global copy, not the reply buffer** — 18 `strcpy`s the reply text
+into a global before formatting, so the value emitted is whatever that global
+last held. Reading the reply alone is not enough to reproduce the frame.
 
 **Two earlier versions of this table were wrong, in opposite directions.** One
 listed nine formatters of which seven were false, from a scan that ran a fixed
