@@ -1154,10 +1154,34 @@ missed it:
 0x147300  bl  CReceiverThread::registerclient
 ```
 
-**The 40-code table is a lower bound.** It followed only `cmp/beq` and missed
-every case written as `cmp/bne skip`, which is exactly the same undercount made
-earlier against Barracuda's own dispatch and then written into TRAPS. Codes
-present in the table are real; the table is not the complete set.
+**The 40-code table was a lower bound; re-running with both forms gives 56.**
+It had followed only `cmp/beq` and missed every case written `cmp/bne skip` —
+the same undercount made earlier against Barracuda's dispatch and already
+written into TRAPS. Codes the corrected pass adds: **4** `ArmNight`, **9**
+`MultiPartitionDisarm`, **14** `BypassClearAllZones`, **19**
+`requestconsolemode`, **52** `AddCamera`, **57** `StartCameraDiscovery`, **105**
+`ZwaveDeviceDel`, **108** `ZwaveLightStatGet`, **111** `ZwaveDimmerStatSet`,
+**121** `ZwaveTermFanModeGet`, **154** `readCRCJSONFile`, **500** register,
+**608** `ZWsendMsgToZSDOutThread`.
+
+**Not every value the pass emits is a case.** `300` was rejected on inspection:
+`cmp ip,#0x12c` is followed by `bhs`, a **binary-search pivot**, not a case
+branch. Values from this enumeration need the same individual check.
+
+#### Console mode, end to end
+
+With command 19 confirmed the whole chain is now known, and it is the concrete
+form of §4.10.7:
+
+| step | mechanism | state |
+|---|---|---|
+| 1. a client asks for console mode | command **19** on `/Q_ServCmdRcver` → `CReceiverThread::requestconsolemode` @`0x13db5c` | works |
+| 2. the panel sends display updates | msgType **20** from `wsltHandleRawDataFromPanel` | works, and P10 makes the text real rather than a 14-byte placeholder |
+| 3. Barracuda relays them | **no case for 20** in `gettuxedoIPCCommFunc` | **dropped here** |
+
+Every link exists except the third, and the third is one dispatch case in the
+replacement. Command 19 verified individually: `cmp ip,#0x13`, `bne`, and
+`requestconsolemode` lists `CReceiverThread::run` among its callers.
 
 Reading `registerclient` explains the exchange:
 
