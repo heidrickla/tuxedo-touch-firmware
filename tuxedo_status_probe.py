@@ -136,7 +136,7 @@ def hmac_hex(key_text, message, digestmod):
 class TuxedoProbe:
     """Minimal read-only client: login, fetch keys, read status."""
 
-    def __init__(self, host, username, password, scheme="https", timeout=20):
+    def __init__(self, host, username, password, scheme="http", timeout=20):
         self.base = f"{scheme}://{host}"
         self.username = username
         self.password = password
@@ -543,7 +543,7 @@ def main():
     parser.add_argument("host", help="panel IP or hostname")
     parser.add_argument("-u", "--username", required=True)
     parser.add_argument("--password", default=os.environ.get("TUXEDO_PASSWORD"))
-    parser.add_argument("--scheme", choices=("https", "http"), default="https")
+    parser.add_argument("--scheme", choices=("https", "http"), default="http")
     parser.add_argument("--interval", type=float, default=30.0,
                         help="seconds between polls (default 30, matching the "
                              "integration)")

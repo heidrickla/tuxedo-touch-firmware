@@ -169,8 +169,13 @@ def describe(payload):
 class PushStream:
     """Long-lived multipart reader. Runs on its own socket, not urllib."""
 
-    def __init__(self, host, cookie, port=443, on_frame=None):
+    def __init__(self, host, cookie, port=80, on_frame=None, tls=None):
+        # Plain HTTP by default. The panel's certificate is expired AND its
+        # private key is hardcoded in the Barracuda binary, so TLS here
+        # authenticates nothing; modern OpenSSL also refuses the handshake
+        # outright. Pass tls=True with port=443 if you want it anyway.
         self.host, self.port, self.cookie = host, port, cookie
+        self.tls = (port == 443) if tls is None else tls
         self.on_frame = on_frame or (lambda raw: None)
         self._stop = threading.Event()
         self.cid = None
@@ -180,9 +185,10 @@ class PushStream:
         self._stop.set()
 
     def run(self, seconds=None):
-        ctx = legacy_ssl_context()
-        raw = socket.create_connection((self.host, self.port), timeout=15)
-        sock = ctx.wrap_socket(raw, server_hostname=self.host)
+        sock = socket.create_connection((self.host, self.port), timeout=15)
+        if self.tls:
+            sock = legacy_ssl_context().wrap_socket(
+                sock, server_hostname=self.host)
         req = (
             f"GET {PUSH_PATH} HTTP/1.1\r\n"
             f"Host: {self.host}\r\n"
@@ -262,7 +268,7 @@ def main():
                  f"disarm or bypass by design.")
 
     pw = args.password or getpass.getpass("Tuxedo password: ")
-    probe = TuxedoProbe(args.host, args.username, pw, scheme="https")
+    probe = TuxedoProbe(args.host, args.username, pw, scheme="http")
     print(f"Logging in to {probe.base} as {args.username} ...")
     probe.login()
     print("Login OK.\n")

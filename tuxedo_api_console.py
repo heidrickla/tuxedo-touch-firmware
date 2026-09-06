@@ -80,7 +80,7 @@ def decode_payload(s):
 class Console:
     def __init__(self, host, user, pw):
         self.host, self.user, self.code = host, user, pw
-        self.p = TuxedoProbe(host, user, pw, scheme="https")
+        self.p = TuxedoProbe(host, user, pw, scheme="http")
         self.p.login()
         self.sid = self._session_id()
         self.tokenkey = self._hidden("hiddenKey")
