@@ -459,3 +459,31 @@ Two real options, in order of preference:
 Do not add a loop-mode ntpclient. Fighting the poll would leave the system clock
 oscillating between 2014 and the present, which is worse than a clock that is
 merely wrong, because event log entries would stop being monotonic.
+
+## Is the poll gated by the Internet Time setting?
+
+Almost certainly not, which decides between the two options above.
+
+`PanelTimeRequestFunc(sigval)` at `0x599ff8` takes a `sigval`, so it is a POSIX
+timer expiry callback. Its only `.text` reference is at `0x58a8d0`, inside
+**`InitAplCalLayer()`** — the calendar layer's initialisation. The timer is
+therefore armed once, at application start, from an init routine, with no
+dependence on any user setting.
+
+The clock-set dialog does expose the feature. `CClockSetDialog` has
+`sltHandleInterbetTimeStateChanged(int)` (the vendor's typo), plus
+`sltHandleSyncTimeBtnPress()` and `sltHandleGetTimeBtnPress()`. So there is a
+checkbox and two buttons on the touchscreen.
+
+`HandleGetCurrentTimeResponse` has zero direct callers, as expected for a
+protocol handler reached through a response dispatch table keyed by command id.
+
+**Limit of this analysis:** the handler itself was not disassembled, so a check
+inside it that ignores the panel's time while Internet Time is enabled cannot be
+ruled out. What can be said is that the *request* timer is unconditional.
+
+**Therefore: set the clock on the VISTA-21iP.** It is the source, the poll that
+reads it is armed unconditionally at startup, and everything else is downstream
+of it. Populating `internettimeservers.txt` is worth trying afterwards and is
+reversible, but expect it to lose to the poll in the same way `/bin/ntpclient`
+does.
