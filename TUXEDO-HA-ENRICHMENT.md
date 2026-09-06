@@ -848,3 +848,46 @@ plaintext is one unauthenticated GET away — **does not reproduce**. It was
 marked `[CONFIRMED]` statically and `[UNTESTED]` live; the live test has now
 been done and it is negative. `CreatePnlInfoFlashTable()` does write that file,
 but nothing appears to publish it over HTTP.
+
+---
+
+# The panel already reports whether it accepted a code
+
+Asked whether an arm or disarm was accepted, refused, or never seen. The answer
+is that the panel already says so, on the push stream, and no firmware change is
+needed.
+
+Arm and disarm over REST return HTTP 200 with a zero-byte body, so the command
+response tells you nothing. That is by design: `handlerequest.html` is fire and
+forget on this panel, and **every** result comes back on the stream. Confirmed
+by measurement: commands 19, 55, 1125, 999999 and 0 all return an identical
+`HTTP 200, 0 bytes`, so valid and nonsense commands are indistinguishable in the
+response.
+
+Three slots in `CReceiverThread` produce the answer, and all three call
+`osal_MqSend` on the same queue that feeds `/SimpleDebugger.interface/G.`:
+
+| Symbol | Address | Sends | Field at `[sp,#0xc]` |
+|---|---|---|---|
+| `sltSendUserCodeAcceptedMsg` | `0x13c408` | `VALID USER CODE` | 1 |
+| `sltSendUserCodeDeclinedMsg` | `0x13dbb4` | `USER CODE DECLINED` | 3 |
+| `sltSendUserCodeDeclinedWithReasonMsg` | `0x141f10` | the reason string, `QString::toAscii` then `strcpy` | — |
+
+These are reached from the **web** signal path, not only the touchscreen:
+`CUiReceiverThread::wsigUserCodeAccepted`, `wsigUserCodeDeclined` and
+`wsigUserCodeDeclinedWithReason` (the `w` prefix marks the web variants),
+alongside the local `CKeyPadWin::sltHandleUserCodeAccepted` / `Declined`.
+
+The declined slot also calls `SetGotoStatus(0)` before sending.
+
+**So a client that watches the stream can stop guessing.** Instead of assuming a
+command took effect and reconciling later, wait for `VALID USER CODE` or
+`USER CODE DECLINED`, and take the reason string when the panel supplies one.
+On an alarm panel that is the difference between showing a user what was asked
+for and showing them what happened.
+
+Not yet captured live. Doing so means entering a real code on a live system:
+the accepted path arms or disarms, and the declined path increments the
+failed-login counter that lives on the reflash-surviving partition. The symbol
+path, the message construction and the web signal wiring are all read directly
+from the binary, but the literal frame text has not been observed on the wire.
