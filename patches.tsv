@@ -1,0 +1,22 @@
+# The authoritative patch set. Single source of truth.
+#
+# apply-patches.py applies these to a staged rootfs when building an image, and
+# verify-panel.sh checks the same table against the running panel. Anything that
+# needs to know what is patched reads THIS file, so the two cannot drift.
+#
+# That drift is not hypothetical: TUXEDO-FIX-STATUS.md spent a release claiming
+# /Config and the 6800 listener were outstanding after both had shipped, because
+# nothing mechanical contradicted the prose.
+#
+# OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda the two differ
+# by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four bytes.
+#
+# name<TAB>binary<TAB>file_offset<TAB>stock<TAB>patched<TAB>description
+P1-lockout	/opt/webserver/Barracuda	0xd5fc	30119fe5	080000ea	3-strikes-permanent lockout becomes 5 attempts with a 300 s self-clearing lock
+P2-validate-hook	/opt/webserver/Barracuda	0xbaf0	090091e8	5f0500ea	login tracker validate hook
+P6-heap-off-by-1	/opt/webserver/Barracuda	0x5cef0	38c04ce2	0000a0e1	56-byte heap overflow in the login tracker
+P8-config-unpub	/opt/webserver/Barracuda	0xc934	dc6701eb	0000a0e1	stop binding the config partition to a URL under /Config
+P11-back-gate	/opt/webserver/Barracuda	0x333b4	a00c001a	0000a0e1	a-2: Type=502 BACK no longer dropped when consoleMode is nonzero
+P12-home-gate	/opt/webserver/Barracuda	0x333f4	900c001a	0000a0e1	a-2: Type=503 HOME no longer dropped when consoleMode is nonzero
+P9-cam-listener	/supervis	0x45e8	b4f4ffeb	0100a0e3	remove the camera listener on port 6800
+P10-console-gate	/tuxedo	0x135a3c	0300000a	030000ea	console mode sends real display text instead of a canned placeholder

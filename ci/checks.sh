@@ -113,6 +113,27 @@ check_vendor_blobs() {
     [ -z "$bad" ] && pass "no vendor blobs committed" || fail "no vendor blobs committed" "$bad"
 }
 
+# 5c. The patch table must stay parseable and self-consistent, because both
+#     apply-patches.py and verify-panel.sh read it. A malformed row silently
+#     drops a patch from BOTH the image build and the live check at once.
+check_patch_table() {
+    local bad=""
+    [ -f patches.tsv ] || { fail "patch table" "patches.tsv missing"; return; }
+    local n=0
+    while IFS=$'	' read -r name binary off stock patched desc; do
+        case "$name" in ''|\#*) continue ;; esac
+        n=$((n+1))
+        case "$off" in 0x*) ;; *) bad="$bad $name(offset-not-hex)";; esac
+        case "$binary" in /*) ;; *) bad="$bad $name(binary-not-absolute)";; esac
+        # stock and patched must both be the same even number of hex digits
+        [ ${#stock} -eq ${#patched} ] || bad="$bad $name(length-mismatch)"
+        printf '%s' "$stock$patched" | grep -qE '^[0-9a-f]+$' || bad="$bad $name(not-lowercase-hex)"
+        [ "$stock" = "$patched" ] && bad="$bad $name(stock-equals-patched)"
+    done < patches.tsv
+    [ "$n" -gt 0 ] || bad="$bad (no rows parsed)"
+    [ -z "$bad" ] && pass "patch table well formed ($n sites)"                   || fail "patch table well formed" "$bad"
+}
+
 # 6. A redirect to a variable path must not gate a command whose failure
 #    matters: if the redirect cannot be opened the command never runs. Cost a
 #    flash attempt. Require the target to be resolved with a fallback first.
@@ -275,6 +296,7 @@ check_crlf
 check_attribution
 check_secrets
 check_vendor_blobs
+check_patch_table
 check_redirect_gate
 check_status_after_or_true
 check_dropbear_flags

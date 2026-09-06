@@ -18,28 +18,10 @@ FAIL=0
 pass() { printf '  ok   %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1"; [ -n "${2:-}" ] && printf '       %s\n' "$2"; FAIL=1; }
 
-# name            FILE offset stock bytes      patched bytes
-# NOTE: these are FILE offsets, not virtual addresses. For Barracuda the
-# two differ by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA here reads
-# the wrong four bytes and reports 'unexpected bytes'.
-PATCHES="
-P1-lockout        0xd5fc      30119fe5         080000ea
-P2-validate-hook  0xbaf0      090091e8         5f0500ea
-P6-heap-off-by-1  0x5cef0     38c04ce2         0000a0e1
-P8-config-unpub   0xc934      dc6701eb         0000a0e1
-P11-back-gate     0x333b4     a00c001a         0000a0e1
-P12-home-gate     0x333f4     900c001a         0000a0e1
-"
-
-# Patches in binaries other than Barracuda. These were applied but not checked
-# here, which is exactly why TUXEDO-FIX-STATUS.md drifted and went on calling
-# them outstanding after they had shipped. A patch nothing verifies is a patch
-# the docs will eventually lie about.
-# name            binary      hex offset  stock bytes  patched bytes
-OTHER_PATCHES="
-P9-cam-listener   /supervis   0x45e8      b4f4ffeb     0100a0e3
-P10-console-gate  /tuxedo     0x135a3c    0300000a     030000ea
-"
+# The patch set is NOT defined here. It lives in patches.tsv, which
+# apply-patches.py also reads when building an image, so the image and this
+# check cannot disagree. Offsets there are FILE offsets, not virtual addresses.
+PATCH_TABLE="$(dirname "$0")/patches.tsv"
 
 echo "panel $HOST"
 BUILD=$($SSH 'cat /etc/tuxedo-build 2>/dev/null' 2>/dev/null)
@@ -47,29 +29,22 @@ BUILD=$($SSH 'cat /etc/tuxedo-build 2>/dev/null' 2>/dev/null)
 printf '%s\n' "$BUILD" | sed 's/^/  /'
 
 echo
-echo "Barracuda patch sites"
-while read -r name off stock patched; do
-    [ -z "$name" ] && continue
-    dec=$((off))
-    live=$($SSH "dd if=/opt/webserver/Barracuda bs=1 skip=$dec count=4 2>/dev/null | od -An -tx1 | tr -d ' \n'" 2>/dev/null)
-    case "$live" in
-        "$patched") pass "$name at $off" ;;
-        "$stock")   fail "$name at $off" "site is STOCK, patch not applied" ;;
-        *)          fail "$name at $off" "unexpected bytes [$live], expected patched [$patched] or stock [$stock]" ;;
-    esac
-done <<< "$PATCHES"
-
-while read -r name binary off stock patched; do
-    [ -z "$name" ] && continue
-    dec=$((off))
-    live=$($SSH "dd if=$binary bs=1 skip=$dec count=4 2>/dev/null | od -An -tx1 | tr -d ' 
+echo "patch sites (from patches.tsv)"
+if [ ! -f "$PATCH_TABLE" ]; then
+    fail "patches.tsv" "not found at $PATCH_TABLE"
+else
+    while IFS=$'	' read -r name binary off stock patched desc; do
+        case "$name" in ''|\#*) continue ;; esac
+        dec=$((off))
+        live=$($SSH "dd if=$binary bs=1 skip=$dec count=4 2>/dev/null | od -An -tx1 | tr -d ' 
 '" 2>/dev/null)
-    case "$live" in
-        "$patched") pass "$name in $binary at $off" ;;
-        "$stock")   fail "$name in $binary at $off" "site is STOCK, patch not applied" ;;
-        *)          fail "$name in $binary at $off" "unexpected bytes [$live], expected patched [$patched] or stock [$stock]" ;;
-    esac
-done <<< "$OTHER_PATCHES"
+        case "$live" in
+            "$patched") pass "$name  $binary at $off" ;;
+            "$stock")   fail "$name  $binary at $off" "site is STOCK, patch not applied" ;;
+            *)          fail "$name  $binary at $off" "unexpected bytes [$live], expected patched [$patched] or stock [$stock]" ;;
+        esac
+    done < "$PATCH_TABLE"
+fi
 
 echo
 echo "camera listener on 6800 must be gone (P9)"
