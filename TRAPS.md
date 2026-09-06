@@ -119,7 +119,18 @@ and left sitting there saying the opposite of the truth.
 - **Never submit a wrong password.** On stock, three failures permanently
   disable every web account and the count survives a reflash. Exclude the path
   by construction, not by remembering.
-- **Leave the panel disarmed.**
+- **Leave the panel disarmed.** Arming and disarming are authorised and fast —
+  just do it, do not ask. Scripted so the API call is never re-derived again:
+  `python D:/temp/tux-arm.py [stay|away|night]` and
+  `python D:/temp/tux-disarm.py`. They read the code from `D:/temp/tuxpw.txt`
+  (4 bytes — it is the panel code, and the same value is the web password), and
+  the disarm tool exits non-zero unless it confirms a disarmed state.
+- **The panel's reply to an arm/disarm means "command sent", not "code
+  accepted"** — `{"Status":"Sucess", ... "Command sent sucessfully"}`, vendor
+  spelling. Confirm the outcome from the stream or the status, never from that.
+- **REST `GetSecurityStatus` lags badly.** During a measured exit delay it
+  reported `34  Secs Remaining` six polls running across 30 s while the push
+  stream counted down correctly. Use the stream for state.
 - `supervis` allows **24 relaunches then a hardware reset**, and the counter is
   never zeroed. Check the budget before flashing a request-path change.
 - **A flash wipes anything added over SSH.** `/opt/tuxedo/configuration`

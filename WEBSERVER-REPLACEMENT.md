@@ -1004,10 +1004,33 @@ the payload shapes are `setCid` (once, on connect), `statusMessageText` and
 
 **Still outstanding for this stage:**
 
-1. *An arm/disarm corpus.* The capture is idle, so it holds `0xFE` (Disarm
-   option not enabled) but never `0xFF`, and no exit-delay countdown. Arming is
-   authorised (§4.0 rule 5) but wants a defined window with the monitoring
-   account confirmed on test.
+1. ~~*An arm/disarm corpus.*~~ **Captured 2026-09-06**, a real arm-stay → exit
+   delay → `Armed Stay` → disarm cycle with the stream held throughout, and the
+   panel confirmed back at `Ready To Arm` 3 s after the disarm.
+   `tuxweb/tests/fixtures/push-armcycle.bin`, 69 frames: 36 carrying `0xFF`, 16
+   carrying `0xFE`. It is the only capture holding the arming states, so
+   `arm_cycle_carries_the_0xff_state_byte_and_a_countdown` covers them by
+   evidence rather than reasoning, and `reemission_is_byte_identical` now runs
+   over both captures.
+
+   The frames the countdown produces:
+
+   ```
+   0:21:1:ff:<0xFF>259  Secs Remaining:2      exit delay
+   0:21:1:ff:<0xFF>2Armed Stay:2              armed
+   0:21:1:fe:<0xFE>1Ready To Arm:2            disarmed
+   ```
+
+   Worth noting against §2.5: the REST `GetSecurityStatus` view of the same
+   cycle was visibly stale — it reported `34  Secs Remaining` for six
+   consecutive polls across 30 s while the stream counted down correctly. The
+   stream is the accurate source, which is the whole reason the integration uses
+   it.
+
+   Arming and disarming are scripted so this is not re-derived a third time:
+   `D:/temp/tux-arm.py` and `D:/temp/tux-disarm.py`. They live outside the repo
+   because they need the panel code, and `tux-disarm.py` exits non-zero unless
+   it confirms the panel actually reached a disarmed state.
 2. *The 404-byte command encoder.* Not started.
 
 #### The reply decoder: dispatch map recovered from the binary, 2026-09-06

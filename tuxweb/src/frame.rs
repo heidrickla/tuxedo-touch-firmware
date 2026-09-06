@@ -114,11 +114,24 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
 
+    /// Idle panel: only 0xFE, no countdown.
     const CAPTURE: &[u8] = include_bytes!("../tests/fixtures/push-idle-300s.bin");
+    /// A real arm-stay -> exit delay -> Armed Stay -> disarm cycle. This is the
+    /// only capture holding 0xFF and the countdown, so the state byte and the
+    /// arming frames are covered by evidence rather than by reasoning.
+    const ARMED: &[u8] = include_bytes!("../tests/fixtures/push-armcycle.bin");
+
+    fn body_of(capture: &'static [u8]) -> &'static [u8] {
+        let at = find(capture, b"\r\n\r\n").expect("headers");
+        &capture[at + 4..]
+    }
 
     fn body() -> &'static [u8] {
-        let at = find(CAPTURE, b"\r\n\r\n").expect("headers");
-        &CAPTURE[at + 4..]
+        body_of(CAPTURE)
+    }
+
+    fn both() -> [&'static [u8]; 2] {
+        [body_of(CAPTURE), body_of(ARMED)]
     }
 
     #[test]
@@ -133,24 +146,62 @@ mod tests {
 
     #[test]
     fn close_delimiter_follows_every_part() {
-        let b = body();
-        let opens = b.windows(OPEN.len()).filter(|w| *w == OPEN).count();
-        let closes = b.windows(CLOSE.len()).filter(|w| *w == CLOSE).count();
-        assert_eq!(opens, closes, "the vendor closes every part; see module docs");
-        assert!(opens > 1, "capture should hold many parts, saw {opens}");
+        for b in both() {
+            let opens = b.windows(OPEN.len()).filter(|w| *w == OPEN).count();
+            let closes = b.windows(CLOSE.len()).filter(|w| *w == CLOSE).count();
+            assert_eq!(opens, closes, "the vendor closes every part; see module docs");
+            assert!(opens > 1, "capture should hold many parts, saw {opens}");
+        }
+    }
+
+    /// The arming frames are the ones a status consumer actually acts on, and
+    /// they only exist in the arm-cycle capture.
+    #[test]
+    fn arm_cycle_carries_the_0xff_state_byte_and_a_countdown() {
+        let (parts, _) = parse(body_of(ARMED));
+        let texts: Vec<Vec<u8>> = parts
+            .iter()
+            .filter_map(|p| match classify(p) {
+                Message::StatusText(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+
+        let ff = texts.iter().filter(|t| t.contains(&0xFFu8)).count();
+        let fe = texts.iter().filter(|t| t.contains(&0xFEu8)).count();
+        assert!(ff > 0, "no 0xFF frame: the arm never happened in this capture");
+        assert!(fe > 0, "no 0xFE frame: the disarm never happened");
+
+        // "Secs Remaining" is the exit-delay countdown
+        let countdown = texts
+            .iter()
+            .filter(|t| find(t, b"Secs Remaining").is_some())
+            .count();
+        assert!(countdown > 1, "expected several countdown frames, saw {countdown}");
+
+        let armed = texts.iter().any(|t| find(t, b"Armed Stay").is_some());
+        assert!(armed, "capture never reached Armed Stay");
+
+        // and it must end disarmed -- the panel is left safe
+        let last_state = texts
+            .iter()
+            .rev()
+            .find(|t| find(t, b"Ready To Arm").is_some());
+        assert!(last_state.is_some(), "capture does not end back at Ready To Arm");
     }
 
     #[test]
     fn reemission_is_byte_identical() {
-        let b = body();
-        let (parts, rest) = parse(b);
-        assert!(!parts.is_empty());
-        let mut out = Vec::with_capacity(b.len());
-        for p in &parts {
-            p.encode(&mut out);
+        for b in both() {
+            let (parts, rest) = parse(b);
+            assert!(!parts.is_empty());
+            let mut out = Vec::with_capacity(b.len());
+            for p in &parts {
+                p.encode(&mut out);
+            }
+            // everything the parser consumed must re-emit exactly
+            assert_eq!(&out[..], &b[..b.len() - rest], "re-emission drifted");
         }
-        // everything the parser consumed must re-emit exactly
-        assert_eq!(&out[..], &b[..b.len() - rest], "re-emission drifted");
     }
 
     #[test]
