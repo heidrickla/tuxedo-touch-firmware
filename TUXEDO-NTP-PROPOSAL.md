@@ -233,3 +233,75 @@ the weak key survived today's flash.
 
 Item 4 is the one worth being slow about. Items 1 to 3 are a two-file change
 to a mechanism the vendor already wrote.
+
+---
+
+# Implemented in v9, and what the panel actually showed
+
+Confirmed over SSH on the running panel rather than from the carved rootfs.
+
+## The mechanism, as it exists on the device
+
+`/etc/rc.d/init.d/settime`:
+
+    if [ ! -x /sbin/hwclock ]; then exit 0; fi
+    ...
+    if [ -x /bin/ntpclient -a "$NTP_SERVER" ]; then
+        /bin/ntpclient -s -c 2 -i 3 -h $NTP_SERVER >/dev/null
+    fi
+
+- `/sbin/hwclock` is present, 32,573 bytes, so the guard passes.
+- `/bin/ntpclient` does not exist.
+- `/etc/rc.d/rc.conf` has `export NTP_SERVER=""`.
+
+Both gaps are the vendor's, in the same pattern as dropbear, telnetd and inetd:
+the invocation is shipped, the binary is not.
+
+## What the clock actually does
+
+| Observation | Value |
+|---|---|
+| System time on a running panel | `Mon Feb 24 02:27:14 UTC 2014` |
+| System time immediately after boot | `Tue Sep  8 01:39:51 UTC 1970` |
+| `hwclock -r` on `/dev/rtc` | `select() to /dev/rtc to wait for clock tick timed out` |
+| `hwclock -r -f /dev/rtc0` | `Tue Sep  8 01:58:37 1970` |
+| `hwclock -r -f /dev/rtc1` | times out |
+
+`/dev/rtc` is a symlink to `rtc1`, which does not respond. `rtc0` does respond
+but holds the same 1970 value, so nothing has ever written a real time to it.
+
+The frozen `Mon, 24 Feb 2014` in every HTTP response header is not a hardcoded
+string. It is the system clock: something moves the clock from 1970 to that
+fixed 2014 date during startup. What does that has not been identified.
+
+## The change
+
+| Piece | v9 |
+|---|---|
+| `/bin/ntpclient` | ntpclient 2015_365, built for ARM against the panel's glibc 2.5, 23,672 bytes, needs at most GLIBC_2.4 |
+| `NTP_SERVER` | `pool.ntp.org` in `/etc/rc.d/rc.conf` |
+| Invocation | `rc.local` calls `/etc/rc.d/init.d/settime start` after network start |
+| RTC write-back | `hwclock -w -f /dev/rtc0`, naming rtc0 because `/dev/rtc` points at the dead rtc1 |
+| Log | `/mnt/sd/tuxedo-time.log`, falling back to `/tmp` |
+
+`settime` is in `all_services` but **not** in `cfg_services`, and `rcS` iterates
+`cfg_services`. That is why rc.local has to call it; registering it is not
+enough.
+
+ntpclient builds with the same constraints as dropbear: no LFS, no stack
+protector, non-PIE, libraries after the objects. See `ssh/BUILD.md`.
+
+Verified under emulation against a live NTP server by address, returning two
+samples with sane offsets. Resolution was not tested there because the chroot
+has no resolver; the panel has `nameserver 203.0.113.1` and
+`hosts: files nisplus nis dns`.
+
+## Two things to weigh before flashing
+
+The LAN gateway `203.0.113.1` does **not** answer NTP, so `pool.ntp.org` means
+the panel reaches the internet for time. If that is unwanted, change one line
+in `rc.conf` to a LAN server.
+
+Moving the clock forward twelve years on a live alarm panel will change how
+event log entries are stamped, and anything the panel schedules by date. That
+is the point of the change, but it is not a silent one.
