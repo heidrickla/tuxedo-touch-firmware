@@ -28,6 +28,11 @@ held the queue facts.
   press are the 33 s heartbeat. If the instrument cannot see the effect, a
   clean result is not evidence.
 - **One clean run is not a result.** Say what rests on a single observation.
+- **A doc's open-items list is a claim, not a fact.** `THREAT-MODEL.md` carried
+  "bound the 300 s lockout by source address" as open; the tracker was already a
+  splay tree keyed on address (`LoginTracker_splayTreeCmpAddr`). I re-raised it
+  three times before reading the code. Verify a TODO before repeating it —
+  especially one written here.
 
 ## 2. Addressing and ARM
 
