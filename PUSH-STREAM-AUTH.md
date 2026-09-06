@@ -136,15 +136,50 @@ must be verified byte by byte before it is written.
 
 ## 6. Unverified, and blocking
 
-1. **The cave is dead.** 0 callers and 0 data-refs from a tail-call-aware scan,
-   but not yet independently re-derived.
-2. **A non-NULL `+0x18` on an EhDir is safe.** `EhDir_service` calls the auth
-   function, but whether a *streaming* handler tolerates a challenge response
-   mid-path is not established.
-3. **The panel's own web UI sends a cookie on this stream.** Browsers do so
-   automatically, but which page opens it and how has not been read out of the
-   embedded web app.
-4. **The stub assembles to the bytes claimed.** Hand-assembled ARM; encode and
-   disassemble it back before writing.
+**CLOSED — 1. The cave is dead.** Re-derived independently, and the re-derivation
+found two things the first pass missed, which is the reason for doing it:
 
-Until all four are closed this stays a proposal.
+- One branch lands inside the range: `0x64ea8 -> 0x64eb4`, internal control flow
+  within `getFirstNode`. Irrelevant once the whole function is overwritten, but
+  it means the function is not straight-line and a partial overwrite would be
+  unsafe. Overwrite from `0x64e9c`.
+- A whole-file scan found 4-byte values equal to `0x64e9c` and `0x64ebc` at file
+  offsets `0x5589b0` and `0x55da00`, which the first scan reported as zero data
+  references. **They are ELF symbol-table entries, not code references.** The
+  16-byte records read `value=0x64e9c size=0x20` and `value=0x64ebc size=0x18` —
+  the functions' own addresses and sizes, matching exactly. Both offsets are
+  outside `.text` (`0x4438`-`0x7cd20`) and `.symtab` is not loaded at runtime.
+
+No BL, no B from outside, no function-pointer install. **56 contiguous bytes at
+file `0x5ce9c` are safe to overwrite.** One cosmetic consequence: the symbol
+table will still name that address `LoginTracker_getFirstNode`, so disassembly
+of a patched binary shows the stub under a misleading name. Worth a comment in
+`patches.tsv`.
+
+**CLOSED — 4. The stub assembles to the bytes claimed.** Encoded and
+disassembled back:
+
+```
+0x64e9c  04 30 9f e5   ldr r3, [pc, #4]
+0x64ea0  18 30 81 e5   str r3, [r1, #0x18]
+0x64ea4  35 13 00 ea   b   #0x69b80   -> HttpDir_insertDir
+0x64ea8  3c b2 55 00   .word 0x0055b23c
+```
+
+The literal load resolves to `0x64ea8`, which is where the literal sits. The
+call-site word at VA `0x1ddc0` / file `0x15dc0` goes `6e 2f 01 eb` ->
+`35 1c 01 eb`, i.e. `bl HttpDir_insertDir` -> `bl 0x64e9c`. The file-offset
+convention (`file = VA - 0x8000`) was checked against `v2o` at both addresses
+rather than assumed, because getting that wrong has already cost one bad
+verifier entry today.
+
+**STILL OPEN — 2. A non-NULL `+0x18` on an EhDir is safe.** `EhDir_service`
+calls the auth function, but whether a *streaming* handler tolerates a challenge
+response mid-path is not established. **This is the one that matters** and it
+is what the review in flight should settle.
+
+**STILL OPEN — 3. The panel's own web UI sends a cookie on this stream.**
+Browsers do so automatically, but which page opens it and how has not been read
+out of the embedded web app.
+
+Until 2 and 3 are closed this stays a proposal.
