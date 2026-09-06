@@ -1,6 +1,10 @@
 # Building dropbear for the Tuxedo Touch
 
-**Built and ABI-verified 2026-09-05. Not installed, not tested on the panel.**
+**v8, 2026-09-06: rebuilt against the panel's own glibc 2.5. Authenticates and
+runs commands under emulation. Not yet confirmed on hardware.**
+
+Everything below the horizontal rule describes the v1-v7 binary, which flashed
+onto the panel five times and never listened. Keep reading past it for why.
 
 The panel ships `/etc/rc.d/init.d/dropbear`, complete and already registered in
 `rc.conf`'s service list. It guards on `/usr/sbin/dropbear` existing and
@@ -712,3 +716,158 @@ Image: 125,397,712 bytes, checksum `0x064e`, `BUILD=v7`.
 | `NOT EXECUTABLE: /usr/sbin/dropbear` | the binary did not survive the image build |
 | `dropbear returned` non-zero plus its stderr | dropbear's own reason |
 | `nothing listening on 22` after a zero return | it daemonised and then died |
+
+
+---
+
+# Why v1-v7 never listened, and what fixed it
+
+## The failure
+
+Five flashes, port 22 refused every time. The v7 image wrote its boot log to the
+SD card, which broke the deadlock: the image *had* applied, dropbear *had*
+started, from both hooks, and both instances logged
+
+    [842] Running in background
+    [842] Early exit: Listening socket error
+
+`Listening socket error` is not a bind failure. In `svr-main.c` it is reached
+only from the accept loop, at `0x22d2c` in the binary:
+
+    22cec  bl   select
+    22d10  cmp  r0, #0
+    22d14  beq  <timeout, loop>
+    22d18  bge  <handle connection>
+    22d1c  bl   __errno_location
+    22d24  cmp  r3, #4            ; EINTR
+    22d28  beq  <retry>
+    22d2c  ldr  r0, ="Listening socket error"
+
+So dropbear created its sockets, bound them, listened, and then `select()`
+returned negative with an errno other than `EINTR`. Four flashes were spent on
+start-order and `/dev` theories that were never the problem.
+
+## The cause
+
+The binary was statically linked against Debian trixie's glibc 2.41. Debian's
+armel port is a **64-bit `time_t`** port, so its headers redirect the calls
+dropbear makes:
+
+    select        -> __select64
+    clock_gettime -> __clock_gettime64
+    gettimeofday  -> __gettimeofday64
+    fcntl         -> __fcntl_time64
+
+Those wrappers issue the time64 syscalls, ARM 403 and up, which arrived in Linux
+5.1. The panel runs 2.6.31. The same mismatch explains the nonsense timestamps
+in the v7 log (`Jan 01 00:00:00`, then `Jul 30 20:43:46`) - the clock calls were
+failing too, deterministically, in both runs.
+
+This is invisible to emulation. `qemu-user` forwards syscalls to the build host's
+5.15 kernel, where all of them exist, so the binary ran correctly every time it
+was tested. Only the kernel version differs, and that is exactly what the
+emulation cannot model.
+
+## The fix
+
+Link against the libc the panel actually ships. It has glibc **2.5** with
+`ld-linux.so.3`, `librt.so.1` and `libutil.so.1` in `/lib`, which is what every
+other binary on the device uses.
+
+Trixie cannot target it - its headers are time64-only. Debian 11 (bullseye,
+gcc 10.2, glibc 2.31) is a 32-bit `time_t` armel port and can.
+
+    # build root
+    debootstrap --variant=minbase bullseye /build/bullseye http://deb.debian.org/debian
+    chroot /build/bullseye apt-get install -y gcc-arm-linux-gnueabi make bzip2
+
+    # sysroot from the panel's own libraries
+    mkdir -p /work/sysroot/lib
+    cp -a /work/root_patched/lib/*.so* /work/sysroot/lib/
+    cd /work/sysroot/lib
+    for n in c m dl crypt util pthread rt nsl resolv; do
+        ln -sf "$(ls lib$n.so.[0-9] 2>/dev/null | head -1)" lib$n.so
+    done
+    # libc.so must be the linker script, so libc_nonshared.a is pulled in.
+    # Do not create it as a symlink: writing through one truncates libc-2.5.so.
+    rm -f libc.so
+    printf '%s
+' 'OUTPUT_FORMAT(elf32-littlearm)'       'GROUP ( /work/sysroot/lib/libc.so.6 /usr/arm-linux-gnueabi/lib/libc_nonshared.a AS_NEEDED ( /work/sysroot/lib/ld-linux.so.3 ) )'       > libc.so
+
+    # inside the bullseye chroot
+    ac_cv_func_explicit_bzero=no ac_cv_func_getrandom=no     ac_cv_func_strlcpy=no ac_cv_func_strlcat=no     ./configure --host=arm-linux-gnueabi --disable-zlib --disable-largefile       --disable-lastlog --disable-utmp --disable-utmpx --disable-wtmp       --disable-wtmpx --disable-pututline --disable-pututxline       CFLAGS="-Os -fno-stack-protector -U_FORTIFY_SOURCE -fno-PIE"
+
+    make PROGRAMS='dropbear dropbearkey'          LDFLAGS="-no-pie -L/work/sysroot/lib -Wl,-rpath-link,/work/sysroot/lib"          LIBS="compat99.o -lrt -lutil"
+
+### Five gaps between glibc 2.31 headers and the glibc 2.5 library
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `undefined reference to __stack_chk_guard@GLIBC_2.4` | Debian defaults to `-fstack-protector-strong`; the symbol lives in `ld.so`, not on the link line | `-fno-stack-protector` |
+| `__libc_csu_init`, `__libc_csu_fini` | `libc.so` was a symlink to `libc.so.6`, so `libc_nonshared.a` was never pulled in | make `libc.so` the linker script above |
+| `stat64`, `fcntl64` | LFS maps `stat`/`fcntl` to the 64-bit names; glibc 2.5 exports only `__xstat64` | `--disable-largefile` |
+| `clock_gettime`, `openpty`, `login`, `logwtmp` | in `librt` and `libutil` in 2.5, and libraries must follow the objects | `LIBS="-lrt -lutil"`, not `LDFLAGS` |
+| `__isoc99_sscanf` | glibc >= 2.7 renames `sscanf` through an asm label, which no `-D` can undo | ship the shim below |
+
+`explicit_bzero`, `getrandom`, `strlcpy` and `strlcat` all postdate glibc 2.5.
+Dropbear has its own implementations but `configure` finds the host's headers
+and stops using them, hence the `ac_cv_func_*=no` overrides.
+
+    /* compat99.c -- stdio.h is deliberately not included: it applies the same
+       asm rename to vsscanf, which would make this shim call itself. */
+    #include <stdarg.h>
+    extern int vsscanf(const char *, const char *, va_list) __asm__("vsscanf");
+    int __isoc99_sscanf(const char *s, const char *fmt, ...)
+    {
+        va_list ap;
+        int r;
+        va_start(ap, fmt);
+        r = vsscanf(s, fmt, ap);
+        va_end(ap);
+        return r;
+    }
+
+## Result
+
+| | v1-v7 | v8 |
+|---|---|---|
+| Link | static, glibc 2.41 | dynamic, `/lib/ld-linux.so.3` |
+| `dropbear` | 1,187,028 | 233,472 |
+| `dropbearkey` | 1,023,928 | 152,300 |
+| Highest symbol version needed | GLIBC_2.38 | **GLIBC_2.4** |
+| select syscall | `pselect6`, after a failed `pselect6_time64` | `_newselect` (ARM 142, present since Linux 2.0) |
+| time64 syscalls issued | `clock_gettime64` and others | none |
+| On the panel | `Early exit: Listening socket error` | to be confirmed |
+
+`NEEDED` is `librt.so.1`, `libutil.so.1`, `libc.so.6`; all three are in the
+panel's `/lib`.
+
+## Verification under emulation
+
+Run inside a chroot of the image root, so the panel's own `ld-linux.so.3`,
+glibc 2.5 and `/bin/sh` are the ones used:
+
+    uid=0(root) gid=0(root)
+    Linux ... armv7l GNU/Linux
+    BUILD=v8
+
+Authentication by the shipped `authorized_keys` and non-interactive command
+execution both work. `ssh host 'cmd'` is enough to iterate on the panel.
+
+Interactive pty allocation could not be confirmed under emulation: the session
+closes after auth. Modern kernels namespace `devpts` and a standalone
+`/dev/ptmx` node does not match a freshly mounted instance, which 2.6.31 does
+not do, so this is likely an artefact of the harness. It is unresolved and must
+be checked on hardware. `ssh host 'cmd'` and `scp` need no pty either way.
+
+## What emulation cannot catch
+
+The rule in `CONTRIBUTING.md` says to run boot-critical code under `qemu-user`
+with `/dev` exactly as the image ships it. That rule was followed and the bug
+still shipped five times, because `qemu-user` substitutes the build host's
+kernel. Anything that depends on the **kernel version** - syscall availability
+above all - passes under emulation and fails on the panel.
+
+The check that would have caught it, and which is now in `ci/checks.sh`:
+
+    readelf -V <binary> | grep -o 'GLIBC_2\.[0-9]*' | sort -uV | tail -1

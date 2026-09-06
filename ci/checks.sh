@@ -138,6 +138,52 @@ check_docs_agree() {
     [ -z "$bad" ] && pass "docs record the key addresses" || fail "docs record the key addresses" "$bad"
 }
 
+
+# 11. Symbol versions in a shipped ARM binary. v1-v7 of dropbear were linked
+#     against Debian glibc 2.41, whose headers redirect select/clock_gettime to
+#     time64 wrappers. Those issue ARM syscalls 403+, which arrived in Linux
+#     5.1; the panel runs 2.6.31. It bound, listened, then died in select().
+#     Emulation cannot catch this: qemu-user forwards to the build host kernel.
+#     The panel ships glibc 2.5, so nothing above GLIBC_2.5 may be required.
+check_binary_glibc() {
+    local rd bad="" f v
+    rd=$(command -v arm-linux-gnueabi-readelf || command -v readelf) || true
+    [ -z "$rd" ] && { skip "shipped binary glibc version" "no readelf"; return; }
+    for f in $(git ls-files 'ssh/bin/*' 'bin/*' 2>/dev/null); do
+        [ -f "$f" ] || continue
+        head -c4 "$f" | grep -q ELF || continue
+        v=$("$rd" -V "$f" 2>/dev/null | grep -o 'GLIBC_2\.[0-9]*' | sort -uV | tail -1)
+        [ -z "$v" ] && continue
+        case "$v" in
+            GLIBC_2.0|GLIBC_2.1|GLIBC_2.2|GLIBC_2.3|GLIBC_2.4|GLIBC_2.5) ;;
+            *) bad="$bad $f=$v" ;;
+        esac
+    done
+    [ -z "$bad" ] && pass "shipped binary glibc version"         || fail "shipped binary glibc version" "needs >GLIBC_2.5:$bad"
+}
+
+# 12. The documented build recipe must not reintroduce the time64 link. A
+#     static link against a modern glibc is what broke v1-v7.
+check_no_time64_recipe() {
+    local bad=""
+    grep -q 'disable-largefile' ssh/BUILD.md 2>/dev/null         || bad="BUILD.md recipe lost --disable-largefile"
+    grep -q 'bullseye' ssh/BUILD.md 2>/dev/null         || bad="$bad; BUILD.md no longer names the 32-bit time_t build root"
+    grep -q '_TIME_BITS\|time64\|__select64' ssh/BUILD.md 2>/dev/null         || bad="$bad; BUILD.md no longer records the time64 cause"
+    [ -z "$bad" ] && pass "dropbear recipe targets the panel libc"         || fail "dropbear recipe targets the panel libc" "$bad"
+}
+
+# 13. The emulation harness copies qemu-arm-static into the image root. It is
+#     14 MB of build-host binary and must never reach an image.
+check_no_harness_leak() {
+    local bad=""
+    for f in $(git ls-files); do
+        case "$f" in
+            *qemu-arm-static*|*qemu-arm*) bad="$bad $f" ;;
+        esac
+    done
+    [ -z "$bad" ] && pass "no emulator binary committed"         || fail "no emulator binary committed" "$bad"
+}
+
 echo "regression checks"
 check_python
 check_shell
@@ -149,6 +195,9 @@ check_status_after_or_true
 check_dropbear_flags
 check_hdr_checksum
 check_docs_agree
+check_binary_glibc
+check_no_time64_recipe
+check_no_harness_leak
 
 echo
 [ "$FAIL" = "0" ] && echo "all checks passed" || echo "FAILURES PRESENT"
