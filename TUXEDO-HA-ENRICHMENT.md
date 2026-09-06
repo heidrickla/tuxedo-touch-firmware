@@ -886,7 +886,51 @@ command took effect and reconciling later, wait for `VALID USER CODE` or
 On an alarm panel that is the difference between showing a user what was asked
 for and showing them what happened.
 
-Not yet captured live. Doing so means entering a real code on a live system:
+## Captured live, 2026-09-06, and it corrects the above
+
+Lewis asked for an arm/disarm cycle, so this was observed rather than inferred.
+Arm stay, then disarm 45 s later, with the push stream held throughout.
+
+**Correction 1: the REST arm and disarm endpoints DO return a body.** The
+zero-byte-body observation applies to `handlerequest.html`, not to
+`system_http_api/API_REV01/AdvancedSecurity/*`:
+
+    arm stay -> {"Status":"Sucess","Result":{"Response":"Command sent sucessfully"}}
+    disarm   -> {"Status":"Sucess","Result":{"Result":"Command sent sucessfully"}}
+
+Note the vendor's spelling, and that the two use different inner keys
+(`Response` vs `Result`). But read what it says: **"command sent"**, not "code
+accepted". It confirms dispatch, not outcome.
+
+**Correction 2: no `VALID USER CODE` frame appeared.** The whole cycle was
+captured and the accept message was never emitted on the push stream, even
+though the code was valid and the panel armed. So the earlier reading — that
+`sltSendUserCodeAcceptedMsg` reaching `osal_MqSend` means a stream client sees
+it — does not hold for a REST-initiated arm. Those slots are reached from
+`wsigUserCodeAccepted`, and something on that path does not fire for this route;
+the virtual keypad is the likely trigger. **Anyone planning to replace an
+optimistic state with a confirmation must not rely on that frame.**
+
+What the stream *does* give, and it is enough to be useful:
+
+    0:21:1:fe:þ1Ready To Arm:2          before
+    0:21:1:ff:ÿ259  Secs Remaining:2    immediately after arming
+    0:21:1:ff:ÿ255  Secs Remaining:2    ... counting down
+    0:21:1:fe:þ1Ready To Arm:2          1.8 s after the disarm request
+
+The state flag distinguishes them: **`fe` disarmed / ready, `ff` arming or
+armed**, matching the raw byte that follows (`þ` = 0xFE, `ÿ` = 0xFF). The exit
+delay appears as the display text, counting down in seconds, and `GetSecurityStatus`
+tracks it too (`{"Status":"15  Secs Remaining","Color":"Red"}`).
+
+Timing: the arming frame arrived **1.5 s** after the request, and the
+disarmed frame **1.8 s** after. So a client watching the stream has a
+confirmation of the resulting state within about two seconds, even without an
+explicit accept message.
+
+The panel was left disarmed.
+
+Superseded, kept for the reasoning: doing so means entering a real code on a live system:
 the accepted path arms or disarms, and the declined path increments the
 failed-login counter that lives on the reflash-surviving partition. The symbol
 path, the message construction and the web signal wiring are all read directly
