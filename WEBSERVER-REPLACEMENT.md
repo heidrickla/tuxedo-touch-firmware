@@ -1008,11 +1008,55 @@ the payload shapes are `setCid` (once, on connect), `statusMessageText` and
    option not enabled) but never `0xFF`, and no exit-delay countdown. Arming is
    authorised (§4.0 rule 5) but wants a defined window with the monitoring
    account confirmed on test.
-2. *The 556-byte reply decoder and 404-byte command encoder.* These cannot be
-   built against a captured corpus the way the frame layer was: reading the
-   reply queue **takes** the message (§1.7 B5), so capturing replies would
-   starve Barracuda. They must be written from the binaries and validated at the
-   Stage 6 cutover.
+2. *The 404-byte command encoder.* Not started.
+
+#### The reply decoder: dispatch map recovered from the binary, 2026-09-06
+
+The decoder cannot be built against a captured corpus the way the frame layer
+was — reading the reply queue **takes** the message (§1.7 B5), so capturing
+replies would starve Barracuda. It has to come out of the binary. It now
+partly has.
+
+**The struct is confirmed at the receive site**, not inferred.
+`gettuxedoIPCCommFunc` @`0xd5d0` calls `osal_MqRecv(q, buf, 0x22c)` — 556 —
+into `sp+0x274`, then:
+
+```
+0xd614  ldr  r8, [sp, #0x278]     msgType   = buf+0x04   <- the dispatch value
+0xda80  ldr  r7, [sp, #0x274]     sessionId = buf+0x00
+0xda94  add  sl, r6, #0xe         text      = buf+0x0E
+0xdac0  ldr  r5, [sp, #0x27c]     arg       = buf+0x08
+0xdac4  ldrb r6, [sp, #0x282]     buf+0x0E again, as a BYTE
+```
+
+That last one settles something the frame docs left ambiguous: the `0xFE`/`0xFF`
+state byte is **the first byte of the text field**, read as a byte, not a
+separate struct member. It is why frames must be handled as latin-1 bytes.
+
+**Dispatch is a binary search tree on `r8`** (`cmp`/`beq`/`bhi`), not a compare
+chain and not a jump table. Following only the `beq` edges gives 26 cases, which
+is a **lower bound** — cases reached through the tree's range branches are not
+in this list yet.
+
+| msgType | handler | frame format |
+|---|---|---|
+| 2 | `0xe144` | `%d%s%d%s%d%s%d%s%d%s%s` |
+| 21 | `0xda80` | `%d%s%d%s%d%s%x%s%s%s%d` |
+| 22 | `0xd9b8` | `%d%s%d%s%s%s%d` |
+| 103 | `0xd8d0` | `%d%s%d%s%s%s%d` |
+| 109 | `0xd910` | `%d%s%d%s%s%s%d` |
+| 154 | `0xd7f8` | `%d%s%d%s%s` |
+
+The other 20 — 3, 5, 6, 8, 9, 19, 26, 27, 51, 55, 59, 62, 105, 112, 125, 132,
+133, 160, 162, 504 — reach no format string directly; they update state or
+delegate. Note 26/27 share a handler, as do 132/133.
+
+**Why this is trustworthy:** the method was validated against a result derived
+independently and earlier — msgType 21 at `0xda80` with
+`%d%s%d%s%d%s%x%s%s%s%d`, which `TUXEDO-AUDIT-BUGS.md:94` already recorded.
+A first attempt at this map was **wrong and discarded**: attributing each format
+to the nearest preceding `cmp` blamed everything on msgType 0, because `cmp #0`
+is a null check, not dispatch.
 
 ### Stage 2 — On-panel read-only probes, `/tmp` only
 
