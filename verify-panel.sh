@@ -23,6 +23,17 @@ PATCHES="
 P1-lockout        0xd5fc      30119fe5         080000ea
 P2-validate-hook  0xbaf0      090091e8         5f0500ea
 P6-heap-off-by-1  0x5cef0     38c04ce2         0000a0e1
+P8-config-unpub   0xc934      dc6701eb         0000a0e1
+"
+
+# Patches in binaries other than Barracuda. These were applied but not checked
+# here, which is exactly why TUXEDO-FIX-STATUS.md drifted and went on calling
+# them outstanding after they had shipped. A patch nothing verifies is a patch
+# the docs will eventually lie about.
+# name            binary      hex offset  stock bytes  patched bytes
+OTHER_PATCHES="
+P9-cam-listener   /supervis   0x45e8      b4f4ffeb     0100a0e3
+P10-console-gate  /tuxedo     0x135a3c    0300000a     030000ea
 "
 
 echo "panel $HOST"
@@ -42,6 +53,26 @@ while read -r name off stock patched; do
         *)          fail "$name at $off" "unexpected bytes [$live], expected patched [$patched] or stock [$stock]" ;;
     esac
 done <<< "$PATCHES"
+
+while read -r name binary off stock patched; do
+    [ -z "$name" ] && continue
+    dec=$((off))
+    live=$($SSH "dd if=$binary bs=1 skip=$dec count=4 2>/dev/null | od -An -tx1 | tr -d ' 
+'" 2>/dev/null)
+    case "$live" in
+        "$patched") pass "$name in $binary at $off" ;;
+        "$stock")   fail "$name in $binary at $off" "site is STOCK, patch not applied" ;;
+        *)          fail "$name in $binary at $off" "unexpected bytes [$live], expected patched [$patched] or stock [$stock]" ;;
+    esac
+done <<< "$OTHER_PATCHES"
+
+echo
+echo "camera listener on 6800 must be gone (P9)"
+if $SSH 'netstat -ltn 2>/dev/null' 2>/dev/null | grep -q ':6800 '; then
+    fail "6800 not listening" "P9 is applied but something is still bound to 6800"
+else
+    pass "6800 not listening"
+fi
 
 echo
 echo "listeners"

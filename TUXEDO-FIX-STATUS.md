@@ -1,7 +1,13 @@
 # What is actually fixed, and where
 
-Status 2026-09-06. **v10 is flashed and running.** `./verify-panel.sh` confirms
-it in one command.
+Status 2026-09-06. **v11 is flashed and running**, plus one patch applied live
+over SSH since. `./verify-panel.sh` confirms every patch site in one command.
+
+This document had drifted: it said v10, and it listed two patches as
+"outstanding" that had in fact shipped. The cause was that `verify-panel.sh`
+only checked the three Barracuda sites, so nothing contradicted the stale text.
+The verifier now checks all six, in all three binaries, plus the 6800 listener —
+**a patch nothing verifies is a patch the docs will eventually lie about.**
 
 ---
 
@@ -10,6 +16,9 @@ it in one command.
 | Fix | Where | Evidence |
 |---|---|---|
 | Login lockout: 3-strikes-permanent becomes 5 attempts with a 300 s self-clearing lock | `Barracuda` P1 `0xd5fc` | bytes read back from the running binary |
+| `/Config` no longer binds the config partition to a URL | `Barracuda` P8 `0xc934` | verifier |
+| `supervis` camera listener on 6800 removed | `supervis` P9 `0x45e8` | verifier; 6800 not listening |
+| Console-mode payload gate (necessary but NOT sufficient — see below) | `/tuxedo` P10 `0x135a3c` | verifier |
 | 56-byte heap overflow in the login tracker | `Barracuda` P6 `0x5cef0` | same |
 | Validate hook | `Barracuda` P2 `0xbaf0` | same |
 | **SSH** | dropbear, glibc-2.5 linked | root login, pty, `verify-panel.sh` |
@@ -41,15 +50,29 @@ on the panel, 125 MB in 64 s.
 
 ---
 
-## Outstanding, with a specified fix ready to apply
+## ~~Outstanding, with a specified fix ready to apply~~ — BOTH SHIPPED
 
-These have exact bytes and a rollback. They are not in v10 because they were
-deprioritised, not because they are unsolved.
+Both items previously listed here are **applied and verified**: `/Config` (P8,
+`Barracuda` `0xc934`) and the 6800 camera listener (P9, `supervis` `0x45e8`).
+They are in the live-on-the-panel table above. The offsets quoted in the old
+version of this section (`0x14934`, `0x4b88`) were wrong; the verifier carries
+the correct ones.
 
-| Item | Patch | Why it is waiting |
-|---|---|---|
-| `/Config` binds the config partition to a URL, ungated | one instruction at `0x14934`, `dc 67 01 eb` -> `00 00 a0 e1` | security, deferred to a later release |
-| `supervis` camera listener on 6800 | one word at `0x4b88` | the panel has no cameras; low severity |
+## Console mode: patched, and still not reachable
+
+`/tuxedo` P10 at `0x135a3c` is applied and verified. It is **necessary but not
+sufficient**, and the reason is worth keeping straight:
+
+- The gate it fixes selects the *payload* of reply message type 20 — real keypad
+  display text versus a canned 14-byte placeholder. It never controlled whether
+  the message was sent.
+- The message is dropped by **Barracuda**, whose reply dispatcher
+  `gettuxedoIPCCommFunc` handles 42 message types and has no case for 20.
+
+So console mode cannot work through Barracuda by any means, and it arrives free
+once Barracuda is replaced, because a server reading `/Q_ServCmdTrsmtr` directly
+receives type 20 — carrying real display text precisely because P10 is applied.
+Full trace in `TUXEDO-VIRTUAL-CONSOLE-BUGS.md`.
 
 ## Outstanding, analysed but not reduced to bytes
 
