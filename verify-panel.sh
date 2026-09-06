@@ -12,7 +12,7 @@ HOST="${1:-203.0.113.5}"
 KEY="${2:-$HOME/.ssh/tuxedo_ed25519}"
 # -n is essential: without it ssh eats the loop's here-string and the patch
 # loop runs exactly once.
-SSH="ssh -n -i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o BatchMode=yes root@$HOST"
+SSH="ssh -n -i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o BatchMode=yes -o LogLevel=ERROR root@$HOST"
 
 FAIL=0
 pass() { printf '  ok   %s\n' "$1"; }
