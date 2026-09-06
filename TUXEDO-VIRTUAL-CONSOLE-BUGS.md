@@ -711,3 +711,41 @@ So the patch is necessary-but-not-sufficient rather than inert:
 
 **Keep it installed.** It is the half of the fix that lives in the binary we are
 not replacing, and it costs one byte.
+
+### Corroborated against the vendor's own client
+
+The web app ZIP embedded in `Barracuda` (`0x8a948`-`0x4f0113`, 776 entries, 94
+JS files) extracts cleanly. `script/consoleRequest.js` is Honeywell's own console
+client, and it confirms the binary reading independently:
+
+- The keys are accumulated into a hidden field as `"|"+key` and passed as the
+  **`pID`** argument -- so `pID` carrying pipe-delimited keystrokes is the
+  vendor's design, not an artefact of my reading.
+- `sendCommand(SERV_CONSOLE_MODE, SERV_CONSOLE_MODE, -1, ...)` is the vendor's
+  own **no-keys refresh** call. So `pID=-1`, which the failed test sent, is
+  exactly what Honeywell's client sends to enter or refresh console mode without
+  pressing anything. The test was correct; the frame is dropped regardless.
+- Accepted key codes are ASCII: `42` `*`, `35` `#`, `65`-`68` `A`-`D`, `48`-`57`
+  `0`-`9`.
+
+The constant table is also the vendor's, and matches what this document assumed:
+`SERV_CONSOLE_MODE=19`, `SERV_CONSOLE_MSG_BROADCAST=20`,
+`SERV_PARTITION_MSG_BROADCAST=21`, `SERV_GET_HOME_PART=18`,
+`SERV_PANEL_OFFLINE_MSG_BROADCAST=22`, `SERV_REG_INI_RESP_DATA=504`.
+
+### The type-20 drop was verified, not assumed
+
+`gettuxedoIPCCommFunc` dispatches by compare chain and the scan found no case for
+20. Since a range check would defeat a compare-immediate scan, every
+`sub`-with-immediate in the function was examined:
+
+- `0xdcac` and `0xe178` -- `sub r0, r3, #0x10` after `add r3, sb, r3`. Buffer
+  pointer arithmetic, not a type test.
+- `0xde98`, `0xe11c`, `0xe138` -- stack/pointer adjustments.
+- `0xe128` -- `sub r3, r1, #9 / cmp r3, #1`. A genuine range check, covering
+  types **9 and 10**, both already in the handled set.
+
+No jump table anywhere in the function. **No construct covers type 20.**
+
+(The extracted web app is vendor copyright and is deliberately NOT committed to
+this repository. Only the interface facts above are recorded.)
