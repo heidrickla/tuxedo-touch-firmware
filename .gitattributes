@@ -18,3 +18,5 @@ tuxedo-upload.sh text eol=lf
 evidence/*.log -text
 image/** text eol=lf
 evidence/* -text
+tools/** text eol=lf
+probe/** text eol=lf
