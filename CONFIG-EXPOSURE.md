@@ -15,11 +15,28 @@ rather than relying on.
 installs three disk-backed directories. The first two are gated; the third is
 not.
 
-| Address | Directory | Gate |
-|---|---|---|
-| `0x14868` | `VideoFiles` | `allowVideoRecordingFromConfig()` at `0x147fc` |
-| `0x148cc` | `Videos` | same gate |
-| `0x14934` | **`Config`** | **none** |
+| Insert | URL name | Serves | Gate |
+|---|---|---|---|
+| `0x14868` | `VideoFiles` | `/tmp/` | `allowVideoRecordingFromConfig()` at `0x147fc` |
+| `0x148cc` | `Videos` | **`/mnt/sd`** | same gate |
+| `0x14934` | **`Config`** | **`/opt/tuxedo/configuration/`** | **none** |
+
+Every pc-relative string load in the function was mapped to its literal pool
+slot to establish this, rather than inferred from proximity:
+
+| Loaded at | String |
+|---|---|
+| `0x14814` | `/tmp/` |
+| `0x14848` | `VideoFiles` |
+| `0x14878` | `/mnt/sd` |
+| `0x148a8` | `Videos` |
+| `0x148dc` | `/opt/tuxedo/configuration/` |
+| `0x14914` | `Config` |
+
+Worth noting in passing: `Videos` binds the **SD card**, and the gate at
+`0x147fc` branches to `0x148d0` when video recording is disallowed — which is
+the start of the `Config` block. So turning video recording off skips the first
+two directories and installs `Config` regardless.
 
 The `Config` block runs unconditionally from `0x148d0`:
 
