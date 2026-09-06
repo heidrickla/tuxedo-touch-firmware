@@ -46,6 +46,11 @@ and left sitting there saying the opposite of the truth.
   disassembly is incomplete.** The corpus held `0:18:` and `0:504:` frames whose
   handlers never call `bprintf`; that is what revealed the frame path is partly
   asynchronous. Reconcile the two rather than trusting the static read.
+- **"No case for X" is not "X does not exist."** A receiver's dispatch table
+  says what it handles, never what the sender emits. msgType **20 is real** —
+  `/tuxedo` sends it with the keypad display — and Barracuda simply has no case,
+  so it is dropped. Stating the absence as though the message did not exist
+  loses the entire console-mode finding. Name the side you measured.
 - **A doc's open-items list is a claim, not a fact.** `THREAT-MODEL.md` carried
   "bound the 300 s lockout by source address" as open; the tracker was already a
   splay tree keyed on address (`LoginTracker_splayTreeCmpAddr`). I re-raised it

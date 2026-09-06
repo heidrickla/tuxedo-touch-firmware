@@ -1191,6 +1191,20 @@ probably a default or fallthrough path; `r8` is also copied to `r0` at three
 sites, which have not been followed. Recorded as a discrepancy rather than
 rounded away.
 
+**This is a map of what Barracuda HANDLES, not of what `/tuxedo` SENDS, and the
+difference is the whole reason for §4.10.7.** The clearest case is **msgType 20,
+which is absent from the list above and is very much real**: `/tuxedo`'s
+`wsltHandleRawDataFromPanel` copies the keypad display and `osal_MqSend`s type
+20 on `/Q_ServCmdTrsmtr`. Barracuda has no case for it, so it is dropped at the
+edge — that is the console-mode defect, and it is why P10, which makes `/tuxedo`
+put the *real* display text in that message instead of a 14-byte placeholder,
+still does not produce a working console today.
+
+A replacement receives type 20 like any other reply. Console mode costs it one
+more case in the dispatch, which is what "console mode arrives free" in §4.10.7
+means. Do not read a gap in this table as "the panel never sends that" — every
+one of these gaps is a candidate for the same treatment.
+
 **Why this is trustworthy:** the method was validated against a result derived
 independently and earlier — msgType 21 at `0xda80` with
 `%d%s%d%s%d%s%x%s%s%s%d`, which `TUXEDO-AUDIT-BUGS.md:94` already recorded.
