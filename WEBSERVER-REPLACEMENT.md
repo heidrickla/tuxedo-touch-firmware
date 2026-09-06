@@ -1225,20 +1225,32 @@ Applying that exact shape to every caller of `osal_MqSend` gives the types
 |---|---|---|
 | 20 | `CReceiverThread::wsltHandleRawDataFromPanel` | the keypad display — console mode |
 | 60 | `CAccountsSetup::sendUpdateCommandToWeb`, `CInitialAccountsSetup::sendUpdateCommandToWeb` | account updates never reach the web tier |
+| 999 | `CVoiceTuxThread::processGlobalSet` | voice-command results |
 
-msgType 60 was verified individually rather than trusted from the sweep:
-`mov r3,#0x3c; str r3,[sp,#4]; bl osal_MqSend` with `r2 = 0x22c`.
+Each was verified on its own rather than trusted from the sweep. 60 is
+`mov r3,#0x3c; str r3,[sp,#4]; bl osal_MqSend` with `r2 = 0x22c`; 999 is the
+same shape with the constant coming from a literal pool rather than an
+immediate, which is why a `mov`-only scan missed it first time round.
 
-**A third candidate, msgType 0, was rejected.** `CHomeScreen::sltHandleDoorBtnPress`
-does `str r3,[sp,#4]` with no `mov r3,#N` nearby — the tracker carried a stale
-`r3` from earlier in the function. It is a scan artifact, not a message type.
+**Two candidates were rejected as scan artifacts.** `msgType 0` from
+`CHomeScreen::sltHandleDoorBtnPress` and `msgType 20696` (`0x50D8`) from
+`CReceiverThread::sltSendUserCodeAcceptedMsg` both come from a register the
+tracker had stale: in the latter the pool value is a **GOT offset** used by
+`ldr lr,[r0,r3]`, and `r3` is reassigned before the store. Neither is a message
+type.
 
-This is a **lower bound**: it only sees types set by a constant `mov` into the
-slot. Any type loaded from a variable, a field, or a register set in a caller is
-invisible to it.
+**The HTTP-status reading of 504 does not hold.** It is a natural guess — 504 is
+the only value in that range — but `401`, `403`, `404`, `500`, `502` and `503`
+appear in **neither binary**, as a sent type or a dispatch case. 504 is the
+registration-data frame emitted on connect, which the wire contract already
+names, and the captured `0:504:1:P1  H:1:0:3:3` is that frame.
 
-So the replacement gains **two** capabilities the vendor stack cannot deliver at
-all, not one, and neither requires panel-side change — both messages already
+Still a **lower bound**: it sees only types written into the slot from a
+constant, whether immediate or literal pool. A type loaded from a variable, a
+field, or set in a caller stays invisible.
+
+So the replacement gains **three** capabilities the vendor stack cannot deliver
+at all, and none requires a panel-side change — all three messages already
 arrive on `/Q_ServCmdTrsmtr` every time the panel produces them.
 
 **Why this is trustworthy:** the method was validated against a result derived
