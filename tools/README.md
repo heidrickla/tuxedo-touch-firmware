@@ -52,6 +52,37 @@ through a Python-to-shell-to-C chain collapse into a literal CR and an
 unterminated character constant. The source now uses `0x0d` and `0x5c`
 directly, which cannot be mangled by any layer above it.
 
+## Know which binary you are reading
+
+**Every conclusion about "what the stock firmware does" is only as good as the
+copy it was read from, and the copies are easy to confuse.** This has already
+produced one wrong published claim: the threat model said three failed logins
+permanently disable every web account on this panel, because the reference copy
+used for the analysis already had P1 applied and looked like the shipped state.
+
+Known `Barracuda` md5s:
+
+| md5 | what it is |
+|---|---|
+| `324209e1fdfe2d61925a1bb4a7115452` | **genuine stock**; no image of ours has ever applied |
+| `197b7e41daeedd849d6353bd0fb26059` | v9/v10 era — carries **P1, P2, P6**; NOT stock |
+| `d14a3358b10007dc6bbde63fa0959bb9` | v11 — adds P8 |
+| `c8971027bb9f77801d01713b4ae50b2f` | v12 — adds P11, P12 |
+
+`/tuxedo`: `6f8055f5cadba9d0b1582297606427a8` is pre-P10;
+`98370c310e709ba565abfce8ea0a3e17` carries P10.
+
+**Check before you conclude**, in one command:
+
+```bash
+python apply-patches.py --check --root <tree-with-the-binary> --table patches.tsv
+```
+
+It reports each site as already patched, STOCK, or unrecognised, so "is this the
+stock behaviour?" stops being a guess. Do this before writing anything of the
+form *"stock firmware does X"* — especially in the regions P1, P2 and P6 touch,
+where the commonly-used reference copy is already patched.
+
 ## `../tuxelf.py`
 
 Symbol lookup, caller and callee lists, data cross-references and disassembly
