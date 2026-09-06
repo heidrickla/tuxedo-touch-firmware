@@ -449,12 +449,12 @@ Two real options, in order of preference:
 1. **Set the clock on the VISTA-21iP.** It is the authoritative source; the
    keypad follows it. This is a change to the alarm system, from its programming
    screens, and it is the owner's to make.
-2. **Populate `internettimeservers.txt`** and use the panel's own Internet Time
-   feature from the clock-set dialog. This is a supported configuration change,
-   one file on the config partition, reversible, and it survives reflashes.
-   Untested. Whether Internet Time takes precedence over the alarm-bus poll, or
-   merely loses to it in the same way, is **not known** and is the thing to
-   determine before trusting it.
+2. ~~Populate `internettimeservers.txt` and use the panel's own Internet Time
+   feature.~~ **Ruled out.** The request timer is armed unconditionally in
+   `InitAplCalLayer()` and the response handler applies the panel's time with no
+   gate, so the built-in NTP would be overwritten within 48 seconds exactly as
+   `/bin/ntpclient` is. Enabling Internet Time cannot hold the clock while the
+   panel answers.
 
 Do not add a loop-mode ntpclient. Fighting the poll would leave the system clock
 oscillating between 2014 and the present, which is worse than a clock that is
@@ -478,9 +478,22 @@ checkbox and two buttons on the touchscreen.
 `HandleGetCurrentTimeResponse` has zero direct callers, as expected for a
 protocol handler reached through a response dispatch table keyed by command id.
 
-**Limit of this analysis:** the handler itself was not disassembled, so a check
-inside it that ignores the panel's time while Internet Time is enabled cannot be
-ruled out. What can be said is that the *request* timer is unconditional.
+**The handler has now been disassembled, and it is ungated.**
+`HandleGetCurrentTimeResponse` at `0x5867dc` is 276 bytes. It validates the
+frame, assembles the decimal digits, and calls `apl_setCurrentTime`
+unconditionally at `0x5868d8`. Every branch to the early exit at `0x5868e4`
+(which returns 2) is a protocol check and nothing else:
+
+    0x5867ec  subs ip, r1, #0        ; null response pointer
+    0x5867f8  cmp  r1, #1            ; response type must be 1
+    0x586810  cmp  r3, #1 / bhi      ; ([ip+2] + 3) & 0xff must be <= 1
+    0x586820  cmp  r3, #0xec / bne   ; [ip+3] must be 0xEC
+    ...
+    0x5868d8  bl   apl_setCurrentTime(stTimeInfo*)
+
+There is no read of any Internet Time flag, no configuration lookup, and no
+condition around the call. Whenever the panel answers the time request, the
+keypad adopts the panel's time.
 
 **Therefore: set the clock on the VISTA-21iP.** It is the source, the poll that
 reads it is armed unconditionally at startup, and everything else is downstream
@@ -522,3 +535,23 @@ partly read.
 Tuxedo: Clock Set, set the date and time, Apply. That runs the code path above
 and writes command 121 to the panel. The keypad's poll then reads the corrected
 time back, and the February 2014 clock goes away for good.
+
+## Settled
+
+There is exactly one fix: **correct the clock on the VISTA-21iP.**
+
+Nothing done on the keypad can hold its own clock. Both time paths were traced
+end to end:
+
+| Path | Outcome |
+|---|---|
+| `/bin/ntpclient` from `rc.local` (v9) | sets the clock, overwritten in <= 48 s |
+| The panel's own `CInternetTime` / `ntpdate()` | would be overwritten identically; the handler is ungated |
+| Alarm-bus poll | `PanelTimeRequestFunc` armed unconditionally in `InitAplCalLayer()`; `HandleGetCurrentTimeResponse` applies the result with no condition |
+
+The keypad is a faithful follower of the panel's clock. Fix the source and every
+downstream symptom goes with it: the system clock, the `Mon, 24 Feb 2014` in
+every HTTP response header, and the event log timestamps.
+
+Leave the v9 `/bin/ntpclient` in place. It is harmless, it sets `rtc0` correctly,
+and it gives a sane clock in the window before the first poll lands.
