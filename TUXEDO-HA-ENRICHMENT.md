@@ -947,6 +947,38 @@ Two limits worth stating rather than papering over:
   It does not follow from the above and is not implied by it. That is a live
   test, not an inference.
 
+### Push-frame grammar, from 49 frames over 150 s
+
+Captured 2026-09-05 on an idle disarmed panel, port 80, no credential. Field 2
+is the message id and matches the documented command table.
+
+| id | n | shape |
+|---|---:|---|
+| `21` | 6 | `0:21:1:fe:<0xFE>1Ready To Arm:2` |
+| `18` | 5 | `0:18:1 P1  H:2` |
+| `504` | 1 | `0:504:1:P1  H:1:0:3:3` |
+| `-1` | 21 | `0:-1:1:P1  H:1:0:3:3` **and** `0:-1:<0xFE>1Ready To Arm` |
+| — | 16 | bare `-1`, `Client Connected` |
+
+`21` is `SERV_PARTITION_MSG_BROADCAST` and `18` is `SERV_GET_HOME_PART`, both
+from the command table above. `-1` is not an id: it repeats the payload of
+whichever type last changed, so **it carries two different shapes** and a parser
+keyed on field count will mis-read one of them.
+
+**The state flag appears in two forms, and only one of them is on every frame.**
+
+- The literal text field `:fe:` / `:ff:` occurs **only on id `21`** — 6 of 49
+  frames here.
+- The raw byte `0xFE` / `0xFF` immediately precedes the display text on **both**
+  id `21` and id `-1` frames.
+
+So the raw byte is the more available discriminator; the hex text field is the
+easier one to parse but is absent from the majority of frames. A reader that
+waits for `:fe:` will sit through many frames that already carry the state.
+
+Only `fe` is attested. `ff` rests on a single arm-stay cycle, and away and night
+are unverified -- see the caveat under Correction 2.
+
 ### How to read "no callers" on a Qt slot in this binary
 
 This was first written up as "zero callers proves nothing for a slot, because
