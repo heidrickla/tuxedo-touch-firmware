@@ -268,7 +268,7 @@ def main():
                  f"disarm or bypass by design.")
 
     pw = args.password or getpass.getpass("Tuxedo password: ")
-    probe = TuxedoProbe(args.host, args.username, pw, scheme="http")
+    probe = TuxedoProbe(args.host, args.username, pw, scheme="https")
     print(f"Logging in to {probe.base} as {args.username} ...")
     probe.login()
     print("Login OK.\n")
