@@ -1031,7 +1031,56 @@ the payload shapes are `setCid` (once, on connect), `statusMessageText` and
    `D:/temp/tux-arm.py` and `D:/temp/tux-disarm.py`. They live outside the repo
    because they need the panel code, and `tux-disarm.py` exits non-zero unless
    it confirms the panel actually reached a disarmed state.
-2. *The 404-byte command encoder.* Not started.
+2. *The 404-byte command encoder.* **Started 2026-09-06 — the outbound
+   structure is recovered.** See below.
+
+#### The 404-byte command, from the binary
+
+Anchored on `setarmwithcode` and `setdisarmwithcode`, which are the
+`AdvancedSecurity/ArmWithCode` and `DisarmWithCode` endpoints driven by
+`D:/temp/tux-arm.py` today, so their real-world effect is known rather than
+assumed.
+
+The outbound command is **built in a global buffer at `0x55d8d0`**, not on the
+stack — the opposite of `/tuxedo`'s stack-built replies, and worth knowing
+because a global build buffer is not reentrant:
+
+```
+0x1afe4  ldr lr, [pc,…]   -> 0x55d8d0     the command buffer (GLOBAL)
+0x1afec  str ip, [lr]                     cmd+0x00
+0x1aff8  str ip, [lr, #4]                 cmd+0x04  <- caller param [fp,#8]
+0x1b004  str ip, [lr, #8]                 cmd+0x08  <- caller param [fp,#0x6c]
+0x1b010  str ip, [lr, #0xc]               cmd+0x0C  <- caller param [fp,#0x70]
+0x1b00c  mov r2, #0x194                   404
+0x1b014  ldr r0, [r3]                     mqd from the global at 0x55ae68
+0x1b018  mov r3, #1                       priority 1
+0x1b01c  bl  mq_send
+```
+
+`mq_send(mqd, 0x55d8d0, 404, prio=1)` — identical in `setdisarmwithcode`,
+`setPartitionArmed` and every other `set*` handler checked.
+
+**`cmd+0x0C` carries the command code.** Two handlers bake it in and both match
+independently known values:
+
+| handler | `cmd+0x0C` | corroboration |
+|---|---|---|
+| `setClientRegister` | `0x1f4` = **500** | §B7 already records command 500 as the one that sets `clients_connected` and calls `registerclient` |
+| `setPartitionArmed` | `0x4d2` = **1234** | — |
+
+`setarmwithcode` and `setdisarmwithcode` take it from a **caller parameter**
+instead, which fits the documented request shape
+`/handlerequest.html?cmd=<CODE>&Type=<CODE>&pID=<partition>&uCode=<usercode>`:
+the code travels from the URL into the message. That is also the family the
+existing patches act on — 1125 for console mode, 502 BACK and 503 HOME (P11 and
+P12).
+
+**Verified:** the buffer address, the size, the priority, the queue handle
+global, the four field offsets, and the two constants above. **Inferred:** that
+`+0x0C` is universally the command code — it rests on two baked-in constants
+agreeing with prior findings plus the caller-parameter pattern, not on a sweep.
+`mq_send`'s other named callers (`setLights`, `setDoorLock`, `setMode`,
+`setThermostatSetPoint`, …) have not been read yet.
 
 #### The reply decoder: dispatch map recovered from the binary, 2026-09-06
 
