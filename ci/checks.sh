@@ -40,7 +40,7 @@ check_shell() {
 #    executes breaks it in ways that are hard to see.
 check_crlf() {
     local bad=""
-    for f in $(git ls-files '*.sh' '*.conf' '*.example' 'upload-handler/*'); do
+    for f in $(git ls-files '*.sh' '*.conf' '*.example' 'upload-handler/*' 'image/*'); do
         [ -f "$f" ] || continue
         grep -qU $'\r' "$f" && bad="$bad $f"
     done

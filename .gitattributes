@@ -16,3 +16,5 @@ tuxedo-upload.sh text eol=lf
 *.jffs2         binary
 *.hex           binary
 evidence/*.log -text
+image/** text eol=lf
+evidence/* -text
