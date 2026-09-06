@@ -1144,12 +1144,22 @@ disarm / status by command code, same semantics" — these are those codes, and
 they are now written down rather than inferred from behaviour.
 
 **Registration: 500 out, 504 back, and the loop closes.** `setClientRegister`
-writes **500** into `+0x04`, and 500 appears nowhere in the dispatch table above
-— `/tuxedo` contains **no `cmp <reg>, #500` at all**. It is not dispatched like
-the other commands.
+writes **500** into `+0x04`, and it *is* dispatched — the table above simply
+missed it:
 
-But §B7's `registerclient` is real and is in **`/tuxedo`**, at `0x13c2f8`, and
-reading it explains the whole exchange:
+```
+0x1472e8  cmp ip, #0x1f4            500
+0x1472ec  bne #0x14723c             skip if not
+0x1472f8  bl  Increase_LocalWeb_usage_num
+0x147300  bl  CReceiverThread::registerclient
+```
+
+**The 40-code table is a lower bound.** It followed only `cmp/beq` and missed
+every case written as `cmp/bne skip`, which is exactly the same undercount made
+earlier against Barracuda's own dispatch and then written into TRAPS. Codes
+present in the table are real; the table is not the complete set.
+
+Reading `registerclient` explains the exchange:
 
 ```
 0x13c308  bl osal_MqFlush           its FIRST act -- drains the reply queue
@@ -1173,10 +1183,17 @@ pending reply**. Any replacement that registers must expect to lose whatever was
 queued, and §2.5's warning about a second EH client costing a queue flush is
 this behaviour.
 
-`CReceiverThread::unregisterclient` @`0x13c00c` *is* called from
-`CReceiverThread::run`. How `registerclient` is reached, given no `cmp #500`,
-is not yet established — a Qt signal/slot connection is the obvious candidate
-and has not been checked.
+`registerclient` is called from `CReceiverThread::run` (the site above) and from
+`CReceiverThread::sendModeChange`; `unregisterclient` @`0x13c00c` likewise from
+`run`.
+
+**A retracted claim, and the reason matters more than the claim.** One commit
+earlier this section asserted "`/tuxedo` contains no `cmp <reg>, #500` at all",
+from a scan over the whole `.text`. That scan is worthless: **capstone's
+`disasm()` stops at the first word it cannot decode**, and a linear pass over
+this binary's `.text` decoded **442 instructions — 0.03% of the section** —
+before halting in the first literal pool. It reported absence because it never
+looked. Any "X does not appear in this binary" produced that way says nothing.
 
 Ruled out on the way: **`th_processAplEcpOutput` is not the consumer.** It takes
 100-byte messages and dispatches on ASCII — `0x30`–`0x39`, `*`, `#`, `A`–`D`,

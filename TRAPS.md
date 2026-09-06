@@ -46,6 +46,13 @@ and left sitting there saying the opposite of the truth.
   disassembly is incomplete.** The corpus held `0:18:` and `0:504:` frames whose
   handlers never call `bprintf`; that is what revealed the frame path is partly
   asynchronous. Reconcile the two rather than trusting the static read.
+- **`capstone.disasm()` STOPS at the first undecodable word — it does not skip
+  it.** A linear pass over `/tuxedo`'s `.text` decoded **442 instructions, 0.03%
+  of the section**, halting in the first literal pool, and cheerfully reported
+  "0 matches". That produced a published claim that a constant appeared nowhere
+  in the binary when it sits at `0x1472e8`. **Never conclude absence from a
+  linear scan.** Disassemble per function (`addr`/`end`), and even then check
+  the walk reached the end rather than dying in an inline pool.
 - **Run the recipe before you write it down.** I documented a corrected scanning
   method — locate a struct base from an `add rB,sp,#N` / `add rT,rB,#0xe` idiom
   — committed it as the way forward, then ran it: 0 results against 194 misses,
