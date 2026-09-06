@@ -16,6 +16,37 @@ Nothing was written to the panel. No service restarted, no reboot, no arm/disarm
 
 ---
 
+## 0. DECIDED — 2026-09-06, by the owner
+
+**Keep the kernel. Closed.** Lewis: *"let's just keep the kernel. I don't want to
+get a ttl adapter or ask for the source."*
+
+So all three of this document's forward paths are declined, deliberately:
+
+| Recommendation below | Status |
+|---|---|
+| Wire a 3.3 V USB-TTL adapter to `ttymxc0` (§7) | **Declined.** Not doing it. |
+| Request GPL kernel source from Resideo (§5) | **Declined.** Not asking. |
+| Any staged kernel flash (§4) | **Moot** — it was already gated on the serial console, which is not happening. |
+
+The rest of this document is retained as the *reasoning*, not as a proposal.
+Nothing below is an open action item. If a future reader is tempted to reopen
+this, the short version is: the analysis said no, the owner also said no, and the
+two decisions are independent of each other.
+
+**What this settles for the wider project:** the userland path is the only path,
+and it is already proven — rustls does TLS 1.3 on this ARM1136 today, verified on
+the live panel (`WEBSERVER-REPLACEMENT.md` §2.1). Nothing the replacement needs
+requires a newer kernel, which is exactly why declining costs nothing.
+
+**One consequence worth carrying forward:** with no serial console, there is no
+out-of-band recovery channel. SSH and the SD-card flasher are the only ways back
+into this unit. That does not affect the web-server replacement, which never
+writes to a boot partition — but it does mean `RECOVERY-BACKUP.md`'s baseline is
+the safety net, and it should stay current.
+
+---
+
 ## 1. Verdict
 
 **No. Do not replace the kernel. Not now, and not on the evidence available today.**
