@@ -36,7 +36,11 @@ else
     while IFS=$'	' read -r name binary off stock patched desc; do
         case "$name" in ''|\#*) continue ;; esac
         dec=$((off))
-        live=$($SSH "dd if=$binary bs=1 skip=$dec count=4 2>/dev/null | od -An -tx1 | tr -d ' 
+        # Length comes from the table, not a hardcoded 4. A future patch may be
+        # a code-cave stub of tens of bytes, and a fixed count=4 would read the
+        # first word and call the rest corrupt.
+        n=$(( ${#patched} / 2 ))
+        live=$($SSH "dd if=$binary bs=1 skip=$dec count=$n 2>/dev/null | od -An -tx1 | tr -d ' 
 '" 2>/dev/null)
         case "$live" in
             "$patched") pass "$name  $binary at $off" ;;

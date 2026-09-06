@@ -158,7 +158,23 @@ class Elf:
         return None
 
     def o2v(self, off):
+        """File offset -> virtual address, or None if the offset is not mapped.
+
+        Sections with sh_addr == 0 are NOT loaded at runtime -- .symtab,
+        .strtab, .comment, .shstrtab, .ARM.attributes. Translating an offset
+        inside one of those produced a virtual address in low text space and
+        made every function symbol look like it had a data reference to
+        itself: LoginTracker_getFirstNode's `st_value` word inside .symtab
+        was reported as a pointer at VA 0xd0b4, "in createServer".
+
+        That is the same shape as the BL-only caller bug -- a scan returning a
+        confident wrong answer rather than nothing -- and it was used to rank
+        code-cave risk, which is exactly where a phantom reference is most
+        expensive. Skip unmapped sections.
+        """
         for n, a, o, s in self.secs:
+            if a == 0:
+                continue          # not loaded; an offset here has no VA
             if s and o <= off < o + s:
                 return a + (off - o)
         return None
