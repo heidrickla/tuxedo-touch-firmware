@@ -16,7 +16,8 @@ and none ever will be** — `ci/checks.sh` fails the build if any appears.
 | `tuxedo-ca.py` | **working**, verified end to end |
 | `tuxedo-tls-push.py` | **working**, install + verify + rollback all exercised |
 | `../tuxweb/` | **running on the panel**, TLS 1.3 on a spare port |
-| `tuxedo-tls` (on-panel), ACME hook, THREAT-MODEL.md | not built yet |
+| `THREAT-MODEL.md` | **written** — read it before treating the panel as secured |
+| `tuxedo-tls` (on-panel), ACME hook | not built yet |
 
 `tuxedo-ca.py` is verified rather than assumed: a generated leaf was served over
 a real TLS handshake and accepted by a client trusting only the owner CA —
@@ -73,6 +74,14 @@ Leaves are EC P-256, 397 days (the CA/Browser Forum maximum, which keeps renewal
 a habit rather than an emergency). The panel has no DNS name, so the SAN is an
 **IP literal** — a CN alone has not been honoured by anything for years.
 
+## Read `THREAT-MODEL.md` before trusting any of this
+
+TLS fixes traffic on the wire and server identity. It does not fix the
+unauthenticated live-alarm-state feed, the three-request permanent account
+lockout, or the fact that everything on the panel runs as root. The certificate
+work was worth doing because the alternative was a published private key — it is
+the first item on a list, not the end of one.
+
 ## What `0600` on the panel does and does not buy
 
 The design puts the key at `/opt/tuxedo/configuration/tls/server.key` mode
@@ -122,5 +131,5 @@ Modes are asserted after writing, not assumed: `server.key` 0600, `chain.pem`
 
 ## Still to build
 
-`tuxedo-tls` (the on-panel helper), the ACME/DNS-01 hook, the recovery path, and
-`THREAT-MODEL.md`. See §3 of `WEBSERVER-REPLACEMENT.md`.
+`tuxedo-tls` (the on-panel helper), the ACME/DNS-01 hook, and the recovery path.
+See §3 of `WEBSERVER-REPLACEMENT.md`.
