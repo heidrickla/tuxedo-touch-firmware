@@ -372,7 +372,61 @@ It does **not** validate this patch. The change is in a userspace ELF on the app
 
 **Structural, not exhaustive:**
 
-8. **`node+0x28` is proven unread structurally, not exhaustively.** The set of code receiving a node pointer is closed and was enumerated (LoginTracker internals 0x64e9c-0x65400, the four vtable callbacks, plus `getFirstNode`/`getNextNode` which have zero callers and zero non-symtab pointers). Every load with a `0x28` displacement in `.text` was not scanned — that is not decidable without type information. [LIKELY, with a strong structural argument]
+8. ~~**`node+0x28` is proven unread structurally, not exhaustively.**~~ **REFUTED
+   2026-09-05 — see "The in-memory lockout expires" below.** `node+0x28` is
+   read, and the structural argument failed for a specific and repeatable
+   reason: it enumerated "the four vtable callbacks", but each of those is a
+   4-byte thunk that reaches its real body with a tail-call `b`. Stopping at
+   the thunk hides the body. [REFUTED]
+
+## The in-memory lockout expires after 300 seconds
+
+Established 2026-09-05, after `tuxelf.py` was fixed to count tail calls.
+
+`barracuda` calls `installVirtualDir` @`0x14598`, which builds the LoginTracker
+interface vtable at `0x14758`-`0x1477c`:
+
+| slot | thunk | real body |
+|---|---|---|
+| `[r4+0]` Validate | `0x13af0` | `resetLoginFailureCount` @`0x15074` |
+| `[r4+4]` Login | `0x13aa4` | |
+| `[r4+8]` LoginFailed | `0x13a24` | `updateLoginFailureCount` @`0x1537c` |
+| `[r4+0xc]` TerminateNode | `0x133d8` | |
+
+So `resetLoginFailureCount` runs on every validate. Decoded:
+
+```c
+if (node == 0)             return 1;    // allow
+t = node[0x28];                         // lockout timestamp
+if (t != 0) {
+    if (time(0) - t < 300) return 0;    // DENY, still locked
+    node[0x28] = 0;                     // expire the lockout
+    node[0x30] = 0;                     // and clear the failure counter
+    return 1;
+}
+if (node[0x30] < 5)        return 1;    // under threshold
+node[0x28] = time(0);      return 0;    // start the 5-minute lockout
+```
+
+Threshold **5** failures, lockout **300 s**, and it clears both the timestamp
+and the counter on expiry. This is a self-healing in-memory lockout, not a
+permanent one.
+
+**Do not read this as "lockout is harmless."** It is one of two mechanisms and
+they are independent:
+
+- **In-memory** (above): LoginTracker node in a splay tree. 5 strikes, 5
+  minutes, self-clearing, lost on restart.
+- **On-disk**: `updateLoginFailureCount` @`0x1537c` reached from the
+  `LoginFailed` vtable slot. It decrypts the WEBUSERS JSON
+  (`decryptAESforTuxdb` → `json_parse_unformatted`), edits it, and writes it
+  back encrypted (`encryptAESforTuxdb`, `validateCRCFileOnFileWrite`). That is
+  the path behind the persistent `status=0` account disable, and nothing here
+  shows it expiring.
+
+The threshold and expiry above are **read from the binary, not observed on
+hardware.** Provoking a real lockout to confirm them was deliberately not
+done.
 9. **`.ARM.exidx`:** a single entry starting 0x000133c0, next at 0x0002a994, inline compact word `0x80a8b0b0`, whose opcodes decode to `pop {r4,lr}` + finish — which happens to match the cave's frame exactly. Both 0x13af0 and 0x15074 sit inside it. Harmless for a routine that never unwinds, but it is an inherited descriptor, not a correct one. [CONFIRMED coverage; correctness incidental]
 10. **Nothing here has been executed.** Every instruction is encoding-verified and every branch target is verified, by two independent passes. No patched binary has been run.
 
