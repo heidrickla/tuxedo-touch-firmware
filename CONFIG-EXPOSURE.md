@@ -192,6 +192,36 @@ Both verified present after the JFFS2 round trip. The patcher refuses to write
 unless it finds the expected bytes, and keeps a `.prepatch` copy, which is
 excluded from the image.
 
-**Not yet on hardware.** Pushing the patched binaries to the running panel was
-declined by the permission classifier, which is the right call for overwriting a
-live alarm system's web server and supervisor. v11 is built and staged instead.
+## Deployed and verified on hardware, 2026-09-06
+
+Pushed over SSH with `deploy.py --apply`, then rebooted to activate, since the
+running processes hold the old inodes until they restart. The panel came back in
+about 65 seconds.
+
+| Check | Result |
+|---|---|
+| `/opt/webserver/Barracuda` md5 | `d14a3358b10007dc6bbde63fa0959bb9` |
+| `/supervis` md5 | `6caac69eb46fb78447bcd3032078fa44` |
+| **Port 6800** | **gone.** Five listeners now: 22, 80, 443, 6280, 9443 |
+| `supervis` | running, pid 903, still kicking the watchdog |
+| `/login2.html` | 200, 15,258 bytes, unchanged |
+| `/eventhandler.html` | 200, 6,311 bytes, unchanged |
+| `/Config/` and `/Config/CRCdata.json` | 404, as before, now with no binding at all |
+| Push stream | working, `0:21:1:fe:þ1Ready To Arm:2` |
+| REST `GetSecurityStatus` | `Ready To Arm` |
+
+The `/Config` patch changes no observable behaviour, which is the point: it
+removes a binding that was doing nothing on this unit but was unconditional in
+shipped code, so nothing could ever start serving it.
+
+### A bug in `deploy.py` that this exposed
+
+The first `--apply` reported success and wrote nothing. `panel()` took the
+script and the file bytes as alternatives on the same stdin, so when a blob was
+supplied the command was discarded and the **binary itself** was fed to `sh -s`.
+Nothing checked the exit status, so it looked like it worked.
+
+Fixed three ways: the command now goes as an ssh argument with the bytes on
+stdin, the exit status is checked and raises, and after pushing, `deploy.py`
+re-reads every file it wrote and compares md5 before claiming success. A deploy
+tool that can silently do nothing is worse than no deploy tool.

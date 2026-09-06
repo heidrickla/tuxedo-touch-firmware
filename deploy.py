@@ -57,11 +57,32 @@ def builder(script, binary=False):
     return p.stdout if binary else p.stdout.decode("utf-8", "replace")
 
 
-def panel(script, stdin=None, binary=False):
+def panel(script, binary=False):
+    """Run a shell script on the panel, script on stdin."""
     cmd = ["ssh", "-i", KEY] + SSH_OPTS + [f"root@{HOST}", "sh -s"]
-    p = subprocess.run(cmd, input=stdin if stdin is not None else script.encode(),
-                       capture_output=True)
+    p = subprocess.run(cmd, input=script.encode(), capture_output=True)
     return p.stdout if binary else p.stdout.decode("utf-8", "replace")
+
+
+def panel_write(remote_path, blob, mode):
+    """Send a file. The command goes as an ssh ARGUMENT and the bytes go on
+    stdin -- they cannot share stdin. Getting this wrong sent the binary to
+    `sh -s` as if it were a script, so nothing was written and, because the
+    exit status was never checked, deploy reported success anyway.
+
+    Writes to a temporary name and renames: writing over a binary that is
+    currently executing gives ETXTBSY, but rename works."""
+    d = os.path.dirname(remote_path)
+    cmd = ["ssh", "-i", KEY] + SSH_OPTS + [
+        f"root@{HOST}",
+        f'mkdir -p "{d}" && cat > "{remote_path}.new" && '
+        f'chmod {mode} "{remote_path}.new" && '
+        f'mv "{remote_path}.new" "{remote_path}" && sync']
+    p = subprocess.run(cmd, input=blob, capture_output=True)
+    if p.returncode != 0:
+        raise SystemExit(f"  FAILED writing {remote_path}: "
+                         f"rc={p.returncode} {p.stderr.decode('utf-8','replace').strip()}")
+    return True
 
 
 def parse(text):
@@ -142,11 +163,9 @@ done
         else:
             mode = lv[2] if len(lv) > 2 else "644"
             blob = builder(f"cat {TREE}/{f}", binary=True)
-            # Write to a temporary name and rename. Writing directly over a
-            # binary that is currently executing gives ETXTBSY; rename works,
-            # because the running process keeps the old inode until it exits.
-            panel(f'mkdir -p "{d}" && cat > "/{f}.new" && chmod {mode} "/{f}.new"'
-                  f' && mv "/{f}.new" "/{f}" && sync', stdin=blob)
+            if not blob:
+                raise SystemExit(f"  FAILED reading {TREE}/{f} from the builder")
+            panel_write(f"/{f}", blob, mode)
             print(f"  file  /{f} ({mode}, {len(blob)} bytes)")
 
     print("\nverifying...")
