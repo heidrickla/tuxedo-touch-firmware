@@ -83,15 +83,34 @@ class Console:
         self.p = TuxedoProbe(host, user, pw, scheme="https")
         self.p.login()
         self.sid = self._session_id()
+        self.tokenkey = self._hidden("hiddenKey")
 
     def _session_id(self):
         st, h, b = self.p._open(f"{self.p.base}/eventhandler.html",
                                 headers={"Cookie": self.p.session_cookie})
-        m = re.search(r'id="hidSession"[^>]*value="([^"]*)"',
-                      b.decode("utf-8", "replace"))
-        return m.group(1) if m else ""
+        body = b.decode("utf-8", "replace")
+        # The attribute order varies, so try both. The old pattern assumed
+        # id before value and silently returned "id=" on this firmware.
+        for pat in (r'id="hidSession"[^>]*value="([^"]*)"',
+                    r'value="([^"]*)"[^>]*id="hidSession"'):
+            m = re.search(pat, body)
+            if m:
+                return m.group(1)
+        return ""
 
     # -- REST -------------------------------------------------------------
+
+    def _hidden(self, name):
+        """Read a hidden input from eventhandler.html by id."""
+        st, h, b = self.p._open(f"{self.p.base}/eventhandler.html",
+                                headers={"Cookie": self.p.session_cookie})
+        body = b.decode("utf-8", "replace")
+        for pat in (r'id="%s"[^>]*value="([^"]*)"' % name,
+                    r'value="([^"]*)"[^>]*id="%s"' % name):
+            m = re.search(pat, body)
+            if m:
+                return m.group(1)
+        return ""
 
     def rest(self, endpoint, plain=""):
         ep = "/" + endpoint.lstrip("/")
@@ -125,13 +144,19 @@ class Console:
     # -- command API ------------------------------------------------------
 
     def cmd(self, code, **extra):
+        # Shape taken from the panel's own script/httpRequest.js and
+        # script/consoleRequest.js. tokenkey comes from the hidden field
+        # "hiddenKey" in eventhandler.html (getKeyFromEV), and httpRequest.js
+        # sends it as a request header as well as a query parameter. It was
+        # previously hardcoded empty here.
         q = {"cmd": str(code), "Type": str(code), "pID": "-1", "uCode": "0",
              "sessionid": self.sid, "filters": "0", "index": "0",
-             "tarTemp": "0", "tokenkey": "", "sid": "1"}
+             "tarTemp": "0", "tokenkey": self.tokenkey, "sid": "0.5"}
         q.update({k: str(v) for k, v in extra.items()})
         st, h, b = self.p._open(
             f"{self.p.base}/handlerequest.html?" + urllib.parse.urlencode(q),
-            headers={"Cookie": self.p.session_cookie})
+            headers={"Cookie": self.p.session_cookie,
+                     "tokenkey": self.tokenkey})
         return st, len(b)
 
     # -- arming -----------------------------------------------------------

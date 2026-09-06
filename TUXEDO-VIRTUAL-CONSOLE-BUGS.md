@@ -256,3 +256,105 @@ failure silent and confusing; the missing push channel makes it total.
 That also revises the fix list: repairing the six JS defects would make the page
 *honest* about failing, but would not make it work. Restoring the push channel
 is the actual fix, and that is firmware work, not web work.
+
+---
+
+# Console mode, mapped from the binary (2026-09-06)
+
+`/tuxedo` has a full symbol table, so the whole mechanism reads directly. This
+replaces the earlier UNVERIFIED reconstruction from `consoleRequest.js`.
+
+## The dispatch
+
+`CReceiverThread::run` at `0x147158`, command `0x13` (19):
+
+    0x147604  cmp  ip, #0x13
+    0x147608  bne  <next case>
+    0x14760c  ldr  r2, =0xd2f269
+    0x147610  mov  r3, #1
+    0x147614  str  r3, [r5, #8]      ; gate 2: this+8 = 1
+    0x147620  strb r3, [r2]          ; gate 1: the global byte = 1
+    0x147624  bl   CReceiverThread::requestconsolemode
+
+`requestconsolemode` at `0x13db5c` is 88 bytes and branches on a key count:
+
+    r6 = [req + 0x2e]                 ; number of keys
+    r6 == 0  ->  bl wsltHandleRawDataFromPanel      ; ask for the display
+    r6 >  0  ->  for each key at [req + 0x2f]:
+                     apl_sendEcpConsoleModeData(&key, 1)
+
+So one request either **reads** the display or **sends** keys, never both.
+
+`CReceiverThread::wsltHandleRawDataFromPanel` at `0x13da00` builds the display
+message and sends it with `osal_MqSend`, message size `0x22c`, **command id
+`0x14` (20)**. It fetches two 16-character lines via `apl_getEcpConsoleModeData`,
+replaces any byte above `0x7e` with a space, concatenates them, and sends.
+
+**The queue is the same one the partition status uses.** Both
+`wsltHandleRawDataFromPanel` and `CReceiverThread::sltSendChangedPartitionStatus`
+load the handle from `0xd2f29c`. Verified by resolving both literal pools. So a
+console display frame should appear on the push stream exactly as `0:21:` frames
+do, as `0:20:...`.
+
+## Three gates, all of which must pass
+
+    0x13da0c  ldrb r2, [0xd2f269]     ; set by command 19
+              cmp  r2, #0 / beq       ; 0 -> return, silently
+    0x13da34  bl   GetOperationMode
+              cmp  r0, #1 / beq       ; 1 -> skip the next check
+    0x13da44  bl   GetCurrentArmingState
+              cmp  r0, #0xff / beq    ; 0xff -> bail
+    0x13dad4  ldr  r3, [this + 8]
+              cmp  r3, #0 / beq       ; 0 -> return before MqSend
+
+## Correction: the zero-byte body is not the bug
+
+This document previously treated `handlerequest.html` returning **HTTP 200 with
+a zero-byte body** as the defect. It is not. Measured against the live panel:
+
+| Command | Response |
+|---|---|
+| 19, console mode | HTTP 200, 0 bytes |
+| 1125, subscribe | HTTP 200, 0 bytes |
+| 55, home refresh | HTTP 200, 0 bytes |
+| **999999, nonsense** | HTTP 200, 0 bytes |
+| **0** | HTTP 200, 0 bytes |
+
+Valid, invalid and nonsense commands are indistinguishable. `handlerequest.html`
+is **fire and forget**: it never returns a result, and every answer comes back on
+the push stream. The vendor's own pages work this way, reading results from the
+event stream in the `panelStatusContent` iframe.
+
+That means a zero-byte body is not evidence of anything, and any client that
+waits for a result in the HTTP response will wait forever.
+
+## A real bug, found and fixed
+
+`Console._session_id()` in `tuxedo_api_console.py` matched
+`id="hidSession"[^>]*value="..."`. On this firmware the attributes appear in the
+other order, so the pattern matched across elements and returned the literal
+string **`id=`**. Every `handlerequest.html` command was therefore sent with a
+garbage `sessionid`. Fixed by trying both orders; the panel now returns real
+values such as `-2094665682`.
+
+The same call also sent `tokenkey=""`. The vendor pages take it from the hidden
+field `hiddenKey` in `eventhandler.html` (`getKeyFromEV()` at
+`script/eventHandler.js:1260`) and `script/httpRequest.js:49` additionally sets
+it as a **request header**. Both are now sent. On this panel the value is `-1`.
+
+The exact request, from `script/consoleRequest.js:12`:
+
+    /handlerequest.html?cmd=<N>&Type=<N>&pID=-1&uCode=0&sessionid=<SID>
+        &filters=0&index=0&tarTemp=0&tokenkey=<TOK>&sid=<random>
+
+## Still not working, and what to try next
+
+With a valid session, a real tokenkey, and command 19 accepted, **no `0:20:`
+frame has been observed** on the push stream, with or without a preceding
+keystroke.
+
+Since the queue is shared and the frame would be visible if sent, the function is
+returning before `osal_MqSend`. The untested gate is the middle one:
+`GetOperationMode()` and `GetCurrentArmingState()`. Both are named in the symbol
+table and neither has been read. That is the next thing to disassemble, and it is
+a lookup rather than a search.
