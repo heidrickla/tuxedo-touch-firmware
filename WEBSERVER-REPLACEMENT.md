@@ -1106,6 +1106,57 @@ reading the queues directly does not inherit any of them:
 **Additive only.** New endpoints alongside the old, same frames on the stream,
 same paths for the existing calls.
 
+### 4.10.3b Fixture P0, captured: the close-delimiter is emitted after EVERY part
+
+MEASURED 2026-09-06, raw socket, port 80, no credential, 2616 bytes.
+
+Response headers:
+
+```
+HTTP/1.1 200 OK
+Server:                                       <- empty
+Connection: Close                             <- on a long-lived stream
+Cache-Control: no-store, no-cache, must-revalidate
+Content-type: multipart/x-mixed-replace;boundary="EH912ZZ"
+```
+
+Body framing, per frame:
+
+```
+--EH912ZZ
+
+Content-type: text/plain
+
+
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["..."]]
+
+--EH912ZZ--
+                              <- CLOSE delimiter, every time
+```
+
+In the capture: **19 opening boundaries and 19 close delimiters.**
+
+**This is not valid RFC 2046.** `--boundary--` is the *close* delimiter and means
+the multipart body has ended. The vendor emits it after every part, so a strict
+multipart parser reads the first frame, concludes the stream is finished, and
+stops -- which is why a hand-rolled scanner works here and a conforming library
+does not.
+
+**Consequence for the replacement:** this framing must be reproduced exactly.
+Emitting a standards-correct stream -- one close delimiter, at the end -- is
+precisely the kind of "fix" that looks like an improvement and breaks every
+client written against the vendor. It belongs with `"Sucess"` in
+`quirks_to_preserve`.
+
+`Connection: Close` on a stream the panel then holds open indefinitely is a
+second quirk in the same family, and is likewise reproduced rather than
+corrected.
+
+(The raw capture is deliberately not committed: push frames can carry the LAN
+device inventory -- hostnames and IPs of everything the camera scan finds -- and
+this repository is public.)
+
 ### 4.10.4 Invariants that must not move
 
 Pinned by the consumer's test suite as of 2026-09-06. Changing any of these
