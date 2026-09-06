@@ -381,3 +381,81 @@ that is simply wrong, because event log entries would then be non-monotonic.
 
 Still unidentified: the exact call that writes the clock, and whether the source
 really is the alarm bus.
+
+---
+
+# Source located
+
+`/tuxedo` carries a **full symbol table**, 12,592 named functions, section
+`.symtab` at file offset `0xcff604`. That makes this a naming exercise rather
+than a reverse-engineering one. It is the single most useful thing found all
+evening and it applies well beyond the clock.
+
+Note the trap that hid it: `readelf --dyn-syms` **truncates symbol names** to
+`__[...]` unless `-W` is passed. Without `-W`, a sweep for `settimeofday`,
+`stime` and `clock_settime` across 680 executables reported that nothing on the
+panel sets the clock, including `/bin/date`. Always pass `-W`.
+
+## The chain
+
+    HandleGetCurrentTimeResponse(char, AnalyzedResponse_t*)   0x5868d8
+      -> apl_setCurrentTime(stTimeInfo*)                      0x58b648
+        -> dal_setCurrentTime(stTimeInfo const*)              0x5a69ec
+          -> clock_settime                                    plt 0x20650
+
+`AnalyzedResponse_t` is the alarm-bus response type. **The keypad asks the
+VISTA-21iP for the time and writes the answer into its own system clock.** That
+is the live source with the continuous timeline, and it is why NTP on the keypad
+loses within a minute.
+
+`apl_setCurrentTime` has two other callers, both user-driven:
+`CClockSetDialog::handleApplyPress()` and `CHomeClock::sltDSTClock()`.
+
+Also worth recording: `apl_getCurrentTime(stTimeInfo*)` at `0x58b8e0` calls
+`dal_setCurrentTime` as well. A getter that writes the system clock is how a
+periodic status poll ends up re-asserting the time.
+
+## The panel already has an NTP client
+
+    CInternetTime::CInternetTime()          0x505c20
+    ntpdate()                               0x505eac
+    CInternetTime::run()                    0x506698   (Qt thread entry)
+    InitializeInternetTimeThread()          0x505e5c
+    sendMessageToInternetTimeThread(TimeReq) 0x505d00
+    CHomeClock::sltInternetTime(enmInternetTimeResp)
+    CClockSetDialog::sltInternetTime(enmInternetTimeResp)
+    CTimeZoneSelection, CDSTDialog, queue /Q_InternetTime
+
+`ntpdate()` is where two of the three `clock_settime` call sites live. The
+feature is complete, wired to the clock-setting dialog, and reads its servers
+from:
+
+    /opt/tuxedo/configuration/internettimeservers.txt
+    /opt/tuxedo/configuration/internettimeservers_sec.txt
+    /tmp/internettimeservers.txt
+
+**All three are absent on this panel.** With no server list, the built-in client
+has nothing to query.
+
+## What this means for the v9 change
+
+Adding `/bin/ntpclient` was solving the wrong problem. It works, it sets `rtc0`
+correctly, and it cannot hold the system clock, because `/tuxedo` re-asserts the
+alarm panel's time on every poll. Leave it: it is harmless and gives a correct
+clock in the window before the first poll. But it is not the fix.
+
+Two real options, in order of preference:
+
+1. **Set the clock on the VISTA-21iP.** It is the authoritative source; the
+   keypad follows it. This is a change to the alarm system, from its programming
+   screens, and it is the owner's to make.
+2. **Populate `internettimeservers.txt`** and use the panel's own Internet Time
+   feature from the clock-set dialog. This is a supported configuration change,
+   one file on the config partition, reversible, and it survives reflashes.
+   Untested. Whether Internet Time takes precedence over the alarm-bus poll, or
+   merely loses to it in the same way, is **not known** and is the thing to
+   determine before trusting it.
+
+Do not add a loop-mode ntpclient. Fighting the poll would leave the system clock
+oscillating between 2014 and the present, which is worse than a clock that is
+merely wrong, because event log entries would stop being monotonic.
