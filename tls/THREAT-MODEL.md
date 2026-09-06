@@ -105,9 +105,12 @@ exposure as above and the same fix.
 
 ### 5. TLS is mandatory on the REST path but login is not
 
-**MEASURED:** every `/system_http_api/` request over plain HTTP answers
-`302 -> https://<host>:443/...`, so the API cannot be driven in the clear. But
-**login succeeds over plain HTTP.** That asymmetry is dangerous in a specific
+**MEASURED, re-confirmed on v13 2026-09-06:** every `/system_http_api/` request
+over plain HTTP answers `302 -> https://<host>:443/...`, so the API cannot be
+driven in the clear. But **login succeeds over plain HTTP** — a full login over
+`http://` returned a working session, and the panel even drops the `secure`
+attribute from the session cookie when the login itself is plaintext (it is
+present over HTTPS), so a browser will happily keep and resend it in the clear. That asymmetry is dangerous in a specific
 way: a client misconfigured to plain HTTP authenticates successfully, then
 silently fails every command, because the session is real and the API redirect is
 not followed. It looks like a working integration that cannot arm.
