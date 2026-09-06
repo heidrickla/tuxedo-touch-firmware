@@ -947,15 +947,16 @@ Two limits worth stating rather than papering over:
   It does not follow from the above and is not implied by it. That is a live
   test, not an inference.
 
-### Replicated on ARM AWAY, 2026-09-05
+### Replicated on all three arming modes, 2026-09-05
 
 The `fe`/`ff` flag previously rested on one cycle in one mode. Repeated on away,
 push stream held throughout, disarmed inside the exit delay:
 
-| | arm -> `ff` | disarm -> `fe` | exit delay |
+| mode | arm -> `ff` | disarm -> `fe` | exit delay |
 |---|---|---|---|
-| stay (first cycle) | 1.5 s | 1.8 s | 255 s |
-| away (this cycle) | 1.59 s | 2.64 s | 259 s |
+| stay | 1.5 s | 1.8 s | 255 s |
+| away | 1.59 s | 2.64 s | 259 s |
+| night | 1.43 s | 2.26 s | 260 s |
 
 ```
  8.56s  0:21:1:fe:<0xFE>1Ready To Arm:2
@@ -971,8 +972,12 @@ times that.
 **No `VALID USER CODE` frame appeared on away either.** That now replicates
 across two modes: a REST-initiated arm emits no accept frame.
 
-Night mode is still unverified, and a declined code has deliberately never been
-provoked.
+**All three arming modes are now verified**, each a separate cycle with the
+stream held throughout. Worst confirmation latency across all of them is 2.64 s
+(away, disarm).
+
+A declined code has deliberately never been provoked -- that is the one path
+still unmeasured, and the only one that costs anything to test.
 
 ### Push-frame grammar, from 49 frames over 150 s
 
