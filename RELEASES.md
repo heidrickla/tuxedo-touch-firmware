@@ -90,6 +90,24 @@ is in an image. Take pre-patch copies off-panel if they need to survive.
 The partition-level baseline in `RECOVERY-BACKUP.md` is unaffected: it lives on
 the workstation, not the panel.
 
+### Reproducible from stock, verified 2026-09-06
+
+v12 can be rebuilt from the three genuine stock binaries using `patches.tsv`
+alone. 11 of 11 sites apply, and all three outputs match the running panel:
+
+```
+Barracuda  324209e1... -> c8971027...
+tuxedo     6f8055f5... -> 98370c31...
+supervis   04386af2... -> 6caac69e...
+```
+
+This was NOT true when v12 shipped. Three P1 sites — two NOP'd `bl`s and the
+124-byte lockout stub — predated the patch table and were unrecorded, so the
+build could only be reproduced by starting from the v11 payload that already
+contained them. An adversarial review noticed P2's branch reaching into a
+hand-written stub; comparing against genuine stock on the build VM confirmed
+119 bytes were missing. Recording them closed it.
+
 ### VERIFIED END-TO-END on the flashed panel, 2026-09-06
 
 **a-2 is genuinely fixed.** With the owner watching the touchscreen, from a

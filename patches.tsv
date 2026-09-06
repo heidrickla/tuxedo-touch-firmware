@@ -11,9 +11,16 @@
 # OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda the two differ
 # by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four bytes.
 #
-# COMPLETE as of 2026-09-06: applying every row to a genuine stock Barracuda
-# (324209e1fdfe2d61925a1bb4a7115452) reproduces the v12 binary
-# (c8971027bb9f77801d01713b4ae50b2f) byte for byte. Verified, not assumed.
+# COMPLETE as of 2026-09-06. Applying every row to the three GENUINE STOCK
+# binaries reproduces v12 exactly -- 11 of 11 sites, nothing unaccounted for:
+#
+#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> c8971027bb9f77801d01713b4ae50b2f
+#   tuxedo     6f8055f5cadba9d0b1582297606427a8 -> 98370c310e709ba565abfce8ea0a3e17
+#   supervis   04386af2971fc29b63bd6f7a87f2b9e2 -> 6caac69eb46fb78447bcd3032078fa44
+#
+# Re-run it on the build VM (stock tree at /work/extracted/root_stock):
+#   python3 apply-patches.py --apply --root <copy-of-stock-tree> --table patches.tsv
+#   md5sum <tree>/opt/webserver/Barracuda <tree>/tuxedo <tree>/supervis
 #
 # It was NOT complete before. The three P1a/P1b/P1c rows below were written by
 # hand years before this table existed and were unrecorded, so the 4-byte P1/P2
