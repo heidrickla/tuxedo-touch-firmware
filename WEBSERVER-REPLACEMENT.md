@@ -1245,9 +1245,39 @@ appear in **neither binary**, as a sent type or a dispatch case. 504 is the
 registration-data frame emitted on connect, which the wire contract already
 names, and the captured `0:504:1:P1  H:1:0:3:3` is that frame.
 
-Still a **lower bound**: it sees only types written into the slot from a
-constant, whether immediate or literal pool. A type loaded from a variable, a
-field, or set in a caller stays invisible.
+**How big is the gap? Measured, because "lower bound" was doing too much work.**
+Across the callers of `osal_MqSend` that perform a 556-byte send:
+
+| | count |
+|---|---|
+| stores to `+0x04` resolved to a constant | 21 |
+| stores to `+0x04` **not** resolved | 8 |
+| callers with **no store to `[sp,#4]` at all** | 55 |
+
+That last row is the honest headline: the scan assumes the message is built at
+the stack base, and **most senders do not match that shape**. They build it
+against another base register, or memset and fill fields elsewhere. So this
+characterises a minority of the sender side, not almost all of it.
+
+**And the unresolved sites are the interesting ones**, which is exactly the luck
+one should expect:
+
+```
+0x0013c454  CReceiverThread::sltSendUserCodeAcceptedMsg
+0x0013dc08  CReceiverThread::sltSendUserCodeDeclinedMsg
+0x0014134c  CReceiverThread::sltSendUserRequiredMsg
+0x0013c4e8  CReceiverThread::sltQuickArmStateChangeMsg
+0x00142a10  CReceiverThread::sltGetCameraCredentials
+0x0014322c  CReceiverThread::sltUploadCameraDB
+0x00045aa8  StartVoiceRecogApp
+0x00444578  writeCRCJSONFile
+```
+
+`sltSendUserCodeAcceptedMsg` and `sltSendUserCodeDeclinedMsg` are the
+`VALID USER CODE` / `USER CODE DECLINED` path this document already argues a
+client should wait on instead of guessing whether a command took effect. Their
+msgTypes are **not yet known**, and resolving them is worth more than extending
+the constant scan.
 
 So the replacement gains **three** capabilities the vendor stack cannot deliver
 at all, and none requires a panel-side change — all three messages already
