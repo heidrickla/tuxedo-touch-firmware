@@ -1060,27 +1060,45 @@ because a global build buffer is not reentrant:
 `mq_send(mqd, 0x55d8d0, 404, prio=1)` — identical in `setdisarmwithcode`,
 `setPartitionArmed` and every other `set*` handler checked.
 
-**`cmd+0x0C` carries the command code.** Two handlers bake it in and both match
-independently known values:
+**`+0x04` is the command code. `+0x0C` appears to be the USER CODE.** An earlier
+version of this section said `+0x0C` carried the command, on the strength of two
+constants. Sweeping `+0x0C` across all 31 senders and then reading the result
+refuted it:
 
-| handler | `cmd+0x0C` | corroboration |
-|---|---|---|
-| `setClientRegister` | `0x1f4` = **500** | §B7 already records command 500 as the one that sets `clients_connected` and calls `registerclient` |
-| `setPartitionArmed` | `0x4d2` = **1234** | — |
+- `setClientRegister` writes **500 at `+0x04`**, not `+0x0C`, via
+  `stm r4, {r5, ip}` — which stores `+0x00` and `+0x04`. Its `+0x0C` is zero.
+  500 is the command §B7 independently records as setting `clients_connected`
+  and calling `registerclient`, so `+0x04` is the command field.
+- `setOccupancyMode` writes `0x457` = **1111** at `+0x0C`, with `+0x04` taken
+  from a caller parameter.
+- `setPartitionArmed` writes `0x4d2` = **1234** at `+0x0C`, same shape.
 
-`setarmwithcode` and `setdisarmwithcode` take it from a **caller parameter**
-instead, which fits the documented request shape
-`/handlerequest.html?cmd=<CODE>&Type=<CODE>&pID=<partition>&uCode=<usercode>`:
-the code travels from the URL into the message. That is also the family the
-existing patches act on — 1125 for console mode, 502 BACK and 503 HOME (P11 and
-P12).
+1111 and 1234 are not plausible command codes. They are the two most common
+default alarm user codes, and `setarmwithcode`/`setdisarmwithcode` — the
+handlers that receive a real `uCode` from the request — take `+0x0C` from a
+caller parameter rather than baking one in. The consistent reading is:
+
+```
+cmd+0x00   0 / session
+cmd+0x04   command code        500 = client register
+cmd+0x08   parameter           setOccupancyMode passes 1
+cmd+0x0C   user code           from the request, or HARDCODED
+```
+
+**If that reading is right it is a security finding, not a formatting detail:**
+`setOccupancyMode` and `setPartitionArmed` would be issuing panel commands under
+a **hardcoded user code** rather than the caller's. It is not yet confirmed —
+what would settle it is reading how `/tuxedo` consumes `+0x0C` on the receive
+side, and that has not been done.
 
 **Verified:** the buffer address, the size, the priority, the queue handle
-global, the four field offsets, and the two constants above. **Inferred:** that
-`+0x0C` is universally the command code — it rests on two baked-in constants
-agreeing with prior findings plus the caller-parameter pattern, not on a sweep.
-`mq_send`'s other named callers (`setLights`, `setDoorLock`, `setMode`,
-`setThermostatSetPoint`, …) have not been read yet.
+global, the field offsets, and each constant quoted above. **Not verified:** the
+meaning of `+0x08`, and the user-code reading of `+0x0C`.
+
+**The sweep across all 31 senders is a candidate table, not a census** — it
+missed `setClientRegister` entirely, a case already known to be real, because
+that handler writes the field with `stm` rather than `str`. Codes recovered from
+it must be confirmed by reading the handler.
 
 #### The reply decoder: dispatch map recovered from the binary, 2026-09-06
 
