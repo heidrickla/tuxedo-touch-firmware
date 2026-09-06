@@ -1143,12 +1143,40 @@ Code 102 lands back on `osal_MqRecv` — the ignore-and-loop path.
 disarm / status by command code, same semantics" — these are those codes, and
 they are now written down rather than inferred from behaviour.
 
-**One discrepancy, recorded rather than smoothed over.** `setClientRegister`
-writes **500** into `+0x04`, and 500 does **not** appear in this dispatch table.
-§B7 records command 500 as the one that sets `clients_connected` and calls
-`registerclient`, so it plainly does something — but not here. Either another
-consumer handles it, or the register command travels a different path.
-Unresolved, and worth resolving before a replacement relies on registration.
+**Registration: 500 out, 504 back, and the loop closes.** `setClientRegister`
+writes **500** into `+0x04`, and 500 appears nowhere in the dispatch table above
+— `/tuxedo` contains **no `cmp <reg>, #500` at all**. It is not dispatched like
+the other commands.
+
+But §B7's `registerclient` is real and is in **`/tuxedo`**, at `0x13c2f8`, and
+reading it explains the whole exchange:
+
+```
+0x13c308  bl osal_MqFlush           its FIRST act -- drains the reply queue
+0x13c310  mov r2, #0x1f8            504
+0x13c318  str r2, [sp, #4]          reply+0x04  <- msgType 504
+0x13c31c  bl getZWControllerStatus
+0x13c324  bl GetPanelCalImplementation
+0x13c32c  bl GetOperationMode
+0x13c344  bl GetTotalPartitions
+0x13c354  bl GetCurrentPartition
+```
+
+So registration produces the **msgType 504** reply, which is exactly the
+`0:504:1:P1  H:1:0:3:3` frame captured on connect — the panel details it gathers
+here are those fields. Two things previously recorded separately are the same
+event.
+
+It also confirms §B7 from the other side: `registerclient`'s first action really
+is `osal_MqFlush` on the reply queue, so **registering a client discards every
+pending reply**. Any replacement that registers must expect to lose whatever was
+queued, and §2.5's warning about a second EH client costing a queue flush is
+this behaviour.
+
+`CReceiverThread::unregisterclient` @`0x13c00c` *is* called from
+`CReceiverThread::run`. How `registerclient` is reached, given no `cmp #500`,
+is not yet established — a Qt signal/slot connection is the obvious candidate
+and has not been checked.
 
 Ruled out on the way: **`th_processAplEcpOutput` is not the consumer.** It takes
 100-byte messages and dispatches on ASCII — `0x30`–`0x39`, `*`, `#`, `A`–`D`,
