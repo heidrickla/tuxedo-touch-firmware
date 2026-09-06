@@ -10,6 +10,14 @@ already written down somewhere when I hit it. Hand-rolling an emulation rig
 cost hours while `ssh/BUILD.md` held the recipe and `WEBSERVER-REPLACEMENT.md`
 held the queue facts.
 
+**When you find something stale, FIX it. Do not annotate it as stale.** Saying
+"this is superseded" and moving on leaves the next reader hunting for the actual
+state, which is the whole failure this file exists to stop. Rewrite the entry to
+say what is true now, with the evidence. Two of today's worst time sinks were
+exactly this: a threat-model TODO that had been done all along and got raised
+three times, and `§4.0 rule 5` of the migration plan, which I called superseded
+and left sitting there saying the opposite of the truth.
+
 ## 1. Measurement
 
 - **Prove the thing you measured is the thing you meant.** A stale
@@ -51,9 +59,14 @@ held the queue facts.
 
 - Python on Windows: `"/tmp/x"` silently becomes `C:\tmp\x`; `"/c/tmp/x"`
   raises FileNotFoundError. **Use `C:/...`.**
-- **Heredoc + non-raw python string eats `\r\n`** — `\r\n` inside `'''…'''`
-  becomes a real newline and breaks the file. Use `r'''…'''` for anything
-  containing backslashes. Cost this twice in one session.
+- **Heredoc + non-raw python string eats `\r\n`.** Inside `'''…'''` it becomes a
+  REAL newline in the file you write. **Rule, no exceptions: if a heredoc emits
+  code or data containing a backslash, the python string is `r'''…'''`.**
+  Broken four times in one day, including once writing Rust where it compiled
+  cleanly and surfaced only as a wrong test result. Writing this entry did not
+  stop me repeating it. Two things do: prefer the Edit tool over a heredoc for
+  files with escapes, and when a heredoc is unavoidable, check the result with
+  `sed -n '/marker/,/end/p' file | cat -A` before trusting it.
 - Foreground `sleep` is blocked. Use an `until` loop or `run_in_background`.
 
 ## 4. SSH to the panel

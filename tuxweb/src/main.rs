@@ -13,6 +13,8 @@
 // so a thread pool sized by CPU count would be one thread pretending to be many.
 // Connections are handled in sequence with a short read timeout.
 
+mod frame;
+
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::net::TcpListener;

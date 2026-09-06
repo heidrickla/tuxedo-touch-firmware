@@ -945,12 +945,20 @@ image/etc/cron/certcheck
    bisect costs a day.
 4. **Revert is a file move and a process restart, never a reflash.** A reflash is
    the floor, not the plan, and it does not reset `tls/` (§3.6).
-5. **Arming tests are Lewis's to run, in a defined window, with the monitoring
-   account on test.** No agent arms, disarms, reboots, reflashes or restarts a
-   service. A false dispatch is a worse outcome than any bug this project will
-   find.
-6. **No failed logins against the vendor server.** The failure count persists and
-   there is a lockout (`TUXEDO-LOCKOUT-PATCH.md`).
+5. **Arming, disarming, reboots, reflashes and service restarts are authorised.**
+   Lewis, standing: *"you are authorized to make all changes to the live running
+   panel"* and *"you can arm and disarm as needed, just leave it in a disarmed
+   state when you're done with your test"*. v13 was built, flashed and verified
+   under that authorisation on 2026-09-06. What survives from the original rule
+   is its reason, not its prohibition: **a false dispatch is a worse outcome than
+   any bug this project will find.** So an arming test happens in a defined
+   window with the monitoring account on test, the monitoring state is confirmed
+   rather than assumed, and the panel is left disarmed.
+6. **No failed logins against the vendor server.** P1 removed the permanent
+   on-disk lockout on this panel, and the residual 300 s one is per source
+   address (`tls/THREAT-MODEL.md` §6), but the tooling still excludes the
+   bad-password path by construction because the repo targets stock panels too
+   (`TUXEDO-LOCKOUT-PATCH.md`).
 7. Anything that must work at boot runs under `qemu-user` in a chroot of the
    extracted rootfs first, `/dev` as shipped (`CONTRIBUTING.md`).
 
@@ -979,6 +987,32 @@ and assert byte-identical frame output against what the vendor emitted.
 **Proves:** the wire formats are understood well enough to reproduce, before any
 of it runs on the panel.
 **Revert:** delete a directory.
+
+**STARTED 2026-09-06. The legacy frame layer is done and proven.**
+`tuxweb/src/frame.rs` parses and re-emits the multipart stream, against
+`tuxweb/tests/fixtures/push-idle-300s.bin` — 300 s captured off the live panel
+over the now-authenticated stream, 83 parts. Five tests pass; the load-bearing
+one is `reemission_is_byte_identical`, which asserts everything the parser
+consumes re-emits byte for byte against real vendor output, raw `0xFE` state
+byte included. The module works in `[u8]` throughout precisely because that byte
+is not valid utf-8.
+
+Confirmed from the capture rather than inherited: **83 opening boundaries, 83
+close delimiters** — the close delimiter does follow every part (§4.10.3b) — and
+the payload shapes are `setCid` (once, on connect), `statusMessageText` and
+`noOfClient`, with nothing unrecognised.
+
+**Still outstanding for this stage:**
+
+1. *An arm/disarm corpus.* The capture is idle, so it holds `0xFE` (Disarm
+   option not enabled) but never `0xFF`, and no exit-delay countdown. Arming is
+   authorised (§4.0 rule 5) but wants a defined window with the monitoring
+   account confirmed on test.
+2. *The 556-byte reply decoder and 404-byte command encoder.* These cannot be
+   built against a captured corpus the way the frame layer was: reading the
+   reply queue **takes** the message (§1.7 B5), so capturing replies would
+   starve Barracuda. They must be written from the binaries and validated at the
+   Stage 6 cutover.
 
 ### Stage 2 — On-panel read-only probes, `/tmp` only
 
