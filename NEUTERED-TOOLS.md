@@ -172,7 +172,7 @@ Ranked by frequency in the first minutes of logging:
 | Count | Message |
 |---|---|
 | 10 | `SIGNAL in KERNEL <n> for Process <n> Process Name bonj_client` |
-| 5 | `nand_read_bbt: Bad block at 0x...` |
+| 9 | `nand_read_bbt: Bad block at 0x...`, nine distinct addresses |
 | 3 | `JFFS2 warning: jffs2_sum_write_data: Not enough space for summary, padsize = -N` |
 
 **`bonj_client` is the noisiest process on the panel.** That is the Bonjour
@@ -181,9 +181,19 @@ panel, and `IPCAMERAS` currently holds two printers it found. Turning the four
 discovery flags off would remove the most frequent log source on the device
 along with the LAN probing.
 
-**Five NAND bad blocks** are reported at boot. That is unremarkable for NAND of
-this age and this is the first time it has been visible; it is worth having as a
-baseline to compare against later.
+**Nine NAND bad blocks** are reported at boot, at
+
+    0x02180000  0x02e00000  0x05080000  0x06400000  0x073e0000
+    0x0b220000  0x0d9a0000  0x0dba0000  0x0f280000
+
+plus two bad-block tables found at pages 130944 and 131008. Unremarkable for NAND
+of this age, and this is the first time it has been visible. Worth keeping as a
+baseline: a growing count is the early warning for a failing device, and three of
+these fall inside the `Root File System` partition (`mtd16`, `0x00b20000`
+onwards).
+
+The count was first written here as five, taken from a frequency table that
+collapsed the addresses. Nine is the number of distinct blocks.
 
 The JFFS2 summary warning is benign but recurring, on a rootfs at 70% (125 MB of
 180 MB).
