@@ -14,7 +14,9 @@ and none ever will be** — `ci/checks.sh` fails the build if any appears.
 | | |
 |---|---|
 | `tuxedo-ca.py` | **working**, verified end to end |
-| everything else | not built yet |
+| `tuxedo-tls-push.py` | **working**, install + verify + rollback all exercised |
+| `../tuxweb/` | **running on the panel**, TLS 1.3 on a spare port |
+| `tuxedo-tls` (on-panel), ACME hook, THREAT-MODEL.md | not built yet |
 
 `tuxedo-ca.py` is verified rather than assumed: a generated leaf was served over
 a real TLS handshake and accepted by a client trusting only the owner CA —
@@ -88,8 +90,37 @@ inherit it.
 `/opt/tuxedo/configuration` is `/dev/mtdblock17` — jffs2, rw, 59 MB with 57 MB
 free, and it **survives a reflash**, which is what makes it the right home.
 
+## Installing on the panel
+
+```bash
+python tls/tuxedo-tls-push.py --leaf ~/.tuxedo-ca/issued/203.0.113.5 --verify-port 8443
+python tls/tuxedo-tls-push.py --verify-only --verify-port 443   # what is served?
+python tls/tuxedo-tls-push.py --rollback                        # previous generation
+```
+
+Destination is `/opt/tuxedo/configuration/tls/`, which is `/dev/mtdblock17` and
+**survives a reflash** — unlike the rootfs, where anything written over SSH is
+lost the next time an image is flashed.
+
+**The verify step is the point.** A copy that reports success proves the bytes
+left the workstation, not that the panel is serving them; `deploy.py` once
+reported success having written nothing at all. So after installing, the tool
+reconnects and asserts the SHA-256 of the *served* certificate equals the leaf it
+pushed. If it cannot connect it says **UNVERIFIED** rather than claiming success.
+
+Exercised end to end on the live panel:
+
+| step | result |
+|---|---|
+| install, nothing listening | modes asserted; correctly reported **UNVERIFIED** |
+| serve it, verify | served sha256 == pushed sha256, **TLS 1.3** |
+| rollback with no previous generation | explained it, rather than failing obscurely |
+| install a 2nd generation, then rollback | restored gen1, and **tuxweb still served it** — proving the key/cert *pair* survived, which is the classic silent break |
+
+Modes are asserted after writing, not assumed: `server.key` 0600, `chain.pem`
+0644, the directory 0700. The installer fails if any of them did not take.
+
 ## Still to build
 
-`tuxedo-tls` (on-panel), `tuxedo-tls-push.py` (push, then verify by reconnecting
-and asserting the served certificate matches what was pushed), the ACME hook, the
-recovery path, and `THREAT-MODEL.md`. See §3 of `WEBSERVER-REPLACEMENT.md`.
+`tuxedo-tls` (the on-panel helper), the ACME/DNS-01 hook, the recovery path, and
+`THREAT-MODEL.md`. See §3 of `WEBSERVER-REPLACEMENT.md`.
