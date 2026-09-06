@@ -77,6 +77,17 @@ of dropbear from v10.
 
 ## Next
 
-Rebuild dropbear and ntpclient against musl for v10 and drop the glibc 2.5
-sysroot from the build path. Keep `ssh/BUILD.md` as the record of why the
-sysroot route existed, since it is what proved the diagnosis.
+v9 carries the musl dropbear as `/usr/sbin/dropbear.musl` and
+`/usr/sbin/dropbearkey.musl`, **not wired in**. The glibc build stays primary
+because it is the one that has actually come up at boot, across v8. The musl
+build has only been started by hand.
+
+That means the switch can be made and tested over SSH, across a reboot, without
+another 124 MB flash: point `rc.local` at `dropbear.musl`, reboot, confirm. If
+it comes up, it becomes primary in v10 and the glibc 2.5 sysroot leaves the
+build path. If it does not, nothing was lost and the card is still the fallback.
+
+413 KB against 57 MB free.
+
+Keep `ssh/BUILD.md` as the record of why the sysroot route existed. It is what
+proved the diagnosis.
