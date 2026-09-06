@@ -1109,6 +1109,47 @@ nothing supports calling them user codes.
 message. That is a capability the console-mode work (§4.10.7) should know about,
 and a thing any replacement inherits the ability to do.
 
+#### The command dictionary, recovered from the consumer's dispatch
+
+`CReceiverThread::run` dispatches 40 codes, and because `/tuxedo` keeps its Qt
+slot names the meaning of each comes free:
+
+| code | slot | code | slot |
+|---|---|---|---|
+| 1 | `sltRequestArmAway` | 55 | `sltUploadCameraDB` |
+| 2 | `sltRequestArmStay` | 56 | `sltGetCameraCredentials` |
+| 3 | `sltRequestDisarm` | 58 | `sltDeleteAllCameras` |
+| 5 | `sltRequestPartitionStatus` | 104 | `sltRequestZwaveDeviceAdd` |
+| 7 | `sltRequestMultiPartitionArmStay` | 106 | `sltRequestZwaveDeviceFrmv` |
+| 8 | `sltRequestMultiPartitionArmNight` | 107 | `sltRequestZwaveDeviceAbort` |
+| 12 | `sltRequestAllZoneCurrStatus` | 109 | `sltRequestZwaveLightStatSet` |
+| 13 | `sltRequestBypassAllZones` | 110 | `sltRequestZwaveDimmerStatGet` |
+| 15 | `sltRequestToBypassZones` | 114 | `sltRequestZwaveThermoStatAllInfoGet` |
+| 17 | `sltRequestEventLogUpload` | 115 | `sltRequestZwaveThermoStatAllInfoSet` |
+| 18 | `sltRequestGetHomePartDetails` | 117 | `sltRequestZwaveThermostatModeSet` |
+| 25 | `sltRequestMultiPartitionArmAwaySelected` | 119 | `sltRequestZwaveTermTarTempGet` |
+| 27 | `sltRequestMultiPartitionArmNightSelected` | 120 | `sltRequestZwaveTermTarTempSet` |
+| 29 | `sltRequestMultiPartitionDisarmSelected` | 122 | `sltRequestZwaveTermFanModeSet` |
+| 53 | `sltUpdateCamera` | 125 | `sltRequestAllHADeviceStatus` |
+| 508 | `Increase_RemoteWeb_usage_num` | 127 | `sltRequestZwaveTermSaveEnergyModeGet` |
+| 604 | `SetSessionState` | 129 | `sltRequestZwaveAllLightsOFF` |
+| 700 | `EmitSignalOfAPIRequest` | 147 | `sltRequestZwaveGarageDoorStatSet` |
+| 800 | `apl_hAsceneInitialize` | 888 | `sltSceneExecuteOnId` |
+
+Code 102 lands back on `osal_MqRecv` — the ignore-and-loop path.
+
+**This is the arm/disarm ABI in plain sight:** 1 away, 2 stay, 3 disarm, with
+7/8/25/27/29 the multi-partition forms. §2.5 commits a replacement to "arm /
+disarm / status by command code, same semantics" — these are those codes, and
+they are now written down rather than inferred from behaviour.
+
+**One discrepancy, recorded rather than smoothed over.** `setClientRegister`
+writes **500** into `+0x04`, and 500 does **not** appear in this dispatch table.
+§B7 records command 500 as the one that sets `clients_connected` and calls
+`registerclient`, so it plainly does something — but not here. Either another
+consumer handles it, or the register command travels a different path.
+Unresolved, and worth resolving before a replacement relies on registration.
+
 Ruled out on the way: **`th_processAplEcpOutput` is not the consumer.** It takes
 100-byte messages and dispatches on ASCII — `0x30`–`0x39`, `*`, `#`, `A`–`D`,
 `a`–`d` — so it is the ECP **keypad character** handler. Noted because `A`–`D`
