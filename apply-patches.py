@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Apply or check the firmware patch set defined in patches.tsv.
 
-    python apply-patches.py --check --root /work/root_patched
-    python apply-patches.py --apply --root /work/root_patched
+    python apply-patches.py --check --root /work/current
+    python apply-patches.py --apply --root /work/current
 
 `patches.tsv` is the single source of truth; `verify-panel.sh` reads the same
 file to check the running panel, so a patch cannot be applied in one place and

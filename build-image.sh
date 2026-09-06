@@ -121,5 +121,12 @@ HMD5=$($SSH "sudo md5sum $D/app2.hdr | cut -d' ' -f1")
 LMD5=$(md5sum "$OUT/app2.hdr" | cut -d' ' -f1)
 [ "$HMD5" = "$LMD5" ] || { echo "  collect md5 mismatch"; exit 1; }
 echo "  $OUT/app2.hdr  $(stat -c%s "$OUT/app2.hdr") bytes  md5 $LMD5"
+
+# Point /work/current at this build. deploy.py defaults TREE to it, so the
+# default cannot go stale at the next version -- the previous default was a
+# path that no longer existed, and the nearest surviving tree held a v9-era
+# Barracuda, which would have pushed nine-version-old binaries to the panel.
+$SSH "sudo ln -sfn $D/root /work/current"
+echo "  /work/current -> $($SSH 'readlink /work/current')"
 echo
 echo "built $VER. Stage it with:  ./push-image.sh $OUT/app2.hdr"

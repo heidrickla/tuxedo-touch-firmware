@@ -22,10 +22,16 @@ import os
 import subprocess
 import sys
 
-TREE = os.environ.get("TREE", "/work/root_patched")
+# /work/current is a symlink on the build VM pointing at the CURRENT build
+# tree, so this default does not go stale at the next version. The old default
+# was /work/root_patched, which no longer exists; the nearest surviving tree,
+# /work/extracted/root_patched, carries a v9-era Barracuda (197b7e41), so a
+# stale default here would have pushed nine-version-old binaries onto the panel.
+TREE = os.environ.get("TREE", "/work/current")
 HOST = os.environ.get("HOST", "203.0.113.5")
 KEY = os.environ.get("KEY", os.path.expanduser("~/.ssh/tuxedo_ed25519"))
-BUILDER = os.environ.get("BUILDER", "wsl")
+# The build VM, not WSL -- see TRAPS.md section 5.
+BUILDER = os.environ.get("BUILDER", "vm")
 VM = os.environ.get("VM", "claude@203.0.113.40")
 VMKEY = os.environ.get("VMKEY", os.path.expanduser("~/.ssh/fwbuild_ed25519"))
 
