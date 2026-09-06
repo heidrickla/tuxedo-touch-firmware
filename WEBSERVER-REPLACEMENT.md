@@ -1073,9 +1073,54 @@ undercounts by a third: `cmp r8,#N; beq handler`, and the inverted
 | 147 | `0xd978` | `%d%s%d%s%s%s%d` |
 | 154 | `0xd7f8` | `%d%s%d%s%s` |
 
-The remaining 31 reach no format string directly — they update state or
-delegate: 3, 4, 5, 6, 7, 8, 9, 18, 19, 25, 26, 27, 29, 51, 55, 56, 59, 61, 62,
-104, 105, 112, 125, 130, 132, 133, 160, 161, 162, 504, 716.
+**That 9 is a lower bound, not a total.** The scan looks a bounded distance from
+each handler entry, and the idle capture contains `0:18:...` and `0:504:...`
+frames — so msgTypes 18 and 504 demonstrably format frames whose format load
+sits further from the entry than the window reached. The other 29 — 3, 4, 5, 6,
+7, 8, 9, 19, 25, 26, 27, 29, 51, 55, 56, 59, 61, 62, 104, 105, 112, 125, 130,
+132, 133, 160, 161, 162, 716 — were not observed formatting, which is not the
+same as proof that they do not.
+
+#### The frame grammar, and two msgTypes decoded end to end
+
+The formatter is `bprintf` @`0x1e0f4` followed by `bflush` @`0x1df84`, called as
+`bprintf(session, fmt, r2, r3, [sp+0], [sp+4], …)`. The repeated `%s` is a
+constant `':'` at `0x84f5c` — **the separator is an argument, not part of the
+format string.**
+
+**msgType 21, the status frame, decoded and checked against the capture:**
+
+```
+%d %s %d %s %d %s %x %s %s %s %d
+|  |  |  |  |  |  |  |  |  |  +-- getQuickArmStatus()
+|  |  |  |  |  |  |  |  |  +----- ':'
+|  |  |  |  |  |  |  |  +-------- reply+0x0E  text
+|  |  |  |  |  |  |  +----------- ':'
+|  |  |  |  |  |  +-------------- reply+0x0E  FIRST BYTE, as hex -> the fe/ff
+|  |  |  |  |  +----------------- ':'
+|  |  |  |  +-------------------- reply+0x08  arg
+|  |  |  +----------------------- ':'
+|  |  +-------------------------- msgType
+|  +----------------------------- ':'
++-------------------------------- reply+0x00  sessionId
+```
+
+That produces exactly the captured `0:21:1:fe:þ1Ready To Arm:2`, and names a
+field the frame docs did not: the trailing `2` is **quick-arm status**.
+
+**The `-1` filler frames are explained.** The same handler then calls `bprintf`
+three more times with `%d%s%d%s%s` and `mvn r5,#0` (`-1`) where the msgType
+would go: `sessionId : -1 : text`. That is the `0:-1:þ1Ready To Arm` seen 3–4
+times per status in the capture. §2.5's "3-4x `-1` filler frames" is therefore
+not a transport quirk to imitate blindly — it is a deliberate repeat emitted by
+the status handler itself.
+
+**msgType 22:** `%d%s%d%s%s%s%d` = `sessionId : msgType : text : arg`, then the
+same three fillers.
+
+The handlers sharing those format strings — 103, 109, 111, 147 and 154 — are
+**presumed** to share msgType 22's argument order. That is inference from a
+shared format string, not measurement, and confirming it is the next step.
 
 Four handlers serve two msgTypes each: `0xf234` (25, 51), `0x10274` (26, 27),
 `0x10428` (104, 105), `0x10484` (132, 133).
