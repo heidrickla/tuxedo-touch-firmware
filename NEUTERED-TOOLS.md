@@ -90,3 +90,64 @@ When something looks missing, check whether the mechanism is already there befor
 building it. The panel's own NTP client, its SD-card script hook and its complete
 SSH service registration were all found after the equivalent had been designed
 from scratch. Look for the init script, the config key and the call site first.
+
+---
+
+# busybox: built, and verified on the panel
+
+Built 2026-09-06 and run on the hardware. This covers `syslogd` and `klogd` from
+the roadmap above in one binary, and brings the tools this project kept finding
+absent.
+
+    busybox 1.36.1, musl 1.2.5, static
+    1,328,384 bytes, EXEC, EABI5 soft-float, 0 INTERP segments
+
+Verified working on the panel:
+
+| Applet | Result |
+|---|---|
+| `awk` | correct field extraction |
+| `ping` | `64 bytes from 203.0.113.1 ... time=0.594 ms` |
+| `strings` | read `BUILD=v9` out of `/etc/tuxedo-build` |
+| `free` | `Mem: 126016 35724 61980 ...` |
+| `pgrep` | found both dropbear pids |
+| `netstat` | 6 listeners, matching the known set |
+| **`dmesg`** | **the kernel ring buffer is readable**, which it never was before |
+| `syslogd`, `klogd` | both present, both print usage |
+
+## The one quirk that matters when installing it
+
+**`busybox <applet>` does not work on this build.** `busybox --list` reports zero
+applets and `busybox awk ...` answers `applet not found`. Invoked through a
+symlink named after the applet it works perfectly: `argv[0] = awk` extracts
+fields, `argv[0] = syslogd` prints the BusyBox banner.
+
+So install it the ordinary way, as symlinks, and do not rely on the multiplexer.
+That also suits the panel: `/etc/rc.d/init.d/syslog` looks for `/sbin/syslogd`
+and `/sbin/klogd` **by path**, so those two symlinks are what make the vendor's
+own service start.
+
+Suggested layout, chosen so nothing already on the panel is shadowed:
+
+    /bin/busybox            the binary
+    /sbin/syslogd           -> /bin/busybox     (what the init script wants)
+    /sbin/klogd             -> /bin/busybox     (likewise)
+    /usr/local/bin/<applet> -> /bin/busybox     for awk, ping, strings, dmesg,
+                                                free, pgrep, top, vi, find, sed
+
+Keeping the general tools in `/usr/local/bin` rather than `/bin` means the
+vendor's own binaries keep priority on `PATH` and nothing existing changes
+behaviour.
+
+## Build notes
+
+musl ships no `linux/*` kernel headers, so three groups had to be copied into
+`/opt/musl-armel/include` before `defconfig` would build: `linux`,
+`asm-generic` and `asm` (from the ARM cross package, not the host), then `mtd`
+for `nandwrite`. `CONFIG_LFS=y` is required because musl is always 64-bit
+`off_t` and busybox otherwise trips its own
+`BUG_off_t_size_is_misdetected` assertion. `CONFIG_TC` was turned off.
+
+Building from `allnoconfig` with an explicit applet list produced a binary with
+an **empty applet table** that failed even through symlinks. Use `defconfig` and
+subtract.
