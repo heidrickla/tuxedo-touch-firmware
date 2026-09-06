@@ -1073,37 +1073,52 @@ refuted it:
   from a caller parameter.
 - `setPartitionArmed` writes `0x4d2` = **1234** at `+0x0C`, same shape.
 
-1111 and 1234 are not plausible command codes. They are the two most common
-default alarm user codes, and `setarmwithcode`/`setdisarmwithcode` — the
-handlers that receive a real `uCode` from the request — take `+0x0C` from a
-caller parameter rather than baking one in. The consistent reading is:
+I briefly read 1111 and 1234 as **user codes** — they are the two commonest
+default alarm codes, and the handlers taking a real `uCode` from the request
+read `+0x0C` from a caller parameter — and flagged it as a possible security
+finding. **Reading the consumer refutes that**, which is why it was labelled
+unverified rather than asserted.
+
+**The consumer, confirmed.** `CReceiverThread::run` @`0x147158` receives into
+`sp+0x2f4` with `osal_MqRecv(q, buf, 404)` and immediately does:
 
 ```
-cmd+0x00   0 / session
-cmd+0x04   command code        500 = client register
-cmd+0x08   parameter           setOccupancyMode passes 1
-cmd+0x0C   user code           from the request, or HARDCODED
+0x1471dc  ldr ip, [sp, #0x2f8]     buf+0x04
+0x1471e8  cmp ip, #0x70            ...and dispatches on it
 ```
 
-**If that reading is right it is a security finding, not a formatting detail:**
-`setOccupancyMode` and `setPartitionArmed` would be issuing panel commands under
-a **hardcoded user code** rather than the caller's.
+So **`+0x04` is the command code on both sides** — Barracuda writes it,
+`/tuxedo` dispatches on it. That much is now confirmed end to end.
 
-**Where to settle it, located but not yet read.** `/Q_ServCmdRcver` — the queue
-Barracuda sends these commands to — is opened in **`CReceiverThread`**, from
-`0x141a44` and `0x141e48` (`/Q_ServCmdTrsmtr`, the reply direction, is opened
-from five sites in the same class). Reading how that consumer uses `+0x0C`
-answers the question.
+**`+0x0C` is not a user code.** It is read exactly once in the whole loop, at
+`0x147b58`, and paired with `+0x08`:
+
+```
+0x147b58  ldr r3, [sp, #0x300]     buf+0x0C
+0x147b5c  ldr r2, [sp, #0x2fc]     buf+0x08
+0x147b74  bl  CReceiverThread::sigsimulateTouchPoints
+```
+
+They are **touch coordinates** for that one command. So `+0x08`/`+0x0C` are
+command-specific parameters, not fixed-meaning fields, and the 1111/1234
+constants in `setOccupancyMode`/`setPartitionArmed` remain unexplained — but
+nothing supports calling them user codes.
+
+**Worth its own note: the panel accepts simulated touch input over this queue.**
+`sigsimulateTouchPoints` takes an x/y pair straight from a Barracuda-sent
+message. That is a capability the console-mode work (§4.10.7) should know about,
+and a thing any replacement inherits the ability to do.
 
 Ruled out on the way: **`th_processAplEcpOutput` is not the consumer.** It takes
 100-byte messages and dispatches on ASCII — `0x30`–`0x39`, `*`, `#`, `A`–`D`,
 `a`–`d` — so it is the ECP **keypad character** handler. Noted because `A`–`D`
-are the panic keys `TUXEDO-AUDIT-BUGS.md` flags as needing no user code, which
-makes that function interesting in its own right, just not for this question.
+are the panic keys `TUXEDO-AUDIT-BUGS.md` flags as needing no user code.
 
-**Verified:** the buffer address, the size, the priority, the queue handle
-global, the field offsets, and each constant quoted above. **Not verified:** the
-meaning of `+0x08`, and the user-code reading of `+0x0C`.
+**Verified end to end:** the buffer address, size, priority, queue handle
+global, the field offsets, the constants quoted above, and that `+0x04` is the
+command code — written by Barracuda, dispatched on by `/tuxedo`. **Refuted:**
+the user-code reading of `+0x0C`. **Still unexplained:** why
+`setOccupancyMode` and `setPartitionArmed` bake 1111 and 1234 into `+0x0C`.
 
 **The sweep across all 31 senders is a candidate table, not a census** — it
 missed `setClientRegister` entirely, a case already known to be real, because
