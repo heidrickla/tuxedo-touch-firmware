@@ -583,3 +583,56 @@ is not a fix on its own.
 **Moot under the replacement plan.** A server reading and writing the queues
 directly does not need Barracuda to forward command 19 -- it posts the command
 struct itself. See `WEBSERVER-REPLACEMENT.md`.
+
+### Correction: Barracuda DOES forward command 19, and `pID` carries the keys
+
+The paragraph above guessed that Barracuda "most likely never forwards command
+19". **Refuted.** Traced in `handlerequest_html076EF::service` @`0x3a2a0`:
+
+```
+0x3a524  cmp r5, #0x13        ; command 19
+0x3a528  beq 0x3cc94          ; -> the console handler
+...
+0x3cd4c  mov r2, #0x194
+0x3cd54  bl  osal_MqSend      ; 404-byte command struct, UNCONDITIONAL
+```
+
+There is no gate on that path. The command is sent.
+
+**The keystrokes ride in `pID`, pipe-delimited.** The handler reads `sessionid`,
+then reads `pID` and runs `strtok(pID, "|")` over it, `atoi`-ing each token into
+the key array at struct `+0x2f` and writing the count to `+0x2e`
+(`sub ip, r6, #1` / `strb ip, [sp, #0x956]`):
+
+```
+GET /handlerequest.html?cmd=19&Type=19&pID=<key>|<key>|...&sessionid=..&tokenkey=..
+```
+
+The parse loop terminates on a token of **-1** (`cmn r0, #1`). So the test above,
+which sent the default `pID=-1`, requested console mode with a key count of zero
+-- valid, but empty.
+
+Also established: **command 1125 (`CONSOLEMODESTATUSADD`) does not exist in
+Barracuda at all.** The dispatcher compares against 70 distinct immediates and
+1125 is not among them, so that call was silently discarded. `handlerequest.html`
+returning `(200, 0)` for it told us nothing, as usual.
+
+### What is actually still unexplained
+
+Command 19 reaches the queue, and on the `/tuxedo` side `CReceiverThread::run`
+sets both gates and calls `requestconsolemode`. Yet no `0:20:` frame appears.
+So the remaining candidates are, in order of likelihood:
+
+1. The reply is sent but Barracuda does not relay message type 20 onto the push
+   stream (a filter on the *outbound* side, which has not been read).
+2. `apl_getEcpConsoleModeData`'s cached buffers are empty because nothing has
+   populated them -- they are filled from the ECP layer, and with the panel idle
+   there may be no console data to copy.
+3. The console session needs a non-empty key press to produce a first display
+   refresh.
+
+(3) is the cheapest test but it is **deliberately not run**: `pID` keys are real
+keypad presses on a live alarm, and this is the control path, not the read path.
+That needs the owner's explicit say-so and a chosen key, not an arbitrary guess.
+
+(1) is the next thing to read, and it costs nothing.
