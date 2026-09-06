@@ -1061,29 +1061,59 @@ chain and not a jump table. Cases come in two shapes, and reading only the first
 undercounts by a third: `cmp r8,#N; beq handler`, and the inverted
 `cmp r8,#N; bne skip; b handler`. Taking both gives **40 cases**.
 
-**Only two handlers emit frames synchronously**, established by walking each
-handler to its real exit (`b 0x105c4`) and counting `bl bprintf` actually
-reached:
+**The whole frame-emitting surface is three functions.** `bprintf` @`0x1e0f4`
+(always paired with `bflush` @`0x1df84`) has exactly three callers in the
+binary — a question that cannot overrun a window, unlike scanning outward from a
+handler:
 
-| msgType | handler | bprintf calls | formats |
-|---|---|---|---|
-| 21 | `0xda80` | 4 | `%d%s%d%s%d%s%x%s%s%s%d` then 3x `%d%s%d%s%s` |
-| 22 | `0xd9b8` | 3 | `%d%s%d%s%s%s%d` then 2x `%d%s%d%s%s` |
+| emitter | what it produces |
+|---|---|
+| `gettuxedoIPCCommFunc` | the panel status frames, per msgType |
+| `checkvalidSessions` (from `sessionValidCheckCloseTimerHandler`) | `%d%s` with `':Logout'` — session teardown |
+| `videoRecIPCCommThreadFunc` | camera/recording frames, 7 call sites |
 
-**An earlier version of this table listed nine, and seven of them were wrong.**
-1, 2, 103, 109, 111, 147 and 154 emit nothing. They `malloc(0xc)`, read a byte
-at **`reply+0x92`** and a halfword from a global table, and `pthread_create`.
-The false entries came from a scan that looked a fixed distance past each
-handler entry and picked up the format string belonging to the *next* handler —
-these handlers sit 0x20–0x40 bytes apart, so an unbounded window is guaranteed
-to cross into a neighbour. Bound the walk at the exit branch.
+Inside the dispatcher, **at least 16 of the 40 handlers emit frames** before
+their first branch:
 
-**So frames are not produced only on the dispatch thread.** The capture contains
-`0:18:...` and `0:504:...` frames, yet neither handler calls `bprintf`. Those
-handlers are among the ones that spawn a worker, so the reply → frame path is
-partly **asynchronous**. A reimplementation cannot assume one reply produces its
-frames inline before the next reply is read. This is a real architectural
-constraint and it was found by the corpus disagreeing with the disassembly.
+| msgType | handler | formats |
+|---|---|---|
+| 19 | `0xf20c` | `%d%s%d%s%s` |
+| 21 | `0xda80` | `%d%s%d%s%d%s%x%s%s%s%d`, then 3x `%d%s%d%s%s` |
+| 22 | `0xd9b8` | `%d%s%d%s%s%s%d`, then 2x `%d%s%d%s%s` |
+| 25, 51 | `0xf234` | `%d`, `%d%s%d%s%d` |
+| 29 | `0x102a0` | `%d%s%d%s%d%s%d%s%d%s%s` |
+| 55 | `0xf2a0` | four distinct, up to `%d%s%s%s%s%s%s%s%s%s%s%s%d` |
+| 56 | `0xf5b4` | `%d%s%d%s%s%s%s%s%s` |
+| 59 | `0x10574` | `0:%d:%d` — separators baked in, unlike the rest |
+| 104, 105 | `0x10428` | `%d`, `%d:%d:%d` |
+| 112 | `0x102f0` | `%d`, `%d%s%d%s%d%s%d` |
+| 130 | `0x10384` | `%d%s%d%s%d%s%d` |
+| 132, 133 | `0x10484` | `%d`, `%d:%d:%d` |
+| 504 | `0xf638` | `%d%s%d%s%d%s%s%s%d%s%d%s%d%s%d` |
+
+msgType 504's format has 15 conversions, which is exactly the shape of the
+captured `0:504:1:P1  H:1:0:3:3` — 8 fields with 7 `':'` separators between
+them. That agreement is the check on this table.
+
+**16 is still a lower bound.** The walk stops at each handler's first
+unconditional branch, and msgType 18 emits frames — `0:18:1 P1  H:2` is in the
+capture — from code reached *after* such a branch. Handlers that share
+formatting by branching into a neighbour's tail are not counted here.
+
+**Two earlier versions of this table were wrong, in opposite directions.** One
+listed nine formatters of which seven were false, from a scan that ran a fixed
+distance past each handler entry and picked up the *next* handler's format
+string — they sit 0x20–0x40 bytes apart, so an unbounded window is guaranteed to
+cross. The correction then said "only 21 and 22 emit", which was measured over
+just those nine handlers and stated as if it covered all forty; msgType 19 calls
+`bprintf` eight instructions into its handler.
+
+Separately and still true: 1, 2, 103, 109, 111, 147 and 154 emit nothing
+directly. They `malloc(0xc)`, read a byte at **`reply+0x92`** plus a halfword
+from a global table, and `pthread_create` one of two named workers —
+`pushSecurityStatus` @`0xd180` (spawned by 21 and 22) or
+`pushNewZwaveStatusToOthers` @`0xd23c`. Neither worker calls `bprintf`, so they
+fan state out by another route.
 
 The remaining msgTypes — 3, 4, 5, 6, 7, 8, 9, 19, 25, 26, 27, 29, 51, 55, 56,
 59, 61, 62, 104, 105, 112, 125, 130, 132, 133, 160, 161, 162, 716 — have not
