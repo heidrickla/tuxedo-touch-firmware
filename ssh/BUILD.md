@@ -759,9 +759,17 @@ dropbear makes:
     fcntl         -> __fcntl_time64
 
 Those wrappers issue the time64 syscalls, ARM 403 and up, which arrived in Linux
-5.1. The panel runs 2.6.31. The same mismatch explains the nonsense timestamps
-in the v7 log (`Jan 01 00:00:00`, then `Jul 30 20:43:46`) - the clock calls were
-failing too, deterministically, in both runs.
+5.1. The panel runs 2.6.31.
+
+**Narrowed by measurement, 2026-09-06.** A minimal probe built both ways and run
+on the panel (`probe/`) shows this is not a broad failure. `clock_gettime`,
+`gettimeofday` and `fcntl` all work under the static glibc 2.41 binary, because
+glibc falls back. **`select` is the only call that fails, and it fails with
+`ENOSYS`.** That alone is fatal: `svr-main.c` treats a negative `select` with
+`errno != EINTR` as unrecoverable, and `ENOSYS` is 38, not 4.
+
+So the original text overstated the scope. The nonsense timestamps in the v7 log
+are therefore *not* explained by failing clock calls, and remain unexplained.
 
 This is invisible to emulation. `qemu-user` forwards syscalls to the build host's
 5.15 kernel, where all of them exist, so the binary ran correctly every time it
