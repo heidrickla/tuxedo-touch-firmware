@@ -65,3 +65,40 @@ Ship and run. `/tmp` is tmpfs, so nothing persists:
 
 Run this before trusting any new toolchain against the panel. It is far cheaper
 than a flash.
+
+## A static syscall gate looks attractive and does not work
+
+The panel's `sys_call_table` is in the shipped vmlinux at file offset `0x7bee4`
+(vaddr `0xc0083ee4`). It holds 368 entries: 0-363 are real, 364-367 are
+`sys_ni_syscall`. Verified directly. So the kernel's ceiling is **363**, and the
+ARM time64 syscalls start at 403.
+
+That invites an obvious CI check: disassemble a staged binary, walk back from
+each `svc #0` to the last write to `r7` (immediate move, or a PC-relative
+literal load for numbers too large to encode), and fail anything above 363.
+
+It was built and it does not work. Measured against binaries whose behaviour on
+the panel is known:
+
+| Binary | Works on the panel | High syscalls found |
+|---|---|---|
+| glibc 2.41 static | **no** | 384, 397, 398, 403, 422 |
+| musl 1.2.5 static | **yes** | 403 |
+| dropbear on musl | **yes** | 369, 387, 397, 403 |
+| glibc 2.5 dynamic | yes | none; no `svc` sites at all |
+
+musl issues syscall 403 too. The difference is not which syscalls a binary
+contains, it is whether it **retries the legacy one on `ENOSYS`**, and that is
+not cheaply decidable from the instruction stream. A gate on the syscall number
+fails every working musl binary.
+
+Two smaller traps in the same attempt: the ARM private syscall base is
+`0x0F0000` (`cacheflush` = `0xf0002`, `set_tls` = `0xf0005`), not the OABI
+`0x9F0000`, so those show up as syscalls 983042 and 983045 unless excluded. And
+a dynamically linked binary has no `svc` sites of its own, so the check has
+nothing to inspect and passes it vacuously; such a binary is safe by
+construction anyway, because its syscalls happen inside the panel's own libc.
+
+**Run the probe on the hardware instead.** It takes seconds, it answers the
+question the gate was trying to approximate, and it cannot be fooled by a
+fallback path.
