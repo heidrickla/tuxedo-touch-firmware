@@ -1057,29 +1057,41 @@ state byte is **the first byte of the text field**, read as a byte, not a
 separate struct member. It is why frames must be handled as latin-1 bytes.
 
 **Dispatch is a binary search tree on `r8`** (`cmp`/`beq`/`bhi`), not a compare
-chain and not a jump table. Following only the `beq` edges gives 26 cases, which
-is a **lower bound** — cases reached through the tree's range branches are not
-in this list yet.
+chain and not a jump table. Cases come in two shapes, and reading only the first
+undercounts by a third: `cmp r8,#N; beq handler`, and the inverted
+`cmp r8,#N; bne skip; b handler`. Taking both gives **40 cases**.
 
 | msgType | handler | frame format |
 |---|---|---|
+| 1 | `0xdc78` | `%d%s%d%s%d%s%d%s%d%s%s` |
 | 2 | `0xe144` | `%d%s%d%s%d%s%d%s%d%s%s` |
 | 21 | `0xda80` | `%d%s%d%s%d%s%x%s%s%s%d` |
 | 22 | `0xd9b8` | `%d%s%d%s%s%s%d` |
 | 103 | `0xd8d0` | `%d%s%d%s%s%s%d` |
 | 109 | `0xd910` | `%d%s%d%s%s%s%d` |
+| 111 | `0xd954` | `%d%s%d%s%s%s%d` |
+| 147 | `0xd978` | `%d%s%d%s%s%s%d` |
 | 154 | `0xd7f8` | `%d%s%d%s%s` |
 
-The other 20 — 3, 5, 6, 8, 9, 19, 26, 27, 51, 55, 59, 62, 105, 112, 125, 132,
-133, 160, 162, 504 — reach no format string directly; they update state or
-delegate. Note 26/27 share a handler, as do 132/133.
+The remaining 31 reach no format string directly — they update state or
+delegate: 3, 4, 5, 6, 7, 8, 9, 18, 19, 25, 26, 27, 29, 51, 55, 56, 59, 61, 62,
+104, 105, 112, 125, 130, 132, 133, 160, 161, 162, 504, 716.
+
+Four handlers serve two msgTypes each: `0xf234` (25, 51), `0x10274` (26, 27),
+`0x10428` (104, 105), `0x10484` (132, 133).
+
+**40, not the 43 stated in §1.3.** The three-case gap is unexplained and is
+probably a default or fallthrough path; `r8` is also copied to `r0` at three
+sites, which have not been followed. Recorded as a discrepancy rather than
+rounded away.
 
 **Why this is trustworthy:** the method was validated against a result derived
 independently and earlier — msgType 21 at `0xda80` with
 `%d%s%d%s%d%s%x%s%s%s%d`, which `TUXEDO-AUDIT-BUGS.md:94` already recorded.
-A first attempt at this map was **wrong and discarded**: attributing each format
-to the nearest preceding `cmp` blamed everything on msgType 0, because `cmp #0`
-is a null check, not dispatch.
+Two earlier attempts were **wrong and discarded**: attributing each format to the
+nearest preceding `cmp` blamed everything on msgType 0, because `cmp #0` is a
+null check rather than dispatch; and following only `beq` edges reported 26
+cases and missed msgTypes 1, 111 and 147, all three of which do format frames.
 
 ### Stage 2 — On-panel read-only probes, `/tmp` only
 
