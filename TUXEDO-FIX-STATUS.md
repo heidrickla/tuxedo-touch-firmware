@@ -1,7 +1,8 @@
 # What is actually fixed, and where
 
-Status 2026-09-06. **v11 is flashed and running**, plus one patch applied live
-over SSH since. `./verify-panel.sh` confirms every patch site in one command.
+Status 2026-09-06. **v12 is built** (see `RELEASES.md`); **v11 is flashed and
+running**, with v12's three extra patches already applied live over SSH — so the
+running panel and the v12 image are byte-identical in every patched binary. `./verify-panel.sh` confirms every patch site in one command.
 
 This document had drifted: it said v10, and it listed two patches as
 "outstanding" that had in fact shipped. The cause was that `verify-panel.sh`
