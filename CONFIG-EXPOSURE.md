@@ -1,0 +1,87 @@
+# /Config/ : the binding, and the patch that removes it
+
+The Barracuda web server binds `/opt/tuxedo/configuration/` to the URL path
+`Config`. That directory holds `Tuxedo.json` (with `SHARED_KEY`,
+`UNAME_PASSWORD` and per-camera credentials), `webuseraccountsenc.json`, the
+event log and the supervision log, and it survives reflashes.
+
+**On this panel nothing is served: every request 404s.** The binding is
+nonetheless unconditional in shipped code, which is why it is worth removing
+rather than relying on.
+
+## The code
+
+`installVirtualDir` at `0x14598`, 1,208 bytes, called from `barracuda`. It
+installs three disk-backed directories. The first two are gated; the third is
+not.
+
+| Address | Directory | Gate |
+|---|---|---|
+| `0x14868` | `VideoFiles` | `allowVideoRecordingFromConfig()` at `0x147fc` |
+| `0x148cc` | `Videos` | same gate |
+| `0x14934` | **`Config`** | **none** |
+
+The `Config` block runs unconditionally from `0x148d0`:
+
+    0x148d0  ldr  r0, <DiskIo object>
+    0x148d4  bl   DiskIo_constructor
+    0x148dc  ldr  r1, ="/opt/tuxedo/configuration/"     ; pool 0x14a38
+    0x148e0  bl   DiskIo_setRootDir
+    0x148e4  cmp  r0, #0
+    0x148e8  beq  0x1490c                 ; 0 = success, carry on and install
+    0x148ec  ...  HttpTrace_printf / baFatalEf          ; failure is FATAL
+    0x1490c  mov  r4, #0
+    0x14914  ldr  r2, ="Config"                          ; pool 0x14a40
+    0x14924  bl   HttpResRdr_constructor
+    0x14930  mov  r0, sb                                 ; the HttpServer
+    0x14934  bl   HttpServer_insertDir                   ; publishes it
+
+Note the failure path calls `baFatalEf`. Since the panel runs, `DiskIo_setRootDir`
+succeeded, so the directory really is constructed and inserted.
+
+Found with `tuxelf.py`: the string `Config` occurs exactly once in the binary,
+at `0x86160`, referenced from one place, the literal pool slot `0x14a40` that
+`0x14914` loads.
+
+## Measured behaviour
+
+`/Config/CRCdata.json`, `/Config/Tuxedo.json`, `/Config/SystemConfig.txt`,
+`/Config/AUTOMATION.txt` and `/Config/` all return **404**, unauthenticated and
+authenticated, on port 80. Every one of those files exists on disk.
+
+`/VideoFiles/` and `/Videos/` also 404. **All three disk-backed directories
+behave the same**, which points at the `DiskIo`/`HttpResRdr` request path rather
+than anything specific to `Config`. The cause is still unidentified.
+
+So the honest statement has three parts, and dropping any one of them makes it
+wrong:
+
+1. The binding is unconditional in shipped code.
+2. Nothing is served through it on this unit, with or without a session.
+3. Why not is unknown, and it is common to all three directories, so it is not a
+   property of `Config` that can be relied on.
+
+## The patch
+
+One instruction. Do not publish the directory:
+
+| | |
+|---|---|
+| vaddr | `0x14934` |
+| file offset | `0xc934` (vaddr − 0x8000, the convention across this binary) |
+| before | `dc 67 01 eb` — `bl HttpServer_insertDir` |
+| after | `00 00 a0 e1` — `mov r0, r0` |
+
+The `DiskIo` object and the `HttpResRdr` are still constructed, so no
+initialisation order changes and the fatal-error path is untouched; the
+directory simply is never handed to the server. Nothing else calls into it: the
+reader is not stored anywhere the rest of `installVirtualDir` reads.
+
+**Not yet applied and not yet verified on hardware.** It is a candidate for the
+next image rather than a reason to flash on its own, because the exposure is
+latent rather than live. Verify after flashing by confirming `/Config/` still
+404s and that the web UI, the video pages and the event handler are unaffected.
+
+This supersedes the two unverified candidates near `0x14934` recorded in
+`TUXEDO-VERIFIED.md`; that address was the right neighbourhood, and this is the
+instruction.
