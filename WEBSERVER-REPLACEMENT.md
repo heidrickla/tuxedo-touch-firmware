@@ -1120,20 +1120,19 @@ Cache-Control: no-store, no-cache, must-revalidate
 Content-type: multipart/x-mixed-replace;boundary="EH912ZZ"
 ```
 
-Body framing, per frame:
+Body framing, per frame. Every line below is terminated by CRLF, and the blank
+line after the part header is CRLF alone:
 
 ```
---EH912ZZ
-
-Content-type: text/plain
-
-
-
-['ud','SimpleDbgServer2ClientIntf','statusMessageText',["..."]]
-
---EH912ZZ--
-                              <- CLOSE delimiter, every time
+--EH912ZZ                                          CRLF
+Content-type: text/plain                           CRLF
+                                                   CRLF   (empty line)
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["..."]]   CRLF
+--EH912ZZ--                                        CRLF   <- CLOSE delimiter
 ```
+
+The trailing `--` on the last line is the point: it is the multipart **close**
+delimiter and it is emitted after every single part.
 
 In the capture: **19 opening boundaries and 19 close delimiters.**
 
