@@ -1,0 +1,76 @@
+# Command codes on /Q_ServCmdRcver -- Barracuda -> /tuxedo, the WRITE path.
+#
+# The 404-byte command is built in a global buffer at Barracuda 0x55d8d0 and
+# sent with mq_send(mqd from the global at 0x55ae68, buf, 404, prio=1). The code
+# lives at buf+0x04; +0x08 and +0x0C are command-specific parameters, NOT fixed
+# fields (for the touch-simulate command they are x/y coordinates).
+#
+# Recovered from CReceiverThread::run @0x147158 in /tuxedo, which receives into
+# sp+0x2f4 and dispatches on [sp,#0x2f8] = buf+0x04. Slot names come from the
+# binary's own Qt symbols, so the semantics are the vendor's, not a guess.
+#
+# HOW THIS WAS WRONG TWICE, because it will be tempting to trust it wholesale:
+#  * following only `cmp/beq` gave 40 codes and missed every `cmp/bne skip`
+#    case, including 500 and 19. Both forms are followed now.
+#  * `cmp/bhs` and friends are binary-search PIVOTS, not cases. Code 300 was
+#    published from one before being rejected. Pivots are excluded here.
+# Individually verified so far: 1, 2, 3 (driven live via D:/temp/tux-arm.py),
+# 19 (requestconsolemode), 500 (registerclient). The rest are from the sweep
+# and should be confirmed by reading the handler before being relied on.
+#
+# code<TAB>handler_va<TAB>branch_form<TAB>slot
+1	0x147bb8	beq	CReceiverThread::sltRequestArmAway
+2	0x147a14	beq	CReceiverThread::sltRequestArmStay
+3	0x147bf4	beq	CReceiverThread::sltRequestDisarm
+4	0x1478d8	bne	CReceiverThread::sltRequestArmNight
+5	0x147684	beq	CReceiverThread::sltRequestPartitionStatus
+7	0x1479b8	beq	CReceiverThread::sltRequestMultiPartitionArmStay
+8	0x147c90	beq	CReceiverThread::sltRequestMultiPartitionArmNight
+9	0x147648	bne	CReceiverThread::sltRequestMultiPartitionDisarm
+10	0x14746c	beq	CTimer2::stop
+12	0x147a60	beq	CReceiverThread::sltRequestAllZoneCurrStatus
+13	0x147c80	beq	CReceiverThread::sltRequestBypassAllZones
+14	0x14745c	bne	CReceiverThread::sltRequestBypassClearAllZones
+15	0x1476c8	beq	CReceiverThread::sltRequestToBypassZones
+17	0x147a48	beq	CReceiverThread::sltRequestEventLogUpload
+18	0x147c30	beq	CReceiverThread::sltRequestGetHomePartDetails
+19	0x14760c	bne	CReceiverThread::requestconsolemode
+25	0x147364	beq	CReceiverThread::sltRequestMultiPartitionArmAwaySelectedPartition
+27	0x147a78	beq	CReceiverThread::sltRequestMultiPartitionArmNightSelectedPartition
+29	0x147b7c	beq	CReceiverThread::sltRequestMultiPartitionDisarmSelectedPartition
+52	0x147354	bne	CReceiverThread::sltAddCamera
+53	0x1476b8	beq	CReceiverThread::sltUpdateCamera
+55	0x1479ec	beq	CReceiverThread::sltUploadCameraDB
+56	0x147c60	beq	CReceiverThread::sltGetCameraCredentials
+57	0x1475e0	bne	CReceiverThread::sigStartCameraDiscovery
+58	0x1474ac	beq	CReceiverThread::sltDeleteAllCameras
+100	0x147428	bne	puts@@GLIBC_2.4
+102	0x1471c4	beq	osal_MqRecv
+104	0x147c70	beq	CReceiverThread::sltRequestZwaveDeviceAdd
+105	0x147998	bne	CReceiverThread::sltRequestZwaveDeviceDel
+106	0x1476d8	beq	CReceiverThread::sltRequestZwaveDeviceFrmv
+107	0x147c50	beq	CReceiverThread::sltRequestZwaveDeviceAbort
+108	0x1475b4	bne	CReceiverThread::sltRequestZwaveLightStatGet
+109	0x147a04	beq	CReceiverThread::sltRequestZwaveLightStatSet
+110	0x147c40	beq	CReceiverThread::sltRequestZwaveDimmerStatGet
+111	0x14786c	bne	CReceiverThread::sltRequestZwaveDimmerStatSet
+114	0x147adc	beq	CReceiverThread::sltRequestZwaveThermoStatAllInfoGet
+115	0x147ccc	beq	CReceiverThread::sltRequestZwaveThermoStatAllInfoSet
+116	0x1472a4	bne	puts@@GLIBC_2.4
+117	0x14775c	beq	CReceiverThread::sltRequestZwaveThermostatModeSet
+119	0x147b0c	beq	CReceiverThread::sltRequestZwaveTermTarTempGet
+120	0x147cdc	beq	CReceiverThread::sltRequestZwaveTermTarTempSet
+121	0x147704	bne	CReceiverThread::sltRequestZwaveTermFanModeGet
+122	0x1474e4	beq	CReceiverThread::sltRequestZwaveTermFanModeSet
+125	0x147aec	beq	CReceiverThread::sltRequestAllHADeviceStatus
+127	0x14774c	beq	CReceiverThread::sltRequestZwaveTermSaveEnergyModeGet
+129	0x147afc	beq	CReceiverThread::sltRequestZwaveAllLightsOFF
+147	0x147cec	beq	CReceiverThread::sltRequestZwaveGarageDoorStatSet
+154	0x147730	bne	readCRCJSONFile
+500	0x1472f0	bne	Increase_LocalWeb_usage_num
+508	0x147590	beq	Increase_RemoteWeb_usage_num
+604	0x147400	beq	SetSessionState
+608	0x1473d8	bne	ZWsendMsgToZSDOutThread
+700	0x147584	beq	EmitSignalOfAPIRequest
+800	0x147b44	beq	apl_hAsceneInitialize
+888	0x14784c	beq	CReceiverThread::sltSceneExecuteOnId

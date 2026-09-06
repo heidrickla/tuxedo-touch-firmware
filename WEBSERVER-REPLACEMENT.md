@@ -1164,6 +1164,11 @@ written into TRAPS. Codes the corrected pass adds: **4** `ArmNight`, **9**
 **121** `ZwaveTermFanModeGet`, **154** `readCRCJSONFile`, **500** register,
 **608** `ZWsendMsgToZSDOutThread`.
 
+**The table now lives in `commands.tsv`**, not only in this prose — 55 rows of
+`code / handler_va / branch_form / slot`, alongside `patches.tsv` as a
+machine-readable source of truth, with its provenance and both failure modes in
+the header. Pivots are excluded from it.
+
 **Not every value the pass emits is a case.** `300` was rejected on inspection:
 `cmp ip,#0x12c` is followed by `bhs`, a **binary-search pivot**, not a case
 branch. Values from this enumeration need the same individual check.
