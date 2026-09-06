@@ -1087,9 +1087,19 @@ cmd+0x0C   user code           from the request, or HARDCODED
 
 **If that reading is right it is a security finding, not a formatting detail:**
 `setOccupancyMode` and `setPartitionArmed` would be issuing panel commands under
-a **hardcoded user code** rather than the caller's. It is not yet confirmed —
-what would settle it is reading how `/tuxedo` consumes `+0x0C` on the receive
-side, and that has not been done.
+a **hardcoded user code** rather than the caller's.
+
+**Where to settle it, located but not yet read.** `/Q_ServCmdRcver` — the queue
+Barracuda sends these commands to — is opened in **`CReceiverThread`**, from
+`0x141a44` and `0x141e48` (`/Q_ServCmdTrsmtr`, the reply direction, is opened
+from five sites in the same class). Reading how that consumer uses `+0x0C`
+answers the question.
+
+Ruled out on the way: **`th_processAplEcpOutput` is not the consumer.** It takes
+100-byte messages and dispatches on ASCII — `0x30`–`0x39`, `*`, `#`, `A`–`D`,
+`a`–`d` — so it is the ECP **keypad character** handler. Noted because `A`–`D`
+are the panic keys `TUXEDO-AUDIT-BUGS.md` flags as needing no user code, which
+makes that function interesting in its own right, just not for this question.
 
 **Verified:** the buffer address, the size, the priority, the queue handle
 global, the field offsets, and each constant quoted above. **Not verified:** the
