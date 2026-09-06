@@ -178,8 +178,30 @@ calls the auth function, but whether a *streaming* handler tolerates a challenge
 response mid-path is not established. **This is the one that matters** and it
 is what the review in flight should settle.
 
-**STILL OPEN — 3. The panel's own web UI sends a cookie on this stream.**
-Browsers do so automatically, but which page opens it and how has not been read
-out of the embedded web app.
+**LARGELY CLOSED — 3. The panel's own web UI sends a cookie on this stream.**
+Read out of the extracted web app. `script/eventHandler.js:750`:
 
-Until 2 and 3 are closed this stays a proposal.
+```js
+eh = new EventHandler(new EhStatus(), "/SimpleDebugger.interface");
+new SimpleDbgServer2ClientIntf(eh);
+eh.connect();
+```
+
+`startEventHandler()` is called from `armcontrolscript.js`, `camerasetup.js`,
+`changePartitionScript.js`, `bookmarksHandler.js` and others — **all pages that
+sit behind login**. The request is same-origin from an already-authenticated
+page, so the browser attaches the session cookie without the code asking.
+
+Also relevant: `eventHandler.js:721` already does
+`parent.parent.window.open("/logout.html", '_self')`, so the vendor client has an
+existing path for "this connection is no longer authenticated". It is not going
+to be surprised by a challenge.
+
+**Confidence: INFERRED, not MEASURED.** It rests on standard browser same-origin
+cookie behaviour rather than on watching the request. The test plan covers it
+directly — load the panel's web UI after patching — and that observation, not
+this paragraph, is what settles it.
+
+Blocker 2 is the one that still stands, and it is the right one to be blocked
+on: whether a *streaming* handler tolerates a mid-path auth challenge. Until it
+is answered this stays a proposal.
