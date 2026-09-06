@@ -1331,14 +1331,45 @@ Barracuda). Unresolved side note kept for the record: the extracted `config.gz`
 says `# CONFIG_WATCHDOG is not set` yet `/dev/watchdog` exists and is kicked. The
 config is probably stale or mismatched; it was not reconciled.
 
-### 5.4 Does `comm` follow the basename?
+### 5.4 Does `comm` follow the basename? — ANSWERED YES, 2026-09-06
 
-Standard Linux behaviour (`TASK_COMM_LEN` 16, set from the last path component),
-so this is **INFERRED** from kernel semantics rather than measured on 2.6.31.
-Everything about `supervis` acceptance depends on it.
+**MEASURED**, and without starting a single new process: every process already
+running answers it.
 
-**Cheapest experiment:** stage 2 — run `/tmp/Xarracuda` and read
-`/proc/self/comm`. Seconds. Do not use the real name.
+```
+  PID    EXE                        STAT-FIELD-2   matches basename
+  902    /supervis                  supervis       yes
+  915    /tuxedo                    tuxedo         yes
+  1074   /opt/webserver/Barracuda   Barracuda      yes
+  1112   /TotalConnect              TotalConnect   yes
+  842    /usr/sbin/dropbear         dropbear       yes
+```
+
+So a replacement installed at `/opt/webserver/Barracuda` presents `comm` as
+`Barracuda` and satisfies `supervis`'s lookup. The install-path rule in §1.2
+stands on measurement now, not on kernel semantics.
+
+**The proposed experiment would have failed, and the reason matters more than the
+answer.** It said to read `/proc/self/comm` — **that file does not exist on this
+kernel.** `/proc/<pid>/comm` was added in Linux 2.6.33 and this panel runs
+2.6.31. Every read returns `No such file or directory`, including for the
+reading shell's own PID. **MEASURED.**
+
+The comm value lives only in field 2 of `/proc/<pid>/stat`, inside parentheses —
+which is exactly where `supervis`'s `processdir` @`0xbd68` reads it, so the
+disassembly was right and the proposed test was wrong.
+
+**Carry this forward:** any tooling written against `/proc/<pid>/comm` silently
+returns nothing here rather than failing loudly. Parse `/proc/<pid>/stat`
+instead. Note the process name can itself contain `)`, so match the LAST `)` in
+the line, not the first.
+
+(Two further traps found while testing this, both worth avoiding: busybox
+dispatches on `argv[0]`, so a copy under an unrecognised name exits immediately
+with `applet not found` and is useless as a test vehicle; and a job backgrounded
+inside a non-interactive `ssh` command dies as the session tears down — the same
+thing that silently swallowed an earlier `reboot`. Use `setsid`, or run in the
+foreground from a second connection.)
 
 ### 5.5 Does busybox `seedrng` credit entropy on 2.6.31?
 
