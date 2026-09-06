@@ -54,7 +54,7 @@ What would have to be true before the answer becomes yes:
 | ~~**A**~~ | **PASSED 2026-09-06.** See §3. Both halves measured on the live panel, read-only. | done | done |
 | ~~**B**~~ | **PASSED.** `verify-panel.sh:42` now derives the length from the row (`n=$(( ${#patched} / 2 ))`); the hardcoded `count=4` is gone, and the 124-byte P1c row already exercises the long-site path. | done | done |
 | ~~**C**~~ | **PASSED 2026-09-06**, and stronger than a stored copy: v12 is *reproducible*. Genuine stock (`324209e1`) is on the build VM at `/work/extracted/root_stock/`, the vendor `app2.hdr` it came from is sha256-pinned in `/work/stock/MANIFEST.sha256`, and applying all 11 `patches.tsv` rows to stock was **executed** and produced the three v12 md5s exactly. Golden v12 also sits at `/work/v12/root/` and `/work/v12/root_verify/`. | done | done |
-| **D** | The flash happens with someone physically at the panel, the HA integration disabled for the window, and the SSH rollback loop already running in another terminal. | scheduling | Lewis |
+| ~~**D**~~ | **MET 2026-09-06.** Lewis at the panel; he stopped the Home Assistant Tuxedo integration before the flash and restarted it after, and it came back normally; v12 rollback image staged both locally (`build/v12final/app2.hdr`) and on the build VM. **v13 flashed and verified** — 13/13 sites, anonymous 401 on all four listeners, authenticated still streaming, conformance 20/20, Barracuda never restarted. | done | done |
 
 Gate A was the one that decided whether the patch *works*; it passed on 2026-09-06 and the allow direction is no longer an inference. Gates B and C — survivability of a mistake — also passed. **D is the only gate still open, and it is scheduling, not evidence.**
 

@@ -54,6 +54,10 @@ Then the authenticated direction, logging in against the emulated server with
 the panel's real account store: anonymous denied on all four listeners,
 authenticated OK on all four, web UI 200.
 
+**Home Assistant:** the integration was stopped before the flash and restarted
+after, and came back normally. That is the Gate D precondition, done by hand,
+not an inference from connection state.
+
 That answered the two things `PUSH-STREAM-AUTH.md` §6 had recorded as
 unanswerable before a flash — whether the deny is a clean `401` rather than a
 200-with-login-page, and whether the cave faults in the request path. It cost
