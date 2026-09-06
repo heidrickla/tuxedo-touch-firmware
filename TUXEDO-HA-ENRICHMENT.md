@@ -947,9 +947,39 @@ Two limits worth stating rather than papering over:
   It does not follow from the above and is not implied by it. That is a live
   test, not an inference.
 
-`CKeyPadWin::sltHandleUserCodeAccepted` / `Declined` having no direct callers is
-**not** evidence here — they are Qt slots reached through the meta-object
-system, so zero direct callers is the expected reading for any slot.
+### How to read "no callers" on a Qt slot in this binary
+
+This was first written up as "zero callers proves nothing for a slot, because
+slots are reached through the meta-object system". That over-corrected, and the
+real rule is narrower and more useful.
+
+In this build moc dispatch **is** visible statically. `qt_static_metacall`
+contains a jump table whose entries are small stubs that reach each slot, so a
+connected slot does have a caller — its own class's `qt_static_metacall`. Of
+1412 `slt*` symbols, 538 show it as a direct `bl` caller.
+
+The trap is the *other* 741. `CKeyPadWin::qt_static_metacall` dispatches
+through `ldrls pc, [pc, r2, lsl #2]` into stubs that `pop {lr}` and then reach
+the slot with a plain **`b`**, not `bl`. A BL-only scan sees none of that:
+before `tuxelf.py` counted tail calls it reported **758** zero-caller slots;
+counting them it reports **17**. All 20 live `CKeyPadWin` slots — every digit
+key, home, back, the timeouts — were in the false 741.
+
+So the rule is:
+
+- "No `bl` callers" is worth nothing on its own. It marked 741 live slots dead.
+- "No callers once tail calls are counted" is real evidence.
+- The direct check is best: enumerate the class's `qt_static_metacall` jump
+  table and see whether the slot is in it.
+
+`CKeyPadWin::sltHandleUserCodeAccepted` @`0x37e7c` and `Declined` @`0x3828c`
+pass all three. All 22 metacall entries were enumerated and neither appears,
+while 20 sibling slots do. They are genuinely unreachable through signals — but
+that is established by reading the dispatch table, not by counting callers.
+
+(`a-3` was re-checked against the fixed tool and stands: `getPartitionDetails`
+@`0x140480` has no callers even with tail calls counted, and
+`RequestPartitionStatus` @`0x585c28` has exactly the two documented ones.)
 
 What the stream *does* give, and it is enough to be useful:
 

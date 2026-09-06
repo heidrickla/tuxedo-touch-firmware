@@ -165,30 +165,56 @@ class Elf:
 
     # -- code -------------------------------------------------------------
 
-    def _bl_targets(self, lo, hi):
+    def _branches(self, lo, hi):
+        """Yield (site, target, is_link) for every B and BL, any condition.
+
+        Tail calls matter here. Qt's moc dispatch reaches a slot with a plain
+        `b` after popping the frame, so a BL-only scan reports a live slot as
+        having no callers -- that made all 20 reachable CKeyPadWin slots look
+        dead. Conditional forms count too; gcc emits `bleq` freely.
+        """
         base = self.to + (lo - self.ta)
         for i in range((hi - lo) // 4):
             w = struct.unpack_from("<I", self.d, base + i * 4)[0]
-            if (w >> 24) & 0x0F == 0x0B and (w >> 28) == 0xE:
-                imm = w & 0xFFFFFF
-                if imm & 0x800000:
-                    imm -= 0x1000000
-                yield lo + i * 4, lo + i * 4 + 8 + imm * 4
+            if (w >> 25) & 0x07 != 0x05 or (w >> 28) == 0xF:
+                continue                    # cond 0xF is BLX(imm), other form
+            imm = w & 0xFFFFFF
+            if imm & 0x800000:
+                imm -= 0x1000000
+            yield lo + i * 4, lo + i * 4 + 8 + imm * 4, bool((w >> 24) & 1)
 
-    def callers(self, what):
+    def _bl_targets(self, lo, hi):
+        for site, tgt, link in self._branches(lo, hi):
+            if link:
+                yield site, tgt
+
+    def callers(self, what, tails=True):
+        """Functions that call `what`, counting tail-call branches by default.
+
+        A `b` is a call only when it leaves the function it sits in; inside one
+        it is ordinary control flow. `what` is a function start, so a branch to
+        it from a different function is a tail call into it.
+        """
         t = self.addr(what)
+        tn = self.name(t)
         out = []
-        for site, tgt in self._bl_targets(self.ta, self.ta + self.ts):
-            if tgt == t:
-                n = self.name(site)
-                if n not in out:
-                    out.append(n)
+        for site, tgt, link in self._branches(self.ta, self.ta + self.ts):
+            if tgt != t:
+                continue
+            n = self.name(site)
+            if not link and (not tails or n == tn):
+                continue
+            if n not in out:
+                out.append(n)
         return out
 
-    def calls(self, what):
+    def calls(self, what, tails=True):
         lo = self.addr(what)
+        hi = self.end(lo)
         out = []
-        for site, tgt in self._bl_targets(lo, self.end(lo)):
+        for site, tgt, link in self._branches(lo, hi):
+            if not link and (not tails or lo <= tgt < hi):
+                continue                    # internal branch, not a call
             n = self.name(tgt)
             if n not in out:
                 out.append(n)
