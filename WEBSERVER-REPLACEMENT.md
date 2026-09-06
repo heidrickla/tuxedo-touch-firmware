@@ -1043,6 +1043,102 @@ is the last non-reflash revert.
 
 ---
 
+## 4.10 The consumer's contract, stated by the consumer
+
+Everything in this section comes from the author of `ha-tuxedo-touch`, the
+public HACS integration that consumes this panel, checked against their shipped
+code rather than recalled. It is requirements, not speculation, and it settles
+two questions this document had left open.
+
+### 4.10.1 The push stream SHOULD require authentication
+
+This document assumed requiring credentials on `/SimpleDebugger.interface/G.`
+would be a breaking change and priced it as a compatibility cost. **It is not.**
+Their stream client already sends the session cookie on every connection and
+already treats 401/302 as an expired session with exactly one re-login:
+
+```
+push.py:447   cookie = await self._client.async_session_cookie()
+push.py:463   headers={"Cookie": cookie},
+push.py:468   if resp.status in (401, 302):   -> session expired, one re-login
+```
+
+So a replacement that *requires* auth on that path works against the integration
+unchanged, with no version detection and no migration. **Decision: the
+replacement authenticates the push stream.**
+
+What that closes is real. Today the stream hands live alarm state -- armed,
+disarmed, and the exit-delay countdown ticking down -- to anything on the LAN
+with no credential at all (OQ-1, answered on hardware). That is the single most
+useful signal in a house for anyone working out when it is empty.
+
+### 4.10.2 Add a version / capability endpoint. This is the highest-value addition
+
+`API_REV01` has **no version, model or firmware endpoint of any kind** --
+established from the vendor's own `script/tuxapi.js`. The firmware string is
+readable only on the unit's own screen.
+
+That one absence makes every other improvement unusable to a public integration.
+Probing an unknown endpoint to discover what you are talking to means sending
+unhandled paths to a stranger's alarm panel, which no responsible integration
+will do. So without it, a replacement can add the best capability in the world
+and no client can ever call it.
+
+With it, every addition becomes optional and safely detectable: ask once at
+setup, use the better path when present, fall back silently when absent. In the
+consumer's words, it converts *"a fork nobody can support"* into *"a superset
+anyone can adopt"*.
+
+**Decision: the replacement serves a version/capability endpoint, and it is a
+release-one requirement rather than a nice-to-have.**
+
+### 4.10.3 Three long-standing asks that the architecture resolves for free
+
+All three were consequences of Barracuda's design, not the panel's. A server
+reading the queues directly does not inherit any of them:
+
+| Ask | Why it disappears |
+|---|---|
+| The `"Not available"` status cache -- the defect that started this project | There is no cache to be empty if you read the queue |
+| `PanelIsTalking` exposed over REST | The link state is in hand, rather than a global inside a closed binary |
+| Did the panel ACT, not merely receive the command | The queue carries the answer. Barracuda is what discards it and returns `"Command sent sucessfully"` regardless. This one lets the integration delete its `assumed` state, and is the most valuable of the three |
+
+**Additive only.** New endpoints alongside the old, same frames on the stream,
+same paths for the existing calls.
+
+### 4.10.4 Invariants that must not move
+
+Pinned by the consumer's test suite as of 2026-09-06. Changing any of these
+breaks a shipped integration:
+
+```
+0:21:1:fe:<0xFE>1Ready To Arm:2      and the id -1 record in BOTH shapes
+raw 0xFE / 0xFF immediately before the display text   <- their discriminator
+field 2 = panel status code, -1 when the ECP link is down
+/system_http_api/API_REV01/AdvancedSecurity/{ArmWithCode,DisarmWithCode}
+```
+
+Plus the vendor's misspellings and asymmetry, which are part of the contract:
+`{"Status":"Sucess","Result":{"Response":"Command sent sucessfully"}}` for arm
+and `{"Status":"Sucess","Result":{"Result":"..."}}` for disarm. Arm and disarm
+use **different inner keys** and both spell `Sucess` wrong. A rewrite that
+tidies either breaks every client on vendor firmware.
+
+The `-1` marker deserves specific care: it is how a dead ECP link becomes
+visible at all. It is produced by `/tuxedo` rather than Barracuda, so it should
+survive replacement for free -- but losing it silently would reintroduce a defect
+the integration has already shipped and fixed once.
+
+### 4.10.5 Why compatibility is a hard requirement, not courtesy
+
+Almost no user of `ha-tuxedo-touch` will run this firmware. If the replacement
+diverges, the integration must detect which server it is talking to and carry two
+code paths across the alarm-critical surface -- and only one of them can ever be
+tested against real hardware, because there is one panel. Two code paths where
+one is untestable is worse than either alone.
+
+---
+
 ## 5. What is still unknown
 
 Ordered by how much the plan changes if the answer goes the wrong way.
