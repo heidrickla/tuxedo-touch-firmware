@@ -534,9 +534,52 @@ copy of two cached 17-byte buffers. **It transmits nothing to the VISTA.** The
 patch enables *reading* a cached copy of the keypad display; it does not enable
 sending keystrokes, which is the separate `apl_sendEcpConsoleModeData`.
 
-The handler being patched currently always returns early, so the patch cannot
-change behaviour on any path that works today.
+### DEPLOYED 2026-09-06, AND IT IS NOT SUFFICIENT
 
-**Not yet deployed.** It requires restarting `/tuxedo`, which blanks the
-touchscreen on a live alarm for a few seconds — worth timing deliberately rather
-than doing unannounced.
+The patch is installed and live (`/tuxedo` md5 `98370c31...`, backup at
+`/tuxedo.orig` `6f8055f5...`, one byte apart; panel rebooted and healthy on it).
+**No `0:20:` console frame was produced.** Tested twice with the stream held
+throughout: cmd 19 alone, then cmd 500 -> 1125 -> 19, then 19 again after a
+delay. 150 and 41 frames captured; ids seen were `-1`, `18`, `21`, `504`, `51`,
+`55`, `59`, `80`. No `0:20:` in any of them.
+
+**Two corrections, both to claims made above, both mine.**
+
+**1. `0x13db20` is not a bail, and "the handler always returns early" was wrong.**
+The `beq 0x13db20` at `0x13da4c` does not return. It copies a canned 14-byte
+string over the display buffer and branches back into the same send path:
+
+```
+0x13db20  add r4, sp, #0x23c ; add r4, r4, #1
+0x13db28  mov r0, r4 ; ldr r1, [pc, #0x24] ; mov r2, #0xe
+0x13db34  bl  memcpy          <- substitutes a canned 14-byte message
+0x13db3c  strb r6, [sp, #0x22c]
+0x13db40  b   0x13daa0        <- rejoins the normal path
+```
+
+So the operation-mode gate selects *which text is sent* -- real console data or a
+placeholder -- and never decided *whether* anything is sent. The one-byte patch
+is therefore not the fix for "no console frames", and that claim is withdrawn.
+
+**2. The real send gate is per-client, and command 19 already satisfies it.**
+The send is guarded at `0x13dad4` by `ldr r3,[r8,#8] / cmp r3,#0 / beq 0x13da1c`,
+and `0x13da1c` IS the return. `CReceiverThread::run` sets that same field to 1 at
+`0x147614`, immediately before calling `requestconsolemode`, under
+`cmp ip,#0x13` -- command **19**. The subscribe byte at `0xd2f269` has exactly
+three writers: `run` sets it to 1 on command 19; `home_back_press` and
+`unregisterclient` clear it.
+
+So on the `/tuxedo` side, command 19 opens both gates. Nothing there is blocking.
+
+**The block is upstream, in Barracuda**, which most likely never forwards command
+19 onto `/Q_ServCmdRcver`. Consistent with everything observed: commands 500,
+1125 and 19 all returned an identical `(200, 0)`, because `handlerequest.html`
+is fire-and-forget and its response carries no information.
+
+**Status: patch left installed.** It is inert unless the console path is actually
+reached, and it is the correct change for that path when something reaches it. It
+is not a fix on its own.
+
+**Moot under the replacement plan.** A server reading and writing the queues
+directly does not need Barracuda to forward command 19 -- it posts the command
+struct itself. See `WEBSERVER-REPLACEMENT.md`.
