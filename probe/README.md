@@ -20,6 +20,12 @@ two ways, run on the panel.
 
 Both binaries exited 0; the failures are per-call.
 
+## musl
+
+A third build, musl 1.2.5 static, passes every call including `select`. musl
+issues the time64 syscall, sees `ENOSYS` and retries the legacy one; trixie's
+glibc has that fallback compiled out. See `../MODERN-USERLAND.md`.
+
 ## What this corrects
 
 The first write-up said modern glibc issues "time64 syscalls the 2.6.31 kernel
