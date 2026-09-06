@@ -73,6 +73,15 @@ held the queue facts.
 
 ## 5. The build VM and emulation
 
+- **DO NOT DELETE ANYTHING ON THE DEV VM.** It is persistent infrastructure,
+  not scratch. The extracted trees, `/work/panel-config`, the emulation chroots
+  and the stock images are expensive to rebuild and are meant to persist. I
+  removed them three times in one day — as "cleanup", as disk recovery, and as
+  "credential hygiene" — and each time Lewis had to watch the dev machine get
+  reconstituted. Leave it alone. If disk is genuinely short, say so and ask.
+- Do not remove the copied panel configuration either. It lives at
+  `/work/panel-config` on purpose, so emulation does not need a re-pull. It
+  contains real credentials and that is accepted — it is a dev VM.
 - **Never `cp -a` a tree with `/proc` mounted under it.** It copies
   `/proc/1/task/1/pagemap`, reported as 43 GB, and fills the disk. Unmount
   first, or copy from a pristine tree.

@@ -6,6 +6,13 @@ pkill -f "qemu-arm-static" 2>/dev/null; pkill -f mqdrain.py 2>/dev/null; sleep 2
 ss -lnt 2>/dev/null | grep -qE ":(80|443|6280|9443)\b" && { echo "ABORT: ports held"; exit 1; }
 for m in dev/mq proc dev/pts; do mountpoint -q "$T/$m" && umount -l "$T/$m"; done
 mkdir -p "$T/dev/mq" "$T/dev/pts" "$T/proc" "$T/usr/bin"
+# Seed the panel configuration if this tree has none. Without it Barracuda
+# starts but its init fails and it serves nothing. /work/panel-config is the
+# canonical copy; emu/fetch-config.sh refreshes it from the panel.
+if [ -d /work/panel-config ] && [ -z "$(ls -A "$T/opt/tuxedo/configuration" 2>/dev/null)" ]; then
+    mkdir -p "$T/opt/tuxedo"
+    cp -a /work/panel-config/. "$T/opt/tuxedo/configuration/"
+fi
 cp /usr/bin/qemu-arm-static "$T/usr/bin/"
 mount -t proc proc "$T/proc"; mount -t devpts devpts "$T/dev/pts" 2>/dev/null
 mount -t mqueue none "$T/dev/mq"

@@ -28,6 +28,26 @@ it — the whole authenticated path can then be exercised from a workstation:
 python test-stream-auth.py --host <vm> --creds <file> --compare before.json
 ```
 
+## The panel configuration is required
+
+Barracuda starts without it but its init fails and it serves nothing — the
+rootfs image ships an empty `/opt/tuxedo/configuration` because that path is
+`mtdblock17` on the panel.
+
+The canonical copy lives on the build VM at **`/work/panel-config`** and is
+meant to stay there. `run.sh` and `serve.sh` seed a tree from it automatically.
+Refresh it from the panel with:
+
+```bash
+./fetch-config.sh                 # panel -> /work/panel-config on the VM
+```
+
+`tls/` is excluded (the panel's private key is reissued from the owner CA, not
+copied around) along with the two large logs.
+
+**Do not delete `/work/panel-config` or the emulation trees.** They are
+persistent infrastructure. See `../TRAPS.md` §5.
+
 ## The three traps
 
 ### 1. It binds all four ports and then answers nothing
