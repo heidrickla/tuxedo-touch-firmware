@@ -136,8 +136,9 @@ attack, but it is the failure mode most likely to be hit by accident.
 ## The honest summary
 
 After this work the panel has **a real certificate and a modern TLS stack**. It
-still has an unauthenticated live-alarm-state feed, a trivially triggered
-permanent account lockout, and no meaningful separation between processes.
+still has an unauthenticated live-alarm-state feed and no meaningful separation
+between processes. The permanent account lockout is **already fixed here by P1**
+and is a live issue only on stock firmware.
 
 TLS was worth doing because the alternative was a published private key. It is
 the first item on a list, not the end of one. The unauthenticated stream (§3) is
