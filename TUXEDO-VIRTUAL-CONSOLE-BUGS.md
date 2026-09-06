@@ -679,3 +679,35 @@ on a queue the replacement is already reading.
 Reading the display is passive. Sending keystrokes is the separate
 `apl_sendEcpConsoleModeData` write path and remains a control surface to be
 treated with the same care as arm/disarm.
+
+### The deployed patch is a PREREQUISITE, not dead weight
+
+Earlier in this document the installed patch is called "inert". That
+under-sells it and is worth correcting, because it changes whether it should
+stay.
+
+The operation-mode gate chooses between two payloads for the type-20 message:
+
+- **gate fails** (mode 0, the shipped state): `0x13db20` memcpys a canned
+  14-byte placeholder over the display buffer, then sends type 20 carrying that
+  placeholder.
+- **gate passes** (patched, or mode 1/2/3): `apl_getEcpConsoleModeData` copies
+  the two real cached 17-byte display lines, and type 20 carries the actual
+  keypad text.
+
+Barracuda discards type 20 either way, so on stock firmware the difference is
+invisible. **But a replacement reading `/Q_ServCmdTrsmtr` receives whichever
+payload `/tuxedo` put there.** Without the patch it would receive a canned
+placeholder and nothing else; with it, the real display.
+
+So the patch is necessary-but-not-sufficient rather than inert:
+
+| | type 20 sent | payload | reaches a client |
+|---|---|---|---|
+| stock | yes | canned 14-byte placeholder | no, Barracuda drops it |
+| patched `/tuxedo`, stock Barracuda | yes | **real display text** | no, Barracuda drops it |
+| patched `/tuxedo`, replacement server | yes | **real display text** | **yes** |
+| stock `/tuxedo`, replacement server | yes | canned placeholder | yes, but useless |
+
+**Keep it installed.** It is the half of the fix that lives in the binary we are
+not replacing, and it costs one byte.
