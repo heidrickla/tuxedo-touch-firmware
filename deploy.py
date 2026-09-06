@@ -40,7 +40,8 @@ PATHS = """bin/busybox sbin/syslogd sbin/klogd usr/local/bin
  usr/sbin/dropbearkey.musl bin/ntpclient etc/tuxedo-build etc/hosts
  etc/hosts.ota-notes etc/passwd etc/group etc/shadow etc/sysconfig/syslog
  etc/rc.d/rc.local etc/rc.d/rc.conf etc/rc.d/init.d/startup
- root/.ssh/authorized_keys etc/dropbear""".split()
+ root/.ssh/authorized_keys etc/dropbear
+ supervis opt/webserver/Barracuda""".split()
 
 
 def builder(script, binary=False):
@@ -141,7 +142,11 @@ done
         else:
             mode = lv[2] if len(lv) > 2 else "644"
             blob = builder(f"cat {TREE}/{f}", binary=True)
-            panel(f'mkdir -p "{d}" && cat > "/{f}" && chmod {mode} "/{f}"', stdin=blob)
+            # Write to a temporary name and rename. Writing directly over a
+            # binary that is currently executing gives ETXTBSY; rename works,
+            # because the running process keeps the old inode until it exits.
+            panel(f'mkdir -p "{d}" && cat > "/{f}.new" && chmod {mode} "/{f}.new"'
+                  f' && mv "/{f}.new" "/{f}" && sync', stdin=blob)
             print(f"  file  /{f} ({mode}, {len(blob)} bytes)")
 
     print("\nverifying...")

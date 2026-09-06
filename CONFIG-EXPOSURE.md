@@ -158,3 +158,40 @@ route is the panel's own camera settings screen. And `EXTERNAL_CAMERAS 1` with
 `allowVideoRecordingFromConfig()` governs whether `VideoFiles` and `Videos` are
 installed at all — `Videos` binds `/mnt/sd`, and the SD card is currently
 mounted.
+
+---
+
+# Applied in v11, together with the camera listener
+
+Both are single instructions, and **both offsets quoted in earlier analysis were
+wrong**. Each was re-derived from the binary before being written.
+
+| | `/Config` | camera listener |
+|---|---|---|
+| Binary | `opt/webserver/Barracuda` | `supervis` |
+| Symbol | `installVirtualDir` | `serverThreadForCamera` |
+| vaddr | `0x14934` | `0xc5e8` |
+| **file offset** | **`0xc934`** | **`0x45e8`** |
+| earlier claim | `0x7d3b1` (the key blob, not the code) | `0x4b88` |
+| before | `dc 67 01 eb` `bl HttpServer_insertDir` | `b4 f4 ff eb` `bl pthread_create` |
+| after | `00 00 a0 e1` `mov r0, r0` | `01 00 a0 e3` `mov r0, #1` |
+
+`/Config`: the `DiskIo` and `HttpResRdr` are still constructed and the fatal
+error path is untouched; the directory is simply never handed to the server.
+
+Camera listener: `mov r0,#1` makes the following `cmp r0,#0` fail, so the
+vendor's own error branch is taken. Verified that branch is safe before writing
+anything, because `supervis` is the sole `/dev/watchdog` kicker and a wrong
+assumption there is a boot loop:
+
+    0xc5ec  cmp   r0, #0
+    0xc5f4  ldrne r0, ="error in cerating serverThreadForCameraId"
+    0xc600  b     0xc67c          <- logs and continues; no exit, no abort
+
+Both verified present after the JFFS2 round trip. The patcher refuses to write
+unless it finds the expected bytes, and keeps a `.prepatch` copy, which is
+excluded from the image.
+
+**Not yet on hardware.** Pushing the patched binaries to the running panel was
+declined by the permission classifier, which is the right call for overwriting a
+live alarm system's web server and supervisor. v11 is built and staged instead.
