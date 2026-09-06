@@ -1202,8 +1202,44 @@ still does not produce a working console today.
 
 A replacement receives type 20 like any other reply. Console mode costs it one
 more case in the dispatch, which is what "console mode arrives free" in §4.10.7
-means. Do not read a gap in this table as "the panel never sends that" — every
-one of these gaps is a candidate for the same treatment.
+means. Do not read a gap in this table as "the panel never sends that".
+
+#### The sender side, measured: TWO message types are dropped, not one
+
+Anchored on the one known case rather than scanned for loosely. `/tuxedo` builds
+the reply on the stack and sets the type at `+0x04` immediately before a
+556-byte send — `wsltHandleRawDataFromPanel` does exactly this for type 20:
+
+```
+0x13da24  mov r3, #0x14        20
+0x13da2c  str r3, [sp, #4]     the msgType slot
+0x13daf0  mov r2, #0x22c       556
+0x13daf4  bl  osal_MqSend
+```
+
+Applying that exact shape to every caller of `osal_MqSend` gives the types
+`/tuxedo` sends: **1, 4, 20, 21, 51, 59, 60, 61, 62, 504**. Eight are handled.
+**Two are sent and silently dropped:**
+
+| msgType | sender | what is lost |
+|---|---|---|
+| 20 | `CReceiverThread::wsltHandleRawDataFromPanel` | the keypad display — console mode |
+| 60 | `CAccountsSetup::sendUpdateCommandToWeb`, `CInitialAccountsSetup::sendUpdateCommandToWeb` | account updates never reach the web tier |
+
+msgType 60 was verified individually rather than trusted from the sweep:
+`mov r3,#0x3c; str r3,[sp,#4]; bl osal_MqSend` with `r2 = 0x22c`.
+
+**A third candidate, msgType 0, was rejected.** `CHomeScreen::sltHandleDoorBtnPress`
+does `str r3,[sp,#4]` with no `mov r3,#N` nearby — the tracker carried a stale
+`r3` from earlier in the function. It is a scan artifact, not a message type.
+
+This is a **lower bound**: it only sees types set by a constant `mov` into the
+slot. Any type loaded from a variable, a field, or a register set in a caller is
+invisible to it.
+
+So the replacement gains **two** capabilities the vendor stack cannot deliver at
+all, not one, and neither requires panel-side change — both messages already
+arrive on `/Q_ServCmdTrsmtr` every time the panel produces them.
 
 **Why this is trustworthy:** the method was validated against a result derived
 independently and earlier — msgType 21 at `0xda80` with
