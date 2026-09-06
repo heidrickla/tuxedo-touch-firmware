@@ -46,7 +46,8 @@ installed on the panel**, and not a dependency of anything: the Home Assistant
 integration is a public HACS repo and cannot require a daemon that exists in one
 house.
 
-Two escaping notes, both of which cost a rebuild: `''` and `'\'` written
+Two escaping notes, both of which cost a rebuild: `'
+'` and `'\'` written
 through a Python-to-shell-to-C chain collapse into a literal CR and an
 unterminated character constant. The source now uses `0x0d` and `0x5c`
 directly, which cannot be mangled by any layer above it.
@@ -55,6 +56,27 @@ directly, which cannot be mangled by any layer above it.
 
 Symbol lookup, caller and callee lists, data cross-references and disassembly
 for the panel binaries, parsing ELF natively so it needs only python3.
+
+`callers()` and `calls()` count **tail calls** -- a `b` into another function,
+not just `bl`. This is not a refinement, it is the difference between the tool
+working and not. Both binaries reach a great deal of code by tail call: Qt moc
+dispatch branches into slots from a jump table, and Barracuda's interface
+vtables are 4-byte thunks that `b` to the real body.
+
+Measured over every function symbol, functions with no `bl` caller that DO have
+a tail-call caller:
+
+| binary | symbols | rescued by counting tail calls |
+|---|---:|---:|
+| `tuxedo` | 10585 | 1567 |
+| `Barracuda` | 2016 | 177 |
+
+So a BL-only scan called 1744 reachable functions uncallable. It reported every
+digit key on the touchscreen keypad as dead, and it put a false "dead code"
+claim into three documents (see TUXEDO-LOCKOUT-PATCH.md). Treat any "no callers"
+conclusion predating this fix as unverified.
+
+Pass `tails=False` to either method for the old behaviour.
 
 ## `../probe/probe.c`
 
