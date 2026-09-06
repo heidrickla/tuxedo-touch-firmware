@@ -90,6 +90,29 @@ check_secrets() {
     [ -z "$bad" ] && pass "no private keys committed" || fail "no private keys committed" "$bad"
 }
 
+# 5b. No vendor binaries or extracted vendor web content. This repo is public
+#     and describes Honeywell's firmware; it must never redistribute it. The
+#     web app ZIP embedded in Barracuda extracts to 776 files, which makes an
+#     accidental commit easy now that the recipe is written down.
+check_vendor_blobs() {
+    local bad=""
+    for f in $(git ls-files); do
+        case "$f" in
+            *.bin|*.hdr|*.img|*.jffs2|*.zip|*.so|*.so.*|*.elf|*.hex|*.ko)
+                bad="$bad $f" ;;
+            */Barracuda|Barracuda|tuxedo|*/vmlinux*|vmlinux*|*/supervis|supervis)
+                bad="$bad $f" ;;
+            webapp/*|*/webapp/*|autogen/*|*/autogen/*)
+                bad="$bad $f" ;;
+        esac
+    done
+    # jquery and the vendor's own scripts are a strong signal of extracted content
+    for f in $(git ls-files '*.js'); do
+        case "$f" in *jquery*|*consoleRequest*|*tuxapi*) bad="$bad $f";; esac
+    done
+    [ -z "$bad" ] && pass "no vendor blobs committed" || fail "no vendor blobs committed" "$bad"
+}
+
 # 6. A redirect to a variable path must not gate a command whose failure
 #    matters: if the redirect cannot be opened the command never runs. Cost a
 #    flash attempt. Require the target to be resolved with a fallback first.
@@ -251,6 +274,7 @@ check_shell
 check_crlf
 check_attribution
 check_secrets
+check_vendor_blobs
 check_redirect_gate
 check_status_after_or_true
 check_dropbear_flags
