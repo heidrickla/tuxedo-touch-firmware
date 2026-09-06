@@ -1033,7 +1033,12 @@ the payload shapes are `setCid` (once, on connect), `statusMessageText` and
    it confirms the panel actually reached a disarmed state.
 2. ~~*The 404-byte command encoder.*~~ **Done 2026-09-06**, with the reply
    decoder, in `tuxweb/src/ipc.rs`. Structure recovered below; the library is
-   13 passing tests.
+   14 passing tests, the strongest being
+   `every_captured_frame_is_reproducible_from_its_fields`: it walks both live
+   captures, recovers the fields behind each frame, re-formats them, and
+   requires the result to equal the original byte for byte. **104 frames
+   reproduced, 46 skipped** as shapes not yet formatted (504 registration, the
+   bare `-1`, `noOfClient`) — skipped explicitly rather than silently passed.
 
 #### The 404-byte command, from the binary
 

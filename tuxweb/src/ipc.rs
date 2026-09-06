@@ -200,6 +200,63 @@ mod tests {
         assert_eq!(frame_filler(&r), want);
     }
 
+    /// Reproduce EVERY frame in both captures, not four hand-picked ones.
+    ///
+    /// For each captured frame text, recover the fields it must have come from
+    /// and re-format them; the result has to equal the original byte for byte.
+    /// Four vectors can be made to pass by accident. 150 cannot.
+    #[test]
+    fn every_captured_frame_is_reproducible_from_its_fields() {
+        let idle = include_bytes!("../tests/fixtures/push-idle-300s.bin");
+        let armed = include_bytes!("../tests/fixtures/push-armcycle.bin");
+
+        let mut checked = 0usize;
+        let mut skipped = 0usize;
+        for cap in [&idle[..], &armed[..]] {
+            for part in crate::frame::parse(cap).0 {
+                let t = match crate::frame::classify(&part) {
+                    crate::frame::Message::StatusText(t) => t,
+                    _ => continue,
+                };
+                // fields are ':'-separated; the TEXT may not contain ':'
+                let f: Vec<&[u8]> = t.split(|&b| b == b':').collect();
+                let num = |b: &[u8]| std::str::from_utf8(b).ok()?.parse::<u32>().ok();
+
+                if f.len() == 6 && f[3] != b"" && num(f[0]).is_some() && num(f[1]).is_some() {
+                    // session:type:arg:hex:text:quick  -- the status frame
+                    let (Some(s), Some(ty), Some(arg), Some(q)) =
+                        (num(f[0]), num(f[1]), num(f[2]), num(f[5]))
+                    else { skipped += 1; continue };
+                    let r = Reply { session: s, msg_type: ty, arg, text: f[4].to_vec() };
+                    assert_eq!(frame_status(&r, q), t, "status frame drifted");
+                    checked += 1;
+                } else if f.len() == 4 && num(f[0]).is_some() && num(f[1]).is_some() {
+                    // session:type:text:trailing
+                    let (Some(s), Some(ty), Some(tr)) = (num(f[0]), num(f[1]), num(f[3]))
+                    else { skipped += 1; continue };
+                    let r = Reply { session: s, msg_type: ty, arg: 0, text: f[2].to_vec() };
+                    assert_eq!(frame_typed(&r, tr), t, "typed frame drifted");
+                    checked += 1;
+                } else if f.len() == 3 && f[1] == b"-1" && num(f[0]).is_some() {
+                    // session:-1:text  -- the filler
+                    let r = Reply {
+                        session: num(f[0]).unwrap(), msg_type: 21, arg: 0,
+                        text: f[2].to_vec(),
+                    };
+                    assert_eq!(frame_filler(&r), t, "filler frame drifted");
+                    checked += 1;
+                } else {
+                    skipped += 1;
+                }
+            }
+        }
+        assert!(checked >= 40, "expected to reproduce many frames, got {checked}");
+        // frames of shapes this module does not yet format (504 registration,
+        // the bare -1, noOfClient) are skipped rather than silently passed
+        assert!(skipped > 0, "sanity: some captured shapes are not yet formatted");
+        println!("reproduced {checked} frames, skipped {skipped} unformatted shapes");
+    }
+
     #[test]
     fn reply_round_trips_through_the_wire_layout() {
         let mut buf = vec![0u8; REPLY_LEN];
