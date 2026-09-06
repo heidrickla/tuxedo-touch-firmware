@@ -80,6 +80,19 @@ Known `Barracuda` md5s:
 When in doubt, ask the panel rather than a file:
 `./verify-panel.sh` checks all eight sites against the running unit.
 
+**Pull a fresh reference instead of trusting an old one.** Three commands, and
+each transferred file is compared against the panel's own `md5sum`:
+
+```bash
+ssh -i ~/.ssh/tuxedo_ed25519 root@203.0.113.5 'cat /tuxedo'   > tuxedo
+ssh -i ~/.ssh/tuxedo_ed25519 root@203.0.113.5 'cat /supervis' > supervis
+ssh -i ~/.ssh/tuxedo_ed25519 root@203.0.113.5 'cat /opt/webserver/Barracuda' > Barracuda
+python apply-patches.py --check --root <tree> --table patches.tsv   # expect 8/8
+```
+
+A reference pulled this way and confirmed 8-of-8 is worth more than any file
+whose provenance is a directory name.
+
 **Check before you conclude**, in one command:
 
 ```bash
