@@ -90,14 +90,33 @@ is in an image. Take pre-patch copies off-panel if they need to survive.
 The partition-level baseline in `RECOVERY-BACKUP.md` is unaffected: it lives on
 the workstation, not the panel.
 
-### Not verified
+### VERIFIED END-TO-END on the flashed panel, 2026-09-06
 
-**P11/P12 are confirmed structurally, not end-to-end.** The bytes are right and
-the mechanism is fully traced, but no test proved a Back press now reaches the
-panel — HOME and BACK navigate the touchscreen, which the push stream does not
-carry. An attempt to demonstrate it produced `0:18:` frames that looked like
-confirmation and were not: they were 32.98 s apart, i.e. the 33 s heartbeat.
-Confirming this means watching the panel screen while driving the web keypad.
+**a-2 is genuinely fixed.** With the owner watching the touchscreen, from a
+sub-menu, driven against v12 running from flash:
+
+```
+cmd 1125  -> consoleMode incremented   (the state that kills Back/Home on stock)
+cmd 502   -> BACK
+cmd 503   -> HOME    ==> THE PANEL RETURNED TO THE HOME SCREEN
+```
+
+Owner's words: *"it went back to home screen."*
+
+That is the decisive observation. On stock firmware, once 1125 has incremented
+`consoleMode` — which the shipped web UI does on every keypad page load, and
+never decrements — both handlers discard the command silently and permanently,
+until Barracuda restarts. The screen moving proves the command reached the panel.
+
+**Scope, stated precisely:** HOME (P12) was observed directly. BACK (P11) was
+sent in the same run but its effect was not separately reported. P11 is the
+identical one-instruction change in the sibling handler at an adjacent address,
+verified byte for byte, so it is strongly implied — but *implied* is the honest
+word, and it is not the same as observed.
+
+The earlier failed attempt is kept as a caution: trying to confirm this from the
+push stream produced `0:18:` frames that looked like success and were the 33 s
+heartbeat, 32.98 s apart. The stream cannot see touchscreen navigation.
 
 ---
 

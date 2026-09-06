@@ -418,14 +418,20 @@ the live binary, patching off-panel, and pushing it back: exactly 8 bytes differ
 size identical, md5 verified on both ends. `Barracuda.orig` holds the
 pre-patch binary. `verify-panel.sh` checks both sites.
 
-**Verified structurally, NOT end-to-end.** The bytes are confirmed on the running
-binary and the mechanism is fully traced, but no test proved a Back press now
-reaches the panel. An attempt to demonstrate it looked like it worked and did
-not: `0:18:` frames arrived after the HOME and BACK commands, but they were
-**32.98 s apart — the documented 33 s heartbeat**, so they were cadence, not
-causation. HOME and BACK navigate the *touchscreen* UI, which the push stream
-does not carry, so confirming this properly means watching the panel screen while
-driving the web keypad.
+**VERIFIED END-TO-END 2026-09-06**, on v12 running from flash, with the owner
+watching the touchscreen. From a sub-menu: `cmd 1125` to increment `consoleMode`
+(the state that kills both buttons on stock), then `cmd 503` HOME — **the panel
+returned to the Home screen.** Owner: *"it went back to home screen."*
+
+HOME (P12) observed directly. BACK (P11) was sent in the same run but its effect
+was not separately reported; it is the identical one-instruction change in the
+sibling handler and is verified byte for byte, so it is implied rather than
+observed.
+
+An earlier attempt to confirm this from the push stream failed instructively:
+`0:18:` frames arrived after the commands and looked like success, but were
+**32.98 s apart — the 33 s heartbeat**. Cadence, not causation. The stream does
+not carry touchscreen navigation, so only the screen itself can settle it.
 
 ### a-3. Web-facing partition-status poller is **dead code** — **SEVERITY: MEDIUM · CONFIRMED**
 
