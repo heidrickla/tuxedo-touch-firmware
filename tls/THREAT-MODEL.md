@@ -80,18 +80,44 @@ way: a client misconfigured to plain HTTP authenticates successfully, then
 silently fails every command, because the session is real and the API redirect is
 not followed. It looks like a working integration that cannot arm.
 
-### 6. Three failed web logins disable every web account, permanently
+### 6. Failed logins: FIXED on this panel by P1, still present on stock
 
-The on-disk failure count survives a reflash. There is a self-clearing in-memory
-lockout (5 attempts, 300 s — `resetLoginFailureCount`, reached through the
-LoginTracker `Validate` vtable thunk), but the on-disk `WEBUSERS status=0` path
-shows no expiry. **A LAN attacker can therefore lock the owner out of the web
-interface with three requests and no credentials.** TLS does not help; the
-requests are well-formed.
+**Corrected 2026-09-06.** An earlier version of this section said three failed
+logins permanently disable every web account on this unit. That describes
+**stock** firmware. This panel runs P1, which removes it.
 
-This is why no tooling in this repository may submit a deliberately wrong
-password, and why the conformance suite excludes that path by construction
-rather than by discipline.
+Stock `updateLoginFailureCount` does two things on the third failure:
+
+```
+cmp r0, #3
+bne  0x155fc                     ; not the 3rd -> skip ahead
+       json_new_i("accountLocked", 1)
+0x155fc  <- P1 site; stock FALLS THROUGH into:
+       json_new_i("status", 0)   ; the permanent disable
+0x15624  cmp r5, #5
+```
+
+`status` is read by `readUserNamePasswordFromJSON` — the login path — so
+`status = 0` is what actually disables the account, and it survives a reflash.
+
+**P1 replaces the fall-through at `0x155fc` with `b 0x15624`**, which skips the
+`status = 0` write on *both* branches. So on a patched panel accounts are never
+permanently disabled. `accountLocked = 1` is still written on the third failure,
+but it is cleared by `resetLoginFailureCount` — the in-memory path that expires
+after 300 s — and the login gate reads `status`, not `accountLocked`.
+
+**What remains, and it is much smaller:** five failures still trip the in-memory
+lockout for 300 s. That is a temporary denial of service against the web
+interface by an unauthenticated LAN client, not a permanent lockout, and it
+clears itself. Worth bounding by source address eventually; not urgent.
+
+**On stock firmware the original claim stands in full**, which matters for anyone
+reading this repo who has not applied P1.
+
+Tooling in this repository still must not submit a deliberately wrong password —
+the conformance suite excludes that path by construction rather than by
+discipline — because the repo targets stock panels too, and because a 300 s
+self-inflicted outage during a test is pointless.
 
 ### 7. `supervis` has a root-command primitive on a message queue
 
@@ -121,6 +147,7 @@ Barracuda replacement.
 Priority order, if the list is ever worked:
 
 1. §3 authenticate the push stream — costs the known consumer nothing
-2. §6 make the on-disk lockout expire, or bound it by source address
+2. §6 bound the remaining 300 s in-memory lockout by source address — the
+   permanent on-disk one is already fixed by P1
 3. §5 refuse plaintext login, so a misconfigured client fails loudly at the door
 4. §4 falls out of §3
