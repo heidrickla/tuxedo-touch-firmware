@@ -151,3 +151,43 @@ for `nandwrite`. `CONFIG_LFS=y` is required because musl is always 64-bit
 Building from `allnoconfig` with an explicit applet list produced a binary with
 an **empty applet table** that failed even through symlinks. Use `defconfig` and
 subtract.
+
+## syslog running on the panel, and what it immediately showed
+
+Installed and started on the hardware 2026-09-06, ahead of the v10 flash, using
+the **vendor's own `/etc/rc.d/init.d/syslog` unmodified**. It printed
+`Starting syslogd and klogd` and both daemons came up. That is the claim that
+mattered: supplying `/sbin/syslogd` and `/sbin/klogd` as busybox symlinks is
+enough, and no vendor script needed changing.
+
+`dropbear` now logs normally, so the `-E` workaround is no longer required:
+
+    authpriv.warn dropbear[506]: Failed loading /etc/dropbear/dropbear_ecdsa_host_key
+    authpriv.info dropbear[511]: Running in background
+
+### Three things that were invisible before
+
+Ranked by frequency in the first minutes of logging:
+
+| Count | Message |
+|---|---|
+| 10 | `SIGNAL in KERNEL <n> for Process <n> Process Name bonj_client` |
+| 5 | `nand_read_bbt: Bad block at 0x...` |
+| 3 | `JFFS2 warning: jffs2_sum_write_data: Not enough space for summary, padsize = -N` |
+
+**`bonj_client` is the noisiest process on the panel.** That is the Bonjour
+discovery client, part of the camera subsystem. The owner has no cameras on this
+panel, and `IPCAMERAS` currently holds two printers it found. Turning the four
+discovery flags off would remove the most frequent log source on the device
+along with the LAN probing.
+
+**Five NAND bad blocks** are reported at boot. That is unremarkable for NAND of
+this age and this is the first time it has been visible; it is worth having as a
+baseline to compare against later.
+
+The JFFS2 summary warning is benign but recurring, on a rootfs at 70% (125 MB of
+180 MB).
+
+Kernel messages also confirmed the `peek` tool behaving correctly:
+`SIGNAL in KERNEL 19 for Process 907 Process Name tuxedo` is the `SIGSTOP` that
+`PTRACE_ATTACH` sends, appearing exactly when it was run.
