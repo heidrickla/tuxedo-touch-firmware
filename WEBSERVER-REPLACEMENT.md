@@ -1275,9 +1275,36 @@ one should expect:
 
 `sltSendUserCodeAcceptedMsg` and `sltSendUserCodeDeclinedMsg` are the
 `VALID USER CODE` / `USER CODE DECLINED` path this document already argues a
-client should wait on instead of guessing whether a command took effect. Their
-msgTypes are **not yet known**, and resolving them is worth more than extending
-the constant scan.
+client should wait on instead of guessing whether a command took effect.
+
+**Why they are unresolvable by any constant scan, established rather than
+assumed.** These functions build the message at **`sp+4`**, not `sp` —
+`add r5, sp, #4` then `add r4, r5, #0xe` for the text field — so the type lands
+at `[sp,#8]`, and `[sp,#4]` that the earlier scan read is the *sessionId*. Worse
+for static analysis, the type is not a literal at all:
+
+```
+0x13c414  ldr lr, [r0, r3]      r3 is a GOT offset; lr <- an OBJECT FIELD
+...
+0x13c460  str lr, [sp, #8]      that field IS the msgType
+```
+
+`sltSendUserCodeDeclinedMsg` does the same with `ip`. So the msgType for these
+messages is **read from a field of the `CReceiverThread` object**, not baked
+into the instruction stream. No amount of constant tracking will recover it; it
+needs the field's initialiser or a runtime observation.
+
+**And runtime observation is half-blocked.** The accepted path fires on every
+successful disarm, but §"Captured live" above already records that **no
+`VALID USER CODE` frame appeared** during a full arm/disarm cycle — consistent
+with these being among the dropped types. The declined path would need a
+deliberately wrong code, which the tooling excludes by construction, so it
+cannot be observed at all.
+
+This also explains the 55 senders with no `[sp,#4]` store: **the struct base is
+per-function**. Any future sweep must locate the base from the
+`add rB, sp, #N` / `add rT, rB, #0xe` idiom and read `[sp, #N+4]`, rather than
+assuming the message sits at the stack pointer.
 
 So the replacement gains **three** capabilities the vendor stack cannot deliver
 at all, and none requires a panel-side change — all three messages already
