@@ -1061,25 +1061,33 @@ chain and not a jump table. Cases come in two shapes, and reading only the first
 undercounts by a third: `cmp r8,#N; beq handler`, and the inverted
 `cmp r8,#N; bne skip; b handler`. Taking both gives **40 cases**.
 
-| msgType | handler | frame format |
-|---|---|---|
-| 1 | `0xdc78` | `%d%s%d%s%d%s%d%s%d%s%s` |
-| 2 | `0xe144` | `%d%s%d%s%d%s%d%s%d%s%s` |
-| 21 | `0xda80` | `%d%s%d%s%d%s%x%s%s%s%d` |
-| 22 | `0xd9b8` | `%d%s%d%s%s%s%d` |
-| 103 | `0xd8d0` | `%d%s%d%s%s%s%d` |
-| 109 | `0xd910` | `%d%s%d%s%s%s%d` |
-| 111 | `0xd954` | `%d%s%d%s%s%s%d` |
-| 147 | `0xd978` | `%d%s%d%s%s%s%d` |
-| 154 | `0xd7f8` | `%d%s%d%s%s` |
+**Only two handlers emit frames synchronously**, established by walking each
+handler to its real exit (`b 0x105c4`) and counting `bl bprintf` actually
+reached:
 
-**That 9 is a lower bound, not a total.** The scan looks a bounded distance from
-each handler entry, and the idle capture contains `0:18:...` and `0:504:...`
-frames — so msgTypes 18 and 504 demonstrably format frames whose format load
-sits further from the entry than the window reached. The other 29 — 3, 4, 5, 6,
-7, 8, 9, 19, 25, 26, 27, 29, 51, 55, 56, 59, 61, 62, 104, 105, 112, 125, 130,
-132, 133, 160, 161, 162, 716 — were not observed formatting, which is not the
-same as proof that they do not.
+| msgType | handler | bprintf calls | formats |
+|---|---|---|---|
+| 21 | `0xda80` | 4 | `%d%s%d%s%d%s%x%s%s%s%d` then 3x `%d%s%d%s%s` |
+| 22 | `0xd9b8` | 3 | `%d%s%d%s%s%s%d` then 2x `%d%s%d%s%s` |
+
+**An earlier version of this table listed nine, and seven of them were wrong.**
+1, 2, 103, 109, 111, 147 and 154 emit nothing. They `malloc(0xc)`, read a byte
+at **`reply+0x92`** and a halfword from a global table, and `pthread_create`.
+The false entries came from a scan that looked a fixed distance past each
+handler entry and picked up the format string belonging to the *next* handler —
+these handlers sit 0x20–0x40 bytes apart, so an unbounded window is guaranteed
+to cross into a neighbour. Bound the walk at the exit branch.
+
+**So frames are not produced only on the dispatch thread.** The capture contains
+`0:18:...` and `0:504:...` frames, yet neither handler calls `bprintf`. Those
+handlers are among the ones that spawn a worker, so the reply → frame path is
+partly **asynchronous**. A reimplementation cannot assume one reply produces its
+frames inline before the next reply is read. This is a real architectural
+constraint and it was found by the corpus disagreeing with the disassembly.
+
+The remaining msgTypes — 3, 4, 5, 6, 7, 8, 9, 19, 25, 26, 27, 29, 51, 55, 56,
+59, 61, 62, 104, 105, 112, 125, 130, 132, 133, 160, 161, 162, 716 — have not
+been characterised.
 
 #### The frame grammar, and two msgTypes decoded end to end
 
@@ -1115,12 +1123,14 @@ times per status in the capture. §2.5's "3-4x `-1` filler frames" is therefore
 not a transport quirk to imitate blindly — it is a deliberate repeat emitted by
 the status handler itself.
 
-**msgType 22:** `%d%s%d%s%s%s%d` = `sessionId : msgType : text : arg`, then the
-same three fillers.
+**msgType 22:** `%d%s%d%s%s%s%d` = `sessionId : msgType : text : arg`, then two
+fillers.
 
-The handlers sharing those format strings — 103, 109, 111, 147 and 154 — are
-**presumed** to share msgType 22's argument order. That is inference from a
-shared format string, not measurement, and confirming it is the next step.
+Those two are the whole synchronous frame path. Everything else observed on the
+wire — `0:18:`, `0:504:` — comes from a worker thread, which is the next thing
+to follow: `pthread_create` is called with a 12-byte argument holding
+`reply+0x92`, a halfword from a global table, and a discriminator byte at
+offset 8 (`mvn ip,#0x6c` = -109 for msgType 147, `r8` itself for 109/111).
 
 Four handlers serve two msgTypes each: `0xf234` (25, 51), `0x10274` (26, 27),
 `0x10428` (104, 105), `0x10484` (132, 133).

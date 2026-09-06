@@ -36,6 +36,16 @@ and left sitting there saying the opposite of the truth.
   press are the 33 s heartbeat. If the instrument cannot see the effect, a
   clean result is not evidence.
 - **One clean run is not a result.** Say what rests on a single observation.
+- **Bound a disassembly walk at the function's real exit, never at a fixed
+  distance.** Handlers here sit 0x20–0x40 bytes apart, so a fixed window is
+  *guaranteed* to run into the next one and attribute its constants to the
+  wrong case. This produced a published table of nine frame formatters of which
+  **seven were wrong** — those handlers emit nothing, they `pthread_create`.
+  Follow to the exit branch and count only what is actually reached.
+- **When a capture disagrees with the disassembly, the capture is right and the
+  disassembly is incomplete.** The corpus held `0:18:` and `0:504:` frames whose
+  handlers never call `bprintf`; that is what revealed the frame path is partly
+  asynchronous. Reconcile the two rather than trusting the static read.
 - **A doc's open-items list is a claim, not a fact.** `THREAT-MODEL.md` carried
   "bound the 300 s lockout by source address" as open; the tracker was already a
   splay tree keyed on address (`LoginTracker_splayTreeCmpAddr`). I re-raised it
