@@ -425,4 +425,45 @@ tied to setup and the ECP link, not a UI mode a client can request.
 
 Which means the web console cannot be made to work by sending the right request.
 It is gated on a state the alarm panel dictates, and the next question is which
-panel states produce 1, 2 or 3 — a question about the VISTA, not the keypad.
+panel states produce 1, 2 or 3.
+
+## REOPENED 2026-09-05: the mode is written by `tuxedo` itself, and 1 is safe mode
+
+The paragraph above says the mode is "a panel-supplied state ... not a UI mode a
+client can request", on the grounds that there is no `SetOperationMode` symbol.
+That was true of the *symbol name* and false of the behaviour. Re-checked after
+`tuxelf.py` was fixed to count tail calls.
+
+The mode byte `0xd96ea4` is offset `0x6c` from the struct base `0xd96e38`, so
+every `strb ... [rN, #0x6c]` against that base writes it. There are four:
+
+| site | writes | when |
+|---|---|---|
+| `main` @`0x34630` | `0` | mode read back `> 3` — an out-of-range clamp |
+| `main` @`0x34ba4` | `1` | counter at base`+0x28` increments past 2 |
+| `CHomeScreen::sltHandleSafeModePress` @`0x56050` | `r6` | Safe Mode button; also writes `r6` to base`+0x28` |
+| `persistent::sltRestartInSafemode` @`0x8c3e0` | `1` | after `apl_writeCurrentDateTimetoConfFile` |
+
+So base`+0x28` is a counter and base`+0x6c` is the mode: `main` sets the mode to
+**1** once that counter passes 2, and `sltHandleSafeModePress` resets both.
+`sltRestartInSafemode` sets the mode to **1** directly.
+
+Both safe-mode functions are **live connected slots** — each has its class's
+`qt_static_metacall` as a caller. This matters twice over: it is what makes them
+reachable, and under the old BL-only caller scan they would have shown zero
+callers and read as dead code, which would have made this closure look even
+firmer than it already did.
+
+**Mode 1 appears to be safe mode, and console mode is gated on 1, 2 or 3.** If
+the gate reading earlier in this document is right, then console mode is a
+service feature that works in safe mode and is suppressed in normal operation.
+That fits the wider pattern of vendor dev tools left in place but disabled
+(NEUTERED-TOOLS.md).
+
+**Not tested, and deliberately so.** Entering safe mode restarts the panel into
+a degraded state on a live alarm system. That is the owner's call, not a test to
+run unprompted. What is established here is only that the mode has in-process
+writers and that two of them are reachable slots; that mode 1 == safe mode is
+read from the function names and the restart path, not confirmed by observation.
+
+Modes 2 and 3 remain unaccounted for. No writer of either was found.
