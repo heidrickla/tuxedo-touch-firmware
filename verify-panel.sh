@@ -48,6 +48,30 @@ echo "listeners"
 $SSH 'netstat -ltn 2>/dev/null' 2>/dev/null | awk '/LISTEN/{print "  "$4}' | sort
 
 echo
+echo "services"
+SYS=$($SSH 'ps | grep -c "[s]yslogd\|[k]logd"' 2>/dev/null)
+[ "${SYS:-0}" -ge 2 ] && pass "syslogd and klogd running" || fail "syslogd and klogd running" "found ${SYS:-0} of 2"
+BB=$($SSH 'ls -l /bin/busybox 2>/dev/null | tr -s " " | cut -d" " -f5' 2>/dev/null)
+[ -n "$BB" ] && pass "busybox present ($BB bytes)" || fail "busybox present" "missing"
+AWK=$($SSH 'echo "a b c" | /usr/local/bin/awk "{print \$2}" 2>/dev/null' 2>/dev/null)
+[ "$AWK" = "b" ] && pass "busybox applets work" || fail "busybox applets work" "awk returned [$AWK]"
+
+echo
+echo "NAND"
+BAD=$($SSH 'grep -c "Bad block at" /var/log/messages 2>/dev/null' 2>/dev/null)
+if [ -z "$BAD" ] || [ "$BAD" = "0" ]; then
+    skip "NAND bad blocks" "no kernel log yet, syslog may have just started"
+elif [ "$BAD" -le 9 ]; then
+    pass "NAND bad blocks: $BAD (baseline 9)"
+else
+    fail "NAND bad blocks: $BAD" "baseline was 9; a rising count means the flash is degrading"
+fi
+
+echo
+echo "SD card, so images can be pushed without moving it"
+$SSH 'grep -q " /mnt/sd " /proc/mounts' && pass "card mounted rw at /mnt/sd"     || fail "card mounted at /mnt/sd" "push-image.sh cannot work without it"
+
+echo
 echo "/etc/hosts, entries only"
 BAD=$($SSH 'grep -vE "^[[:space:]]*#" /etc/hosts 2>/dev/null | grep -vE "^[[:space:]]*$"' 2>/dev/null \
       | grep -vE '^[[:space:]]*[0-9a-fA-F:.]+([[:space:]]+[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)+[[:space:]]*$')
