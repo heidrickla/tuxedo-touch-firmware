@@ -138,10 +138,19 @@ permanently disabled. `accountLocked = 1` is still written on the third failure,
 but it is cleared by `resetLoginFailureCount` — the in-memory path that expires
 after 300 s — and the login gate reads `status`, not `accountLocked`.
 
-**What remains, and it is much smaller:** five failures still trip the in-memory
-lockout for 300 s. That is a temporary denial of service against the web
-interface by an unauthenticated LAN client, not a permanent lockout, and it
-clears itself. Worth bounding by source address eventually; not urgent.
+**What remains, and it is much smaller:** five failures trip an in-memory
+lockout for 300 s, and **it is already per source address** — this was recorded
+as an open item three times before anyone read the code.
+
+`LoginTrackerIntf_Validate_func` tail-calls the P1 stub with a
+`LoginTrackerNode*`, and the tracker is a splay tree whose comparator is
+`LoginTracker_splayTreeCmpAddr` — keyed on the client address, looked up by
+`LoginTracker_find`. The count at node `+0x30` and the lockout timestamp at
+`+0x28` are therefore per address, so one attacker's five failures cannot lock
+anybody else out.
+
+Nothing to do here. It self-clears after 300 s (`cmp r0, #0x12c`) and affects
+only the address that tripped it.
 
 **On stock firmware the original claim stands in full**, which matters for anyone
 reading this repo who has not applied P1.
@@ -183,6 +192,9 @@ Priority order, with what has shipped struck out:
    stream across the change. It did not wait for the Barracuda replacement.
 2. ~~§4 the camera scan broadcasting the LAN inventory~~ — **closed by the above**,
    as predicted: it rode the same stream, so the same gate covers it.
-3. §6 bound the remaining 300 s in-memory lockout by source address — the
-   permanent on-disk one is already fixed by P1. **Now the top open item.**
+3. ~~§6 bound the remaining 300 s in-memory lockout by source address~~ —
+   **already done, and always was.** P1 removed the permanent on-disk lockout,
+   and the residual 300 s one is per source address by construction. Verified in
+   the binary, not inferred. **Do not raise this again.**
 4. §5 refuse plaintext login, so a misconfigured client fails loudly at the door
+   — **now the top open item.**
