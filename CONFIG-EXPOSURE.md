@@ -225,3 +225,17 @@ Fixed three ways: the command now goes as an ssh argument with the bytes on
 stdin, the exit status is checked and raises, and after pushing, `deploy.py`
 re-reads every file it wrote and compares md5 before claiming success. A deploy
 tool that can silently do nothing is worse than no deploy tool.
+
+### The card was the last gap
+
+The panel ran v11 from an SSH deploy while `/mnt/sd/app2.hdr` still held v10, so
+any reflash would have silently reverted both patches. Pushed the v11 image to
+the card as well, md5 `6e1dabdd62097905069309dcead6642c`, verified on the panel,
+125 MB in 66 s.
+
+Running rootfs and card image now agree: `deploy.py` reports every tracked path
+matching. The next reboot will apply the card image, which is a no-op in effect
+but leaves the flash state consistent with what is running.
+
+Worth remembering as a habit: an SSH deploy changes the running system, not what
+a reflash restores. The two have to be kept in step deliberately.
