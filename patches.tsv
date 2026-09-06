@@ -11,12 +11,15 @@
 # OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda the two differ
 # by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four bytes.
 #
-# INCOMPLETE FOR P1/P2 -- see below. This table does NOT fully describe v12.
+# COMPLETE as of 2026-09-06: applying every row to a genuine stock Barracuda
+# (324209e1fdfe2d61925a1bb4a7115452) reproduces the v12 binary
+# (c8971027bb9f77801d01713b4ae50b2f) byte for byte. Verified, not assumed.
 #
-# MEASURED 2026-09-06: applying every row below to a genuine stock Barracuda
-# (324209e1fdfe2d61925a1bb4a7115452) produces d001c15b7fbfc01d34973a33e6c3bd45,
-# NOT the v12 binary c8971027bb9f77801d01713b4ae50b2f. 119 bytes across 16 runs
-# are unaccounted for:
+# It was NOT complete before. The three P1a/P1b/P1c rows below were written by
+# hand years before this table existed and were unrecorded, so the 4-byte P1/P2
+# rows described only the branch INTO the lockout stub, not the stub itself:
+#
+# 119 bytes across 16 runs were missing:
 #
 #   VA 0x13a68, 0x13a7c   two bl sites NOP'd to 00 00 a0 e1   (8 bytes)
 #   VA 0x15074-0x150ef    resetLoginFailureCount replaced by a hand-written
@@ -26,13 +29,15 @@
 # the 4-byte rows for P1 and P2 record only the branch INTO the stub, not the
 # stub itself.
 #
-# Consequence: build-image.sh reproduces v12 only because it starts from the v11
-# payload, which already contains those bytes. It could NOT rebuild v12 from
-# stock. Recording the stub bytes here is the fix; until then, keep the v11
-# payload and the built images, because they are the only complete record.
+# Until they were recorded, build-image.sh reproduced v12 only because it starts
+# from the v11 payload that already contained them; it could not have rebuilt v12
+# from stock. It can now.
 #
 # name<TAB>binary<TAB>file_offset<TAB>stock<TAB>patched<TAB>description
 P1-lockout	/opt/webserver/Barracuda	0xd5fc	30119fe5	080000ea	3-strikes-permanent lockout becomes 5 attempts with a 300 s self-clearing lock
+P1a-lockout-nop1	/opt/webserver/Barracuda	0xba68	714501eb	0000a0e1	P1 lockout: NOPs a stock bl
+P1b-lockout-nop2	/opt/webserver/Barracuda	0xba7c	6c4501eb	0000a0e1	P1 lockout: NOPs a stock bl
+P1c-lockout-stub	/opt/webserver/Barracuda	0xd074	0dc0a0e1f0df2de904b04ce214d04de2c4429fe5c4129fe530000be5102094e5bc029fe5097900eb103094e5030050e10100000a100084e5e77600eba0029fe5a0129fe575dcffeb009050e2a000000a0010a0e30220a0e32adaffeb004050e28a00001a0900a0e14cdbffeb005050e28600000a0e3085e20780c3e3	10402de9004052e20100a0031080bd08283094e5000053e30b00000a0000a0e34edcffeb283094e5030040e04b0f50e30000a0331080bd380030a0e3283084e5303084e50100a0e31080bde8303094e5050053e30100a0331080bd380000a0e33edcffeb000050e30100a0031080bd08280084e50000a0e31080bde8	P1 lockout: the hand-written lockout stub
 P2-validate-hook	/opt/webserver/Barracuda	0xbaf0	090091e8	5f0500ea	login tracker validate hook
 P6-heap-off-by-1	/opt/webserver/Barracuda	0x5cef0	38c04ce2	0000a0e1	56-byte heap overflow in the login tracker
 P8-config-unpub	/opt/webserver/Barracuda	0xc934	dc6701eb	0000a0e1	stop binding the config partition to a URL under /Config
