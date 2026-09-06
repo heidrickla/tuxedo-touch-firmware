@@ -61,9 +61,29 @@ signal in it, and today it is readable by anything on the LAN. TLS does not
 change this: the plaintext port is still there, and the stream does not
 authenticate on any port.
 
+Baseline measured 2026-09-06 with `test-stream-auth.py`, which quantifies it
+rather than asserting it:
+
+```
+anonymous port 80    EXPOSED  17 frames, 8 carrying alarm state
+anonymous port 6280  EXPOSED   9 frames, 4 carrying alarm state
+authenticated  :80   OK        9 frames
+panel web UI         OK        HTTP 200
+```
+
 The replacement is designed to require the session cookie on this path, and the
 consumer (`ha-tuxedo-touch`) already sends one, so closing it costs nothing.
-**Until the replacement ships, this is open.**
+
+**One fix covers all four ports.** `HttpServer_constructor` has exactly one
+caller, and `initAndInstallServlet` is handed the same server object every other
+directory insertion in `installVirtualDir` uses — so ports 80, 443, 6280 and 9443
+are four listeners (`HttpServCon` x2, `HttpSharkSslServCon` x2, all built in
+`openSocketCon`) sharing **one** `HttpServer` and therefore one directory tree.
+There is likewise only one EhDir object, at `0x55b59c`. So authenticating the
+push stream is a single change at the directory, not a per-port exercise, and a
+fix that appeared to work on port 80 alone would be a sign something was wrong.
+
+**Until that ships, this is open.**
 
 ### 4. The camera scan broadcasts the LAN inventory
 
