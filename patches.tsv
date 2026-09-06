@@ -11,6 +11,26 @@
 # OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda the two differ
 # by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four bytes.
 #
+# INCOMPLETE FOR P1/P2 -- see below. This table does NOT fully describe v12.
+#
+# MEASURED 2026-09-06: applying every row below to a genuine stock Barracuda
+# (324209e1fdfe2d61925a1bb4a7115452) produces d001c15b7fbfc01d34973a33e6c3bd45,
+# NOT the v12 binary c8971027bb9f77801d01713b4ae50b2f. 119 bytes across 16 runs
+# are unaccounted for:
+#
+#   VA 0x13a68, 0x13a7c   two bl sites NOP'd to 00 00 a0 e1   (8 bytes)
+#   VA 0x15074-0x150ef    resetLoginFailureCount replaced by a hand-written
+#                         lockout stub                        (~124 bytes)
+#
+# Those belong to P1/P2 and were written by hand before this table existed, so
+# the 4-byte rows for P1 and P2 record only the branch INTO the stub, not the
+# stub itself.
+#
+# Consequence: build-image.sh reproduces v12 only because it starts from the v11
+# payload, which already contains those bytes. It could NOT rebuild v12 from
+# stock. Recording the stub bytes here is the fix; until then, keep the v11
+# payload and the built images, because they are the only complete record.
+#
 # name<TAB>binary<TAB>file_offset<TAB>stock<TAB>patched<TAB>description
 P1-lockout	/opt/webserver/Barracuda	0xd5fc	30119fe5	080000ea	3-strikes-permanent lockout becomes 5 attempts with a 300 s self-clearing lock
 P2-validate-hook	/opt/webserver/Barracuda	0xbaf0	090091e8	5f0500ea	login tracker validate hook

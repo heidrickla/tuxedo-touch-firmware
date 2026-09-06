@@ -373,15 +373,33 @@ It does **not** validate this patch. The change is in a userspace ELF on the app
 **Structural, not exhaustive:**
 
 8. ~~**`node+0x28` is proven unread structurally, not exhaustively.**~~ **REFUTED
-   2026-09-05 — see "The in-memory lockout expires" below.** `node+0x28` is
-   read, and the structural argument failed for a specific and repeatable
-   reason: it enumerated "the four vtable callbacks", but each of those is a
-   4-byte thunk that reaches its real body with a tail-call `b`. Stopping at
-   the thunk hides the body. [REFUTED]
+   2026-09-05, then that refutation was itself WITHDRAWN 2026-09-06.**
 
-## The in-memory lockout expires after 300 seconds
+   The "refutation" read `resetLoginFailureCount` @`0x15074` out of a PATCHED
+   Barracuda and described what it found as vendor behaviour. That function is
+   **our own P1 lockout stub**, which this project wrote. Reading our patch and
+   calling it a discovery about stock is not a refutation of anything.
 
-Established 2026-09-05, after `tuxelf.py` was fixed to count tail calls.
+   The original claim was about STOCK, where `0x15074` is an entirely different
+   function — `validateCRCFileOnFileRead` / `fopen` / `writeCRCJSONFile`, the
+   on-disk JSON path. Whether stock reads `node+0x28` is therefore **still
+   open**, exactly as item 8 first said. [ORIGINAL CLAIM STANDS, unverified]
+
+   The one part worth keeping: the tail-call-through-thunk observation is real
+   and the tooling fix it prompted was correct. It just does not license the
+   conclusion that was drawn from it.
+
+## What P1 actually implements (OUR code, not the vendor's)
+
+**Corrected 2026-09-06.** This section previously read as a discovery about the
+vendor. It is not: `resetLoginFailureCount` @`0x15074` in a patched build is the
+~124-byte stub P1 installs, and the two `bl` sites at `0x13a68` and `0x13a7c`
+are NOP'd by the same patch. Stock's function at that address is the on-disk
+JSON path and looks nothing like this.
+
+So what follows describes **the behaviour we built**, which is worth documenting
+precisely — it is what the panel does now — but it says nothing about what
+Honeywell shipped.
 
 `barracuda` calls `installVirtualDir` @`0x14598`, which builds the LoginTracker
 interface vtable at `0x14758`-`0x1477c`:
