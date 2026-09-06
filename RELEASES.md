@@ -72,6 +72,24 @@ Built on the Ubuntu VM rather than WSL, at the owner's direction.
 5. **Patch sites re-checked in the round-tripped tree:** 8 of 8 patched.
 6. **Header verified as ProgCV validates it:** size and checksum both PASS.
 
+### Flashed 2026-09-06
+
+Staged to `/mnt/sd/app2.hdr` (md5 re-verified on the panel), then rebooted.
+**ProgCV flashed it in about 100 seconds** — much faster than expected for a
+125 MB image, but the result is unambiguous: the panel came up reporting
+`BUILD=v12` with `BUILT=2026-09-06T14:50:09Z`, and both patched binaries present
+(`tuxedo 98370c31`, `Barracuda c8971027`).
+
+**A flash removes anything added over SSH.** The `.orig` backups created before
+patching (`/tuxedo.orig`, `/opt/webserver/Barracuda.orig`) are gone, because the
+flash replaces the whole rootfs rather than merging into it. That is the correct
+behaviour and the reason v12 exists at all — but it means any file placed with
+`deploy.py`, and any backup taken alongside a live patch, is temporary until it
+is in an image. Take pre-patch copies off-panel if they need to survive.
+
+The partition-level baseline in `RECOVERY-BACKUP.md` is unaffected: it lives on
+the workstation, not the panel.
+
 ### Not verified
 
 **P11/P12 are confirmed structurally, not end-to-end.** The bytes are right and
