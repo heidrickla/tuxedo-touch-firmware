@@ -402,6 +402,31 @@ Global `consoleMode` @0x55b7d8, three accessors, no other references image-wide:
 
 **Fix — and this one Lewis can do today:** send `Type=1126` once per keypad visit from your own client to drive the counter back to 0. One-line web-app fix: restore the commented-out `onunload goBack(1)`.
 
+**FIXED IN FIRMWARE 2026-09-06 — P11 and P12.** Both gates neutered rather than
+worked around. Each handler opened with `bl getConsoleMode / cmp r0,#0 / bne
+<drop>`; the `bne` is now a no-op, so Back and Home are forwarded regardless of
+the counter.
+
+| patch | handler | file offset | stock | patched |
+|---|---|---|---|---|
+| P11 | Type=502 BACK, VA `0x3b3b4` | `0x333b4` | `a0 0c 00 1a` | `00 00 a0 e1` |
+| P12 | Type=503 HOME, VA `0x3b3f4` | `0x333f4` | `90 0c 00 1a` | `00 00 a0 e1` |
+
+`mov r0, r0` sets no flags, and `r0` is dead two instructions later
+(`ldr r1,[pc,..]` then `mov r0, r8`), so nothing else changes. Applied by pulling
+the live binary, patching off-panel, and pushing it back: exactly 8 bytes differ,
+size identical, md5 verified on both ends. `Barracuda.orig` holds the
+pre-patch binary. `verify-panel.sh` checks both sites.
+
+**Verified structurally, NOT end-to-end.** The bytes are confirmed on the running
+binary and the mechanism is fully traced, but no test proved a Back press now
+reaches the panel. An attempt to demonstrate it looked like it worked and did
+not: `0:18:` frames arrived after the HOME and BACK commands, but they were
+**32.98 s apart — the documented 33 s heartbeat**, so they were cadence, not
+causation. HOME and BACK navigate the *touchscreen* UI, which the push stream
+does not carry, so confirming this properly means watching the panel screen while
+driving the web keypad.
+
 ### a-3. Web-facing partition-status poller is **dead code** — **SEVERITY: MEDIUM · CONFIRMED**
 
 `CReceiverThread::getPartitionDetails(char*)` @0x140480 is the only place that creates the poll timer (`new CTimer2(0x61)` @0x140510), connects `sigWebStatusReq()` → `sltPartitionDetailReqTimeout()`, sets 2000 ms, starts it, and tail-jumps into the slot. **A whole-image scan of every PT_LOAD segment for any B/BL targeting 0x140480 and for any data word equal to 0x140480 returns nothing.** The SIGNAL/SLOT literals @0x5daa58 and @0x5daa6c are referenced exactly once each — inside that same dead function. The only other occurrence of the slot name is the moc metaobject table, which dispatches by index.

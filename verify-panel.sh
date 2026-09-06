@@ -18,12 +18,17 @@ FAIL=0
 pass() { printf '  ok   %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1"; [ -n "${2:-}" ] && printf '       %s\n' "$2"; FAIL=1; }
 
-# name            hex offset  stock bytes      patched bytes
+# name            FILE offset stock bytes      patched bytes
+# NOTE: these are FILE offsets, not virtual addresses. For Barracuda the
+# two differ by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA here reads
+# the wrong four bytes and reports 'unexpected bytes'.
 PATCHES="
 P1-lockout        0xd5fc      30119fe5         080000ea
 P2-validate-hook  0xbaf0      090091e8         5f0500ea
 P6-heap-off-by-1  0x5cef0     38c04ce2         0000a0e1
 P8-config-unpub   0xc934      dc6701eb         0000a0e1
+P11-back-gate     0x333b4     a00c001a         0000a0e1
+P12-home-gate     0x333f4     900c001a         0000a0e1
 "
 
 # Patches in binaries other than Barracuda. These were applied but not checked
