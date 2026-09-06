@@ -354,7 +354,37 @@ frame has been observed** on the push stream, with or without a preceding
 keystroke.
 
 Since the queue is shared and the frame would be visible if sent, the function is
-returning before `osal_MqSend`. The untested gate is the middle one:
-`GetOperationMode()` and `GetCurrentArmingState()`. Both are named in the symbol
-table and neither has been read. That is the next thing to disassemble, and it is
-a lookup rather than a search.
+returning before `osal_MqSend`. Both remaining gates have now been read.
+
+    GetOperationMode        0x583068, 28 bytes
+        ldrsb r0, [0xd96e38 + 0x6c]        ; one signed byte, a global
+
+    GetCurrentArmingState   0x596f60, 108 bytes
+        ip = 1
+        if globalPtr == 0            -> return 1
+        if [obj + 0x65] != 0         -> return GetPartitionStateVector() & 0xff
+        ip = 0xff
+        if (operationMode - 2) > 1   -> return 0xff        ; unsigned compare
+        else                         -> GetPartitionStateVector() & 0xff
+
+So `GetCurrentArmingState` returns the bail value `0xff` **only** when the flag at
+`obj + 0x65` is clear **and** the operation mode is neither 2 nor 3. Combined with
+the `cmp r0, #1` on `GetOperationMode` in the caller, the display is produced
+whenever the operation mode is **1, 2 or 3**, and suppressed otherwise.
+
+The operation mode is one byte at `0xd96ea4`, and it gates far more than this:
+`GetOperationMode` has **68 callers**, including `main`, `CHomeScreen`,
+`CSecuScreen` and `CStatusPrompt::updateTopStatusBar`. The binary also carries the
+string `ARMING/DISARMING - Can't be done at this time. System in Stand By Mode!`,
+so at least one mode value means standby.
+
+Reading the live value needs ptrace: `/proc/<pid>/mem` on 2.6.31 refuses a plain
+read, and the panel has no debugger. So the value is not known.
+
+**The cheap way to settle it** is behavioural rather than static, and takes half a
+minute. Open Console Mode on the touchscreen (More Choices, then the console-mode
+button, which is `CMoreChoiceSr::sltHandleConsoleModeButtonPress`) and watch the
+push stream while sending command 19. If `0:20:` frames appear only while that
+screen is up, the operation mode is the gate and the web console is a mirror of
+the touchscreen screen rather than an independent client. That would also explain
+why the vendor's own page is built as an iframe beside the panel status view.
