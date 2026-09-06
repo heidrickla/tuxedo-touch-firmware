@@ -1,95 +1,96 @@
 # What is actually fixed, and where
 
-A single answer to "does the new firmware contain all the bug fixes?"
-
-**No. The built image contains one fix.** Most of what this project solved was
-solved on the client side, in Python, without changing the panel at all. That
-was deliberate for the headline bug, and incidental for the rest.
-
-Status as of 2026-09-05. Nothing has been flashed.
+Status 2026-09-06. **v10 is flashed and running.** `./verify-panel.sh` confirms
+it in one command.
 
 ---
 
-## In the built firmware image
+## Live on the panel now
 
-| Fix | Where | Status |
+| Fix | Where | Evidence |
 |---|---|---|
-| Login lockout: 3-strikes-permanent becomes 5 attempts with a 300-second self-clearing lock | `Barracuda`, 131 bytes across 6 sites | **built and verified, not flashed** |
-| 56-byte heap overflow in the login tracker | same patch | **built and verified, not flashed** |
-| A documented, discoverable place to redirect firmware updates | `/etc/hosts`, fully commented | **built and verified, not flashed** |
+| Login lockout: 3-strikes-permanent becomes 5 attempts with a 300 s self-clearing lock | `Barracuda` P1 `0xd5fc` | bytes read back from the running binary |
+| 56-byte heap overflow in the login tracker | `Barracuda` P6 `0x5cef0` | same |
+| Validate hook | `Barracuda` P2 `0xbaf0` | same |
+| **SSH** | dropbear, glibc-2.5 linked | root login, pty, `verify-panel.sh` |
+| **System logging** | busybox `syslogd`/`klogd`, vendor init script unmodified | both daemons running; dropbear logs without `-E` |
+| **15 missing tools** | busybox in `/usr/local/bin` | `awk`, `ping`, `strings`, `vi`, ... |
+| NTP client | `/bin/ntpclient` + `NTP_SERVER` | sets the clock and `rtc0` |
+| `/etc/hosts` defect we introduced in v8 | rewritten, prose moved to `hosts.ota-notes` | `verify-panel.sh` |
+| SD dev hook | `rc.local` runs `/mnt/sd/tuxedo-init.sh` | boot logs |
 
-Two files inside the root filesystem differ from stock: `/opt/webserver/Barracuda`
-and `/etc/hosts`. Details in `TUXEDO-LOCKOUT-PATCH.md`, build procedure and the
-OTA reasoning in `TUXEDO-BUILD.md`.
+**The clock is fixed at the source.** The keypad follows the VISTA-21iP; setting
+the panel's clock corrected the system time, the HTTP `Date` header and the event
+log together. The keypad's own NTP could never have held it.
 
-The heap overflow fix is not optional. The lockout change removes the two cache
-wipes that currently make the overflow rare, so shipping the lockout change
-without it would turn a rare bug into a routine one.
+**Updates no longer need the card moved.** `deploy.py` pushes file changes with
+no flash; `push-image.sh` writes a full image to `/mnt/sd` over SSH, md5-verified
+on the panel, 125 MB in 64 s.
 
 ---
 
-## Solved, but on the client side rather than in the panel
-
-These are working today and need no firmware change. That is why they are not
-in the image.
+## Solved on the client side, needing no firmware change
 
 | Problem | Where it is solved |
 |---|---|
-| **Status goes to "unknown" after a few minutes** — the original complaint | `tuxedo_push.py`. The push stream at `/SimpleDebugger.interface/G.` never reads the cache that returns "Not available", so a client on it cannot experience the fault. |
-| The panel's own API test console is unusable | `tuxedo_api_console.py`, a working replacement covering both HTTP APIs and the push stream |
-| Which REST endpoints actually work | Answered by probing: about six do, the rest return their own documentation form |
-| Richer data for Home Assistant | Zone status, event log, multi-partition arming and keypad display all reachable through the command API; documented in `TUXEDO-HA-ENRICHMENT.md` |
-| Zone types and descriptions for the field programmer | Tables extracted from the binary; `TUXEDO-ZONE-PROGRAMMING.md` |
-| Installer code retrieval | `panelinfo.txt` is served without authentication; confirmed statically, still untested live |
-
-**A deliberate choice worth stating plainly:** fixing the status bug in the
-device was the original goal, and it turned out not to need a device change.
-The firmware does not have a status bug so much as a second transport that
-nobody was using. Patching the cache would have been more risk for less result.
+| **Status goes to "unknown"** — the original complaint | `tuxedo_push.py`; the push stream never reads the cache that returns "Not available" |
+| The panel's own API console is unusable | `tuxedo_api_console.py` |
+| Which REST endpoints work | about six; the rest return their own documentation form |
+| Richer Home Assistant data | `TUXEDO-HA-ENRICHMENT.md` |
+| Zone types and descriptions | `TUXEDO-ZONE-PROGRAMMING.md` |
 
 ---
 
-## Identified but NOT fixed anywhere
+## Outstanding, with a specified fix ready to apply
 
-Everything below is documented in `TUXEDO-AUDIT-BUGS.md` and remains open.
+These have exact bytes and a rollback. They are not in v10 because they were
+deprioritised, not because they are unsolved.
+
+| Item | Patch | Why it is waiting |
+|---|---|---|
+| `/Config` binds the config partition to a URL, ungated | one instruction at `0x14934`, `dc 67 01 eb` -> `00 00 a0 e1` | security, deferred to a later release |
+| `supervis` camera listener on 6800 | one word at `0x4b88` | the panel has no cameras; low severity |
+
+## Outstanding, analysed but not reduced to bytes
 
 ### Affects the panel in daily use
 
-- **a-2** First visit to the web keypad permanently disables the Back and Home
-  buttons.
+- **a-2** First visit to the web keypad permanently disables Back and Home.
 - **a-3** The web-facing partition-status poller is dead code.
-- **a-4** The web interface is effectively single-client.
-- **a-5** Event-log retrieval retries forever every 20 seconds with no cap.
+- **a-4** The web interface is effectively single-client. **Needs re-checking:**
+  two concurrent push-stream clients were later measured to coexist without
+  displacing each other, so this claim is at least too broad.
+- **a-5** Event-log retrieval retries forever every 20 s with no cap.
 
 ### Virtual console
 
-Six defects, none patched: session-expiry handling is commented out, send
-errors are swallowed, keystrokes are lost when a send fails, a 1500 ms debounce
-that is far too long for a keypad, a race between dispatch and buffer clear,
-and no keepalive. See `TUXEDO-VIRTUAL-CONSOLE-BUGS.md`.
+Six defects, none patched, and now a seventh thing understood: the display
+itself is gated on a panel-supplied operation mode that reads 0 on this unit, so
+no client request can turn it on. See `TUXEDO-VIRTUAL-CONSOLE-BUGS.md`.
 
 ### Security exposure on the local network
 
-Nine findings, none patched. The significant ones: the alarm user code travels
-in a GET query string over plain HTTP; all web secrets derive from
-`srand(time(NULL))`; the REST AES key is a permanent global device secret; there
-is no per-command authorisation; and `panelinfo.txt`, which contains the
-installer code in plaintext, is served to anyone who can reach the panel.
-
-**These are the strongest argument for keeping this device off any untrusted
-network segment**, and none of them is addressed by the current build.
-
-### Asked for but not built
-
-- **Using the virtual keypad like any other keypad.** Analysed, not built.
-- **A self-hosted OTA server.** The redirection point now exists in the image,
-  but nothing has been stood up to serve updates, and the AlarmNet redirector
-  protocol has not been reproduced. Redirecting the names without a server
-  behind them only makes updates fail, which the panel already tolerates.
+Nine findings, none patched, plus two added since: the TLS private key for 443
+and 9443 is recoverable from the firmware, and the panel has no netfilter so it
+cannot firewall itself. **Deliberately deferred** to a later release on the
+owner's instruction; the mitigation meanwhile is network segmentation.
 
 ---
 
-## Why only one fix is in the image
+## Known unknowns worth keeping visible
+
+- The **lockout deny path has still never been observed**. The patch is
+  confirmed present byte for byte, which is not the same as confirming what it
+  does.
+- The `/Config` 404 is unexplained and common to all three disk-backed
+  directories, so it is not a control to rely on.
+- The 6800 and 9443 assessments are single-source; their verification pass was
+  cut short.
+- **NAND: 9 bad blocks.** `verify-panel.sh` fails if that rises.
+
+---
+
+## Historical: why only one fix was in the first image
 
 The lockout patch was taken all the way because it is the one with a reviewer
 verdict, an exact byte specification, a rollback procedure, and a failure mode
