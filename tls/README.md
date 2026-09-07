@@ -35,10 +35,19 @@ The panel cannot be trusted to make one. **MEASURED on the unit:**
 - No random-seed save or restore anywhere in `/etc/rc.d/`.
 - `getrandom()` is ARM syscall **384**, above this kernel's 363 ceiling, so
   there is **no wait-until-seeded primitive at all**.
+- A direct read settles it: **16 of 32 bytes in 30 s**, non-blocking, 151
+  `EAGAIN`, while `entropy_avail` fell from 133 to 16. The pool is spent by the
+  read, not replenished during it. `/dev/urandom` returned 32 bytes in 0.000 s
+  in the same run, so the measurement is the pool and not the probe.
+- **busybox `seedrng` cannot rescue this.** It runs here rather than failing,
+  but every path through it ends non-creditable: `getrandom` is `ENOSYS`, and
+  creditability otherwise comes from `poll(/dev/random)` being readable, which
+  it is not. Three runs left `entropy_avail` at 58. It mixes a seed across
+  boots and never inflates the count — safe, and no help.
 
 A weak key is worse than an expired one: expiry is visible and weakness is not.
 On-device generation may be supported later as an explicitly gated fallback,
-never as a silent default.
+never as a silent default. Nothing measured so far moves that line.
 
 ## Trust model
 

@@ -54,10 +54,10 @@ directly, which cannot be mangled by any layer above it.
 
 ## Know which binary you are reading
 
-**The live panel runs v12 and has ALL EIGHT patches applied.** Any `Barracuda`
-or `tuxedo` sitting in a scratch directory is a historical snapshot from some
-earlier build — it is not what the panel is running, and it should never be
-reasoned about as though it were.
+**The live panel runs v13 and has ALL THIRTEEN patches applied**, confirmed on
+the unit 2026-09-06. Any `Barracuda` or `tuxedo` sitting in a scratch directory
+is a historical snapshot from some earlier build — it is not what the panel is
+running, and it should never be reasoned about as though it were.
 
 **Every conclusion about "what the stock firmware does" is only as good as the
 copy it was read from, and the copies are easy to confuse.** This has already
@@ -72,13 +72,15 @@ Known `Barracuda` md5s:
 | `324209e1fdfe2d61925a1bb4a7115452` | **genuine stock**; no image of ours has ever applied |
 | `197b7e41daeedd849d6353bd0fb26059` | v9/v10 era — carries **P1, P2, P6**; NOT stock |
 | `d14a3358b10007dc6bbde63fa0959bb9` | v11 — adds P8 |
-| `c8971027bb9f77801d01713b4ae50b2f` | **v12 — what the panel runs now**; adds P11, P12 |
+| `c8971027bb9f77801d01713b4ae50b2f` | v12 — adds P11, P12 |
+| `55448f05ff28520f3b68b99312126946` | **v13 — what the panel runs now**; adds P13, the push-stream session gate |
 
 `/tuxedo`: `6f8055f5cadba9d0b1582297606427a8` is pre-P10;
 **`98370c310e709ba565abfce8ea0a3e17` carries P10 and is what the panel runs.**
+`/supervis` is `6caac69eb46fb78447bcd3032078fa44`.
 
 When in doubt, ask the panel rather than a file:
-`./verify-panel.sh` checks all eight sites against the running unit.
+`./verify-panel.sh` checks all thirteen sites against the running unit.
 
 **Pull a fresh reference instead of trusting an old one.** Three commands, and
 each transferred file is compared against the panel's own `md5sum`:
@@ -87,10 +89,10 @@ each transferred file is compared against the panel's own `md5sum`:
 ssh -i ~/.ssh/tuxedo_ed25519 root@203.0.113.5 'cat /tuxedo'   > tuxedo
 ssh -i ~/.ssh/tuxedo_ed25519 root@203.0.113.5 'cat /supervis' > supervis
 ssh -i ~/.ssh/tuxedo_ed25519 root@203.0.113.5 'cat /opt/webserver/Barracuda' > Barracuda
-python apply-patches.py --check --root <tree> --table patches.tsv   # expect 8/8
+python apply-patches.py --check --root <tree> --table patches.tsv   # expect 13/13
 ```
 
-A reference pulled this way and confirmed 8-of-8 is worth more than any file
+A reference pulled this way and confirmed 13-of-13 is worth more than any file
 whose provenance is a directory name.
 
 **Check before you conclude**, in one command:

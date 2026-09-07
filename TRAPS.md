@@ -62,6 +62,16 @@ and left sitting there saying the opposite of the truth.
 - **A sweep generates candidates; only reading the code confirms one.** Every
   correct result in this project came from verifying an individual site. Every
   wrong one came from trusting a pattern match across many.
+- **Searching for "is this string referenced" needs the address of the string's
+  START, not of your needle.** A literal pool holds the address of
+  `/opt/tuxedo/configuration/webuseraccountsenc.json`; grepping for
+  `webuseraccounts` matches 25 bytes into it, and the address of *that* appears
+  nowhere. Back up to the byte after the preceding NUL. This returned "not
+  referenced" for a file Barracuda demonstrably reads.
+- **Every sweep needs a positive control you already know the answer to.** The
+  above was caught only because Barracuda was run through the same code and also
+  came back "not referenced", which is impossible. Without the control it would
+  have been published as a finding about `/tuxedo`.
 - **"No case for X" is not "X does not exist."** A receiver's dispatch table
   says what it handles, never what the sender emits. msgType **20 is real** —
   `/tuxedo` sends it with the keypad display — and Barracuda simply has no case,
@@ -140,6 +150,14 @@ and left sitting there saying the opposite of the truth.
   /proc/<pid>/exe` against the binary path instead, and skip `$$`.
 - No `awk` and no `wget` even with PATH set. `netstat`, `grep`, `tr`, `readlink`,
   `sed` are there.
+- **`/bin/busybox` is already on the panel since v13** (1328384 bytes, the one
+  built per `NEUTERED-TOOLS.md`), and it has `awk`, `strings`, `seedrng` and the
+  rest. Check for it before pushing another copy. It is not on `PATH` as
+  individual applets — call `/bin/busybox <applet>`.
+- **Cross-compile panel binaries with `/opt/musl-armel/bin/musl-gcc`, not
+  `arm-linux-gnueabi-gcc`.** The gnueabi static output is stamped
+  `for GNU/Linux 3.2.0` and the panel is 2.6.31; musl stamps no minimum. `file`
+  will tell you which you built.
 
 ## 5. The build VM and emulation
 

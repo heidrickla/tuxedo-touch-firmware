@@ -1591,6 +1591,46 @@ cases and missed msgTypes 1, 111 and 147, all three of which do format frames.
 **Revert:** `rm /tmp/*`. Precedent exists — the runtime survey left `/tmp` with
 exactly its original four entries and 356K used. **MEASURED.**
 
+#### Stage 2 DONE, 2026-09-06
+
+`probe/stage2.c`, built with `/opt/musl-armel/bin/musl-gcc -Os -static`. Use
+musl, not `arm-linux-gnueabi-gcc`: the gnueabi static binary is stamped
+`for GNU/Linux 3.2.0` against a 2.6.31 kernel, and musl stamps no minimum.
+
+**Queue geometry, now MEASURED rather than read out of the binaries.** Every
+size the documents carried is confirmed:
+
+| queue | maxmsg | msgsize | curmsgs |
+|---|---:|---:|---:|
+| `/Q_ServCmdRcver` | 32 | **404** | 0 |
+| `/Q_ServCmdTrsmtr` | 32 | **556** | 0 |
+| `/mqUI_Input_Queue` | 32 | 208 | 0 |
+| `/g_mqSupervisionThreadIn` | 32 | 132 | 0 |
+| `/mq_TuxAppVidRecEvent` | 100 | 580 | 0 |
+| `/mq_VidRecWebAppEvent` | 20 | 60 | 0 |
+
+`mq_getattr` consumes nothing and the queues were opened `O_RDONLY|O_NONBLOCK`.
+One thing to read carefully: §1's note that `TCInterfaceInit` creates
+`/Q_ServCmdRcver` with msgsize `0x11c` (284) is **not** contradicted — 404 is
+the live attribute, so Barracuda's creation wins and TotalConnect's 284-byte
+sends simply fit inside a 404-byte maximum. `mq_open` without `O_CREAT` takes
+the existing geometry.
+
+**`/dev/random` cannot produce a key, with numbers.**
+
+```
+entropy_avail before 133, poolsize 4096
+got 16 of 32 bytes in 30.1s (151 EAGAIN, first at 0.0s)
+entropy_avail after 16 (delta -117)
+/dev/urandom control: 32 bytes in 0.000s
+```
+
+Half a key in thirty seconds, and the pool drained from 133 bits to 16 doing
+it — it is being spent, not replenished. The `urandom` control rules out the
+probe being the slow part. This is the assumption `tls/README.md` rests on and
+it is now measured on the unit rather than inferred from `entropy_avail`
+sampling.
+
 #### MEASURED 2026-09-06: panel sessions are bound to the client's source IP
 
 Found by building the stage-3 shim, handing it a session cookie obtained on a
@@ -2320,23 +2360,72 @@ inside a non-interactive `ssh` command dies as the session tears down — the sa
 thing that silently swallowed an earlier `reboot`. Use `setsid`, or run in the
 foreground from a second connection.)
 
-### 5.5 Does busybox `seedrng` credit entropy on 2.6.31?
+### 5.5 Does busybox `seedrng` credit entropy on 2.6.31? — ANSWERED NO, 2026-09-06
 
-Decides whether on-device key generation is ever recommendable, or whether
-workstation generation is the only supported path. If `seedrng`'s implementation
-calls `getrandom()`, it fails outright here.
+It runs, it does not fail, and it **never credits**. Measured on the panel with
+busybox 1.36.1, seed dir `/tmp/seed`, three consecutive runs:
 
-**Cheapest experiment:** stage 2, seed dir under `/tmp`, watch `entropy_avail`
-across the call. Minutes. Note it mutates the kernel pool, which is why it needs
-its own stage rather than being folded into a read-only sweep.
+```
+entropy before: 58
+run 1 (-n)   Saving 2048 bits of non-creditable seed for next boot
+             entropy_avail 58
+run 2        Seeding 2048 bits without crediting
+             Saving 2048 bits of non-creditable seed for next boot
+             entropy_avail 58
+run 3        Seeding 2048 bits without crediting
+             entropy_avail 58
+```
 
-### 5.6 Does `/tuxedo` read `webuseraccountsenc.json`?
+The reason is in `miscutils/seedrng.c`. It first tries
+`getrandom(seed, len, GRND_NONBLOCK)`; that is ARM syscall 384 and this kernel's
+ceiling is 363, so it is `ENOSYS`. It then decides creditability with
+`poll(/dev/random, 0)` — readable *right now* or not — and with the pool at 58
+bits that returns 0. `GRND_INSECURE` fails the same way, so it falls back to
+reading `/dev/urandom` and marks the seed non-creditable. Every path leads to
+`entropy_count = 0`.
 
-§1.6 has v1 abandoning the vendor's web-account store. If `/tuxedo` reads it, the
-consequences of stopping maintenance are unknown.
+**This is the good outcome, and better than the question assumed.** The worry
+was that `seedrng` would fail outright. Instead it degrades safely: it still
+mixes a seed across boots, and it never inflates `entropy_avail` with material
+drawn from the same weak pool. It cannot rescue on-device key generation, and it
+does not lie about the pool either. Workstation generation stays the only
+supported path — now for a measured reason rather than a suspected one.
 
-**Cheapest experiment:** free. `e.grep()` for the string in the `tuxedo` binary
-and check for a genuine data reference, not a symtab hit. Minutes.
+Note the interaction with §3's `/dev/random` measurement: `poll()` returning 0
+is not a busybox quirk, it is the pool genuinely being empty. The two results
+are the same fact seen from two directions.
+
+### 5.6 Does `/tuxedo` read `webuseraccountsenc.json`? — ANSWERED YES, 2026-09-06
+
+§1.6 has v1 abandoning the vendor's web-account store. It reads **and writes**
+it, from five named functions, so abandoning the store is not a Barracuda-only
+decision:
+
+| function in `/tuxedo` | what the name says it does |
+|---|---|
+| `readWebUserAccSetupJSONFile(strAccountSettingsForJSON*)` | reads it into a struct |
+| `createWebUserAccSetupJSONFile(strAccountSettingsForJSON*)` | writes it |
+| `encodewebUseraccJsonFile()` | writes the `_enc` and `_sec` forms |
+| `isWebUserAccSetupJSONFileEncPresent()` | existence check |
+| `isInitWebUserAccSetupJSONFileEncPresent()` | existence check at init |
+
+`/tuxedo` also touches `/opt/tuxedo/configuration/webuseraccounts.json`, the
+`_sec` variant, and `/tmp/webuseraccountsenc.json`.
+
+**Consequence for v1.** `/tuxedo` is the component we are keeping. If the
+replacement stops maintaining this file, `/tuxedo` keeps reading whatever is
+left there, and the two components' views of who has an account diverge
+silently. Either the replacement maintains the file in the vendor's format, or
+§1.6 has to say what happens to `/tuxedo`'s copy — it cannot just be dropped.
+
+**How this was checked, because the first attempt said the opposite.** Finding
+the string and searching the file for a word equal to its address returned
+"referenced nowhere" — for Barracuda too, which manifestly does read the file
+from `readUserNamePasswordFromJSON`. That impossible control result is what
+exposed the bug: the search matched the substring `webuseraccounts`, while the
+literal pool holds the address of the start of the whole path string. Walk back
+to the preceding NUL first. `q56.py` runs Barracuda as the control for exactly
+this reason.
 
 ### 5.7 Is `/tuxedo` an HTTPS client of a Tuxedo REST API?
 
