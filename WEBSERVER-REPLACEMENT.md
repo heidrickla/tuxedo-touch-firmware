@@ -2429,11 +2429,43 @@ assume one is required. And `fscanf` with `%d` is given eight destinations one
 byte apart (`0x55ba18`, `+1`, `+2`, …), so each four-byte store overlaps the
 next; the values happen to be small, and this is the vendor's bug, not ours.
 
-**The registration frame is still open.** `'%d%s%d%s%d%s%d%s%d%s%s'` at
-`0xdd44` has six values, not the eight fields the corpus decomposes, so either
-that is a different frame or the 8-field shape is built elsewhere. The live
-stream shows both variants — `0:504:1:P1  H:1:0:3:3` and its `-1` repeat — so
-the extras are `1:0:3:3` and the question is only where those four come from.
+#### The registration frame, and a correction to the reply layout
+
+`CReceiverThread::registerclient()` @`0x13c2f8` builds the msgType 504 reply,
+and reading it settles the registration extras and overturns something more
+important.
+
+It writes `session = 0` at `+0x00`, `msgType = 0x1f8 = 504` at `+0x04`, and
+then:
+
+| offset | value | from |
+|---|---|---|
+| `+0x90` | current partition | `GetCurrentPartition()` |
+| `+0x91` | partition description, `strcpy`d | `GetPartitionDescription()` |
+| `+0xaf` | CAL implementation | `GetPanelCalImplementation()` |
+| `+0xb0` | quick-arm capable | `GetArmingModes() & 8` |
+| `+0xb1` | operation mode | `GetOperationMode()` |
+| `+0xb2` | total partitions | `GetTotalPartitions()` |
+| `+0xb4` | Z-Wave controller status | `getZWControllerStatus()` |
+| `+0xb8` | RIS supported | `isRisSupported()` |
+
+So the registration frame's `1:0:3:3` extras are **in the reply after all**,
+just not at `+0x0E`. Like `frame_typed`'s trailing field, they were only ever
+missing from a decoder that looked in one place.
+
+**The correction that matters: the 556-byte reply is a union, not a struct.**
+`session` and `msg_type` hold for every message; everything after depends on
+the type. `Reply::parse` puts the text at `+0x0E`, which is right for the
+status path it was derived from and simply wrong for a 504 — that message has
+nothing of interest there. `ipc.rs` now says so at the type.
+
+**And the `:` question is answered, unhappily.** For a 504 the "text" is the
+partition description, `strcpy`d straight out of `GetPartitionDescription()` —
+an owner-settable partition name. So a partition named with a colon in it would
+put a colon in the frame. The corpus test's assumption that the text contains
+no `:` is therefore an assumption about *this panel's configuration*, not a
+property of the protocol, and a replacement must not rely on it. It holds here
+(`P1  H`), which is why 150 frames reproduced.
 
 **Also unsettled, and it undermines the corpus test if wrong:** whether the
 reply text can contain a `:`. The test splits captured frames on `:` and

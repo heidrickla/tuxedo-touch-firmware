@@ -21,6 +21,21 @@ pub const COMMAND_LEN: usize = 404;
 /// `ldr r8,[sp,#0x278]` is `+0x04`, `add sl,r6,#0xe` is the text, and the
 /// `ldrb` from `+0x0E` is why `state` is the FIRST BYTE OF THE TEXT rather
 /// than a field of its own.
+///
+/// **This layout is not universal, and reading it as though it were is a
+/// mistake waiting to happen.** The 556 bytes are a union: `session` at
+/// `+0x00` and `msg_type` at `+0x04` hold for every message, but what follows
+/// depends on the type. `CReceiverThread::registerclient()` @`0x13c2f8` builds
+/// the msgType 504 reply with the current partition at `+0x90`, a partition
+/// description `strcpy`d to `+0x91`, and single bytes at `+0xaf` (CAL
+/// implementation), `+0xb0` (arming modes `& 8`), `+0xb1` (operation mode),
+/// `+0xb2` (total partitions), `+0xb4` (Z-Wave controller status) and `+0xb8`
+/// (RIS supported). Nothing of interest sits at `+0x0E` in that one.
+///
+/// So `parse` is right for the status path it was derived from, and must not be
+/// pointed at a 504 and believed. Decoding the rest means reading each builder,
+/// and the builders are already identified: they are the `/tuxedo` functions
+/// that pass `0x22c` to `osal_MqSend`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {
     pub session: u32,
