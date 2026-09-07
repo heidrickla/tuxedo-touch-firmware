@@ -13,6 +13,21 @@ makes -- wiring it into `checks.sh` would either fail the build for a decision
 already taken, or get an exception that makes it decorative. It prints; a person
 decides.
 
+EXIT CODES, and the distinction matters:
+
+    0   the scan ran. Clean, or with findings -- both, on purpose.
+    2   THE SCAN COULD NOT RUN. Not a git repo, or no ci/pubscan.local so the
+        author-specific detectors do not exist.
+
+"Report, not gate" is a statement about FINDINGS, which are a judgement call.
+It is not a statement about a scan that did not happen, which is not a judgement
+call at all and is the one state where a human's decision is not the thing
+missing. Returning 0 there would mean `pubscan && publish` passes silently on a
+fresh clone, with the prose saying NOT CLEAN and the exit code saying fine --
+and a script reads the second. probe/supervis_heartbeat.py already uses
+0 / 1 / 2 in this repo; two tools with opposite conventions is its own trap.
+There is no rc=1 here because "findings present" is deliberately not a failure.
+
 WHY THE HOUSE SECRET SCANNER IS NOT ENOUGH, stated because it reported clean on
 this repo while every item below was present: `brain/scripts/scan-secrets.py`
 matches CREDENTIAL SHAPES -- AWS keys, tokens, PEM blocks. It cannot know that a
@@ -245,7 +260,9 @@ def tracked(repo: str) -> list[str]:
     r = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True,
                        text=True)
     if r.returncode:
-        sys.exit("pubscan: not a git repo: %s" % repo)
+        print("pubscan: not a git repo: %s" % repo)
+        print("  Nothing was scanned. This is NOT a clean result.")
+        raise SystemExit(2)          # could not evaluate, never 0 or 1
     return [f for f in r.stdout.splitlines() if f.strip()]
 
 
@@ -400,6 +417,18 @@ def main() -> int:
         print("%d occurrence(s) of your own identifiers are in tracked files." % total)
         print("Publishing discloses them. Genericise, or decide deliberately")
         print("that they are fine -- but decide, do not default.")
+        if ohits:
+            print("Plus %d untracked file(s) above, not published yet." % len(ohits))
+    elif ohits and n_local:
+        # Do not print a bare "found nothing" over a `!!` line. The bucket is
+        # about unpublished files and the sentence was true as written, but a
+        # skimmer sees the warning and the all-clear together and keeps the
+        # second.
+        print("No author identifiers in the TRACKED files, against %d structural"
+              % (len(YOURS) - n_local))
+        print("and %d author pattern(s). But %d untracked, unignored file(s) above"
+              % (n_local, len(ohits)))
+        print("do carry them, and are one `git add -A` from being published.")
     elif not n_local:
         # NEVER print a clean verdict from a run that could not look. Without
         # pubscan.local this scan has no hostname, domain, subnet or path to
@@ -414,7 +443,10 @@ def main() -> int:
               % (len(YOURS) - n_local, n_local))
         print("pattern(s). That is not a promise the content is safe to publish,")
         print("only that this list did not match.")
-    return 0            # a report, never a gate. See the module docstring.
+    # 0 whether or not there were findings -- that half is a judgement call and
+    # deliberately never fails a build. 2 when the scan could not run, which is
+    # not a judgement call. See the module docstring.
+    return 2 if not n_local else 0
 
 
 if __name__ == "__main__":
