@@ -3295,10 +3295,26 @@ offset 0 because `mem.index` was ignored.
   ever collide in practice, and whether `/tuxedo` distinguishes them. Both write
   at priority 1 with no sender identifier beyond `sessionId`. Watch for it during
   stage 7.
-- Whether `supervis` acts against a process that stops writing
-  `/g_mqSupervisionThreadIn`. Not decoded. §1.7 B8 argues we do not need to
-  heartbeat, from Barracuda's single `sigHandler` caller; if stage 5 shows
-  otherwise, adding a heartbeat is trivial.
+- ~~Whether `supervis` acts against a process that stops writing
+  `/g_mqSupervisionThreadIn`. Not decoded.~~ **ANSWERED: it does not, so a
+  stage-6 cutover binary needs no heartbeat.** There is no per-app last-seen
+  timestamp for silence to be measured against — `time()` is reached from
+  exactly four places, all of them IPC deadlines and log timestamps — and
+  `SupervisTimeout` decides on `getProcessPid`, file descriptors, pipes and
+  memory, never reading the queue at all. §1.7 B8 argued the same conclusion
+  from Barracuda's single `sigHandler` caller; this replaces that inference
+  with the mechanism.
+
+  Holds for the live panel as well as for stock: **v13 differs from the stock
+  binary in exactly the four P9 bytes**, which are nowhere near this path.
+
+  Recorded on behalf of the firmware session, which found it and could not
+  commit it while this repository was held for the publication rewrite.
+  **Not independently re-derived here** — the vendor binaries are deliberately
+  not in this repo, so this session could not check the four `time()` sites or
+  the `SupervisTimeout` inputs against them. Treat it with the weight the rest
+  of §5 gives a decoded-and-stated finding, and re-confirm before stage 6 is
+  booked if anything else about `supervis` turns out to be wrong.
 - Long-run stability. The longest any test binary had run on this panel was ~50
   seconds. No soak, no memory-growth-over-hours measurement, no concurrency
   beyond a handful of connections, all on a single-core box. Every RSS figure in
