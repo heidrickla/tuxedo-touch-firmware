@@ -31,10 +31,28 @@
 # 0x14723c, which prints "Web:ERR:Wrong Command from Web" and drains the next
 # message.
 #
-# The sender column is what Barracuda is known to send (sender_args.py). A "-"
-# does not mean unreachable: setarmwithcode, setdisarmwithcode,
-# setOccupancyMode and setPartitionArmed take the code as an argument and
-# those call sites are not resolved yet.
+# The sender column is what Barracuda sends as a COMPILE-TIME CONSTANT
+# (sender_args.py). A "-" does not mean unreachable, and for four senders there
+# is no constant to find at all -- RESOLVED 2026-09-06, do not search again:
+#
+#   setarmwithcode, setdisarmwithcode, setOccupancyMode and setPartitionArmed
+#   each take the code in r1. Their only caller is `set` @0x15a00, a WNMP module
+#   handler registered by WnmpModule_constructor @0x15740 alongside its sibling
+#   `get` @0x15778 -- which is why `set` has zero static callers and why its
+#   address appears in no data table. It dispatches on the OID leaf
+#   (`ldrh r1,[r0] / bic r1,#0xf000 / sub r1,#8 / cmp r1,#0x43`) through a
+#   68-entry jump table, and each of those four arms does
+#   `ldm r4,{r0,r1,r2,r3}` where r4 is `set`'s own third argument. So the
+#   command code is word 1 of the request value block, not a literal. No bounds
+#   check sits between the `ldm` and the `bl`, nor in the sender before the
+#   `str` into buf+0x04.
+#
+# Consequence: on this path the code is request data, and what bounds it is the
+# RECEIVER -- the 84 cases below, everything else hitting the default arm at
+# 0x14723c. That is a claim about these two hops only. Whether the value is
+# attacker-controlled end to end depends on validation earlier in the REST tier,
+# which has not been read; the REST namespace does at least require TLS and a
+# session.
 #
 # code<TAB>handler_va<TAB>handler<TAB>barracuda_sender
 1	0x147bb8	CReceiverThread::sltRequestArmAway(web_request*)	-

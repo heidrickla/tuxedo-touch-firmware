@@ -1198,6 +1198,38 @@ on its own — it is one constraint, and only the whole path says which codes
 reach a block. That is why the table is now derived from the constraints
 instead of from instruction shapes; see `TRAPS.md` §2.
 
+#### The sender side, and why four of them have no constant to find
+
+`sender_args.py` resolves eleven codes to compile-time constants in Barracuda —
+55, 57, 58, 109, 111, 117, 120, 125, 126, 700, 888. Four senders resisted, and
+the reason turned out to be structural rather than a gap in the tool.
+
+`setarmwithcode`, `setdisarmwithcode`, `setOccupancyMode` and `setPartitionArmed`
+each take the code in `r1`. Their only caller is `set` @`0x15a00`, which has
+**zero static callers and no data word holding its address** — because it is
+registered, not called: `WnmpModule_constructor` @`0x15740` is handed `set`
+together with its sibling `get` @`0x15778`. Both dispatch on a WNMP OID leaf,
+
+```
+ldrh r1, [r0] ; bic r1, r1, #0xf000 ; sub r1, r1, #8 ; cmp r1, #0x43
+ldrls pc, [pc, r1, lsl #2]        ; a 68-entry jump table
+```
+
+and each of the four arms does `ldm r4, {r0, r1, r2, r3}` with `r4` being
+`set`'s own third argument. **The command code is word 1 of the request value
+block, not a literal.** No bounds check appears between the `ldm` and the `bl`,
+nor in the sender before the `str` into `buf+0x04`.
+
+So on this path the code is request data, and the thing bounding it is the
+receiver: the 84 cases, with everything else reaching the default arm. Stated
+narrowly on purpose — that covers these two hops. Whether the value is
+attacker-controlled end to end depends on validation earlier in the REST tier,
+which has not been read, and that tier does require TLS and a session (§4.1).
+
+**Reachability of codes 1, 2 and 3 is not in doubt regardless**: they are driven
+live by `D:/temp/tux-arm.py` and `tux-disarm.py` against the panel, which is how
+the arming path is exercised in every session.
+
 #### Console mode, end to end
 
 With command 19 confirmed the whole chain is now known, and it is the concrete
