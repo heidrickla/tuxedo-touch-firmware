@@ -2617,9 +2617,24 @@ server behind a new private CA has an unexamined client: OpenSSL 1.0.1h via
 libcurl, whose trust store and verify settings nobody has looked at. Candidate
 breakage: Tuxedo-to-Tuxedo Z-Wave sync.
 
-**Cheapest experiment:** free. Read `TuxedoDetails.json` on the panel for a peer
-entry. A single-panel installation never exercises the path. If there is a peer,
-the follow-up is to check what the libcurl call sets for `CURLOPT_SSL_VERIFY*`.
+**Checked on the panel, 2026-09-06: no peer, so the path is not live here.**
+Neither `TuxedoDetails.json` nor `TuxedoDetails_sec.json` exists in
+`/opt/tuxedo/configuration`. This is a single-panel installation, so the
+Tuxedo-to-Tuxedo Z-Wave sync client never runs and cannot be broken by a new
+private CA on this unit.
+
+That closes it *for this panel* and not in general: the client code is still
+there, so an owner who enrols a second Tuxedo would exercise an OpenSSL 1.0.1h
+libcurl client whose `CURLOPT_SSL_VERIFY*` settings nobody has read. The
+follow-up is unchanged and now conditional — if a peer is ever enrolled, read
+those options before assuming the CA change is transparent.
+
+Seen again while reading that config, and already covered: the
+`DISCOVERY_SETTINGS` block in `Tuxedo.json` holds a `SHARED_KEY` and a
+plaintext `localadministrator,<password>` pair beside the camera inventory.
+`CONFIG-EXPOSURE.md` §"Upgraded" documents it; this is a second sighting on the
+live unit, not a new finding. Values are deliberately not reproduced anywhere in
+this repository.
 
 ### 5.8 Client acceptance of a private root for an IP-literal SAN - PROGRAMMATIC CLIENTS ANSWERED, 2026-09-06
 
@@ -2640,11 +2655,20 @@ to privately rooted chains, and neither has been tried. The browser result is
 what decides the hostname-plus-local-DNS recommendation; the programmatic result
 only settles that the integration does not need one.
 
-### 5.9 Can Home Assistant set an Authorization header on a long-lived multipart stream?
+### 5.9 Can Home Assistant set an Authorization header on a long-lived multipart stream? — ANSWERED YES, 2026-09-06
 
-Decides whether the query-parameter token form is optional or mandatory.
+It can, and it now does. `TuxedoPushStream._async_stream_once` sets
+`headers["Authorization"] = f"Bearer {self._push_token}"` and a
+`tuxweb_token=` cookie alongside the panel session cookie, on the same
+`aiohttp` request that holds the stream open. Verified end to end rather than by
+reading: `tests/ha/test_options_flow.py::test_the_entry_loads_and_streams_from_the_relay`
+loads the integration, points the stream at a fake panel and asserts the
+captured request carried both forms.
 
-**Cheapest experiment:** read `ha-tuxedo-touch`'s stream client. Free.
+**So the query-parameter token form is optional, and should not be built.** A
+token in a URL lands in access logs and `Referer` headers; there is no reason to
+accept that cost now that the header form is demonstrated on the actual client.
+The shim already gates on either (`shim.rs::presents_token`).
 
 ### 5.10 The reply payload beyond `+0x0E`
 
