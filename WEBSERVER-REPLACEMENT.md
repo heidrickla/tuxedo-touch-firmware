@@ -2317,9 +2317,62 @@ Mandatory safety features, all in the binary before this stage runs:
 **Proves — and this is the decisive test of the entire plan:** that a process
 other than Barracuda, as sole reader, actually receives tuxedo's replies. Lewis
 presses keys on the touchscreen; the log fills with 556-byte messages whose
-`msgType` values match the 43-entry map; the legacy shim emits frames matching the
-stage-0 corpus; HA's alarm state tracks the touchscreen. It also gives us the raw
-payloads for the 36 msgTypes that were never decoded past `+0x0E`.
+`msgType` values match the 43-entry map. It also gives us the raw payloads for
+the 36 msgTypes that were never decoded past `+0x0E`.
+
+#### The shim CANNOT be served from queue replies alone — corrected 2026-09-07
+
+This section used to also claim the window proves "the legacy shim emits frames
+matching the stage-0 corpus; HA's alarm state tracks the touchscreen." **It
+cannot, and the reason is structural rather than a matter of effort.**
+
+Three of the four frame builders need a field that is not in the reply:
+
+| builder | needs | in the 556-byte reply? |
+|---|---|---|
+| `frame_status(r, quick_arm)` | `quick_arm` | **no** |
+| `frame_typed(r, trailing)` | `trailing` | **no** |
+| `frame_registration(r, extra)` | four more words | **no** |
+| `frame_filler(r)` | — | yes, fully |
+
+`Reply` carries `session`, `msg_type`, `arg` and `text`, and `frame_status`
+consumes all four plus `quick_arm`. In the captured frame
+`0:21:1:fe:þ1Ready To Arm:2` the trailing `2` is that field. Barracuda supplies
+it from its own state — and during the cutover Barracuda is not running.
+
+This was hiding behind a passing test. `every_captured_frame_is_reproducible_from_its_fields`
+checks 150 frames, but it works *backwards*: it splits a captured frame on `:`
+and feeds the pieces back to the builder. That proves the builders are faithful
+formatters. It says nothing about where the inputs come from, and it silently
+assumes the reply text contains no `:` — an assumption that has never been
+checked and is load-bearing for the split.
+
+**Consequences, and the second is bigger than the first:**
+
+1. **Stage 6 is log-only.** That is now the correct design rather than a
+   reduced one. HA goes dark for the window instead of merely losing control.
+2. **This is a stage-7 blocker, not a stage-6 one.** The replacement's promise
+   of a byte-compatible legacy shim depends on emitting these frames, and
+   three of the four shapes cannot currently be emitted from what `/tuxedo`
+   sends. That has to be solved before the vendor is retired, not before the
+   read-only window runs.
+
+### 5.12 Where do the frame fields that are not in the reply come from?
+
+`quick_arm`, `trailing`, and the four registration words. Barracuda builds the
+colon-joined payload into a buffer and `BookmarksHandler_send2Browser`
+@`0x1d180` only ships it — `EventHandler_sendData2All` with the interface name
+and `statusMessageText`, taking the data from `[r0,#8]` and its length from
+`[r0,#0xc]`. So the values are supplied by whatever fills that buffer, which is
+the next thing to read.
+
+**Cheapest experiment:** free, static. Find the callers that fill the bookmark
+buffer before `send2Browser`, and read what they pass. Worth doing before stage
+7 is planned, and it costs nothing to do before stage 6 runs.
+
+**Also worth settling while there:** whether the reply text can contain a `:`.
+If it can, the corpus test's field-splitting is wrong and some of its 150
+"reproduced" frames are reproduced by accident.
 
 **Revert:** authenticated "fall back now" call, or wait for the deadman, or SSH
 `mv` and restart. Three independent paths, one of them automatic.
