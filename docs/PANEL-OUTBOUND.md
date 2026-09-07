@@ -65,8 +65,21 @@ Both are **bare IP addresses with no hostname**, so no DNS lookup occurs and the
 destination cannot follow a vendor DNS change. The filename `datacollect` is the
 vendor's, not ours.
 
-`/etc/hosts` additionally maps the panel's own hostname to a public address:
+`/etc/hosts` additionally maps a `Tux...` hostname to a public address:
 `199.63.244.206  Tux002DD0006236`.
+
+**It is NOT this panel's hostname, and the correction is more interesting than
+the claim.** A Tuxedo's hostname is `Tux` followed by its own MAC with the
+colons stripped, and this unit's differs from that entry. `Tux002DD0006236`
+matches no panel the image ships to: it is present in the stock root filesystem
+as shipped, and this unit's own hostname appears nowhere in that image. So the
+vendor's `/etc/hosts` hardcodes some build-time device's name against the
+AlarmNet relay address, and that entry is stale on every unit in the field.
+
+Worth knowing before anyone "fixes" it: `00:2d:d0` reads as the Resideo OUI
+`00:d0:2d` with the first two octet-pairs transposed, which is exactly what a
+careless genericisation looks like. It is not one — the identical line is in the
+untouched stock image.
 
 ## The bare IP, revisited
 
