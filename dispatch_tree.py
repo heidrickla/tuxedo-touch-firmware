@@ -22,6 +22,21 @@ permits -- one value, or a range.
 
 This subsumes all three forms and needs no rule per form.
 
+VALIDATED FOR `CReceiverThread::run` ONLY. Its 84 codes were confirmed in
+2026-09 by a different method -- every `cmp` whose operand IS the received
+code, located by `reply-layouts.py`'s abstract interpretation. All 69 compared
+constants are either in the table or a provable exclusive bound (`cmp #0x130`
+gates 300-303; `cmp #0x1f8` sends everything above it to the default).
+
+**It does NOT transfer to an arbitrary dispatcher.** Pointed at Barracuda's
+`gettuxedoIPCCommFunc` with the msgType slot at `sp+0x278` it prints
+overlapping intervals -- `28-50 accepted and dropped` alongside `29 bprintf`,
+which cannot both hold -- and claims a handler for msgType 20, contradicting
+the console-mode finding. That function has no jump table, so the cause is not
+undecodable data; the walk does not fit its shape. If you need another
+dispatcher's table, use the cmp-operand method instead, and check for
+overlapping ranges before believing any output from this.
+
 Usage: dispatch_tree.py <tuxedo-elf> [function] [sp-offset]
 """
 import bisect
