@@ -158,6 +158,26 @@ pub fn frame_registration(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
     o
 }
 
+/// The registration frame repeated with `-1` in the type slot.
+///
+/// The panel follows a registration the same way it follows a status: with
+/// copies carrying `-1` instead of the message type. Same fields, so the only
+/// difference is what goes in that one position — which is why the type is
+/// printed rather than taken from the reply.
+pub fn frame_registration_filler(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
+    let mut o = Vec::new();
+    push_u32(&mut o, r.session);
+    o.extend_from_slice(b":-1:");
+    push_u32(&mut o, r.arg);
+    o.push(b':');
+    o.extend_from_slice(&r.text);
+    for v in extra {
+        o.push(b':');
+        push_u32(&mut o, v);
+    }
+    o
+}
+
 /// The `-1` filler, `%d%s%d%s%s` with `mvn r5,#0` in the type position.
 /// The status handler emits three of these after every status frame; they are
 /// deliberate, not a transport quirk.
@@ -167,6 +187,19 @@ pub fn frame_filler(r: &Reply) -> Vec<u8> {
     o.extend_from_slice(b":-1:");
     o.extend_from_slice(&r.text);
     o
+}
+
+/// Two frames the server emits that are NOT derived from a reply at all.
+///
+/// A bare `-1`, sent 36 times across the two captures, and `Client Connected`
+/// on connect. They carry no fields, so there is nothing to format — a
+/// replacement emits them verbatim or a consumer notices their absence.
+pub mod literal {
+    /// Sent very frequently; distinct from the `session:-1:text` filler, which
+    /// does carry the status text.
+    pub const BARE_FILLER: &[u8] = b"-1";
+    /// The first `statusMessageText` a client receives.
+    pub const CLIENT_CONNECTED: &[u8] = b"Client Connected";
 }
 
 #[cfg(test)]
@@ -260,6 +293,23 @@ mod tests {
                     let r = Reply { session: s, msg_type: ty, arg: 0, text: f[2].to_vec() };
                     assert_eq!(frame_typed(&r, tr), t, "typed frame drifted");
                     checked += 1;
+                } else if f.len() == 8 && num(f[0]).is_some() {
+                    // session:type:arg:text:a:b:c:d -- the 504 registration,
+                    // and its -1 repeat, which differs only in that one field
+                    let (Some(s), Some(arg)) = (num(f[0]), num(f[2]))
+                    else { skipped += 1; continue };
+                    let extra: Vec<u32> = f[4..].iter().filter_map(|x| num(x)).collect();
+                    if extra.len() != 4 { skipped += 1; continue }
+                    let e = [extra[0], extra[1], extra[2], extra[3]];
+                    let r = Reply { session: s, msg_type: 504, arg, text: f[3].to_vec() };
+                    let got = if f[1] == b"-1" {
+                        frame_registration_filler(&r, e)
+                    } else {
+                        let Some(ty) = num(f[1]) else { skipped += 1; continue };
+                        frame_registration(&Reply { msg_type: ty, ..r }, e)
+                    };
+                    assert_eq!(got, t, "registration frame drifted");
+                    checked += 1;
                 } else if f.len() == 3 && f[1] == b"-1" && num(f[0]).is_some() {
                     // session:-1:text  -- the filler
                     let r = Reply {
@@ -268,16 +318,21 @@ mod tests {
                     };
                     assert_eq!(frame_filler(&r), t, "filler frame drifted");
                     checked += 1;
+                } else if t == literal::BARE_FILLER || t == literal::CLIENT_CONNECTED {
+                    // literals, reproduced by emitting them verbatim
+                    checked += 1;
                 } else {
                     skipped += 1;
                 }
             }
         }
         assert!(checked >= 40, "expected to reproduce many frames, got {checked}");
-        // frames of shapes this module does not yet format (504 registration,
-        // the bare -1, noOfClient) are skipped rather than silently passed
-        assert!(skipped > 0, "sanity: some captured shapes are not yet formatted");
-        println!("reproduced {checked} frames, skipped {skipped} unformatted shapes");
+        // Every statusMessageText in both captures is now accounted for: the
+        // formatted shapes above, plus the two literals. If this ever fails,
+        // the panel has emitted a shape this module cannot produce, which is
+        // exactly the thing worth failing on.
+        assert_eq!(skipped, 0, "unreproducible frame shape in the captures");
+        println!("reproduced {checked} frames, {skipped} unaccounted for");
     }
 
     #[test]

@@ -1033,12 +1033,21 @@ the payload shapes are `setCid` (once, on connect), `statusMessageText` and
    it confirms the panel actually reached a disarmed state.
 2. ~~*The 404-byte command encoder.*~~ **Done 2026-09-06**, with the reply
    decoder, in `tuxweb/src/ipc.rs`. Structure recovered below; the library is
-   14 passing tests, the strongest being
+   22 passing tests, the strongest being
    `every_captured_frame_is_reproducible_from_its_fields`: it walks both live
    captures, recovers the fields behind each frame, re-formats them, and
-   requires the result to equal the original byte for byte. **104 frames
-   reproduced, 46 skipped** as shapes not yet formatted (504 registration, the
-   bare `-1`, `noOfClient`) — skipped explicitly rather than silently passed.
+   requires the result to equal the original byte for byte.
+   **150 frames reproduced, 0 unaccounted for** — every `statusMessageText` in
+   both captures. The guard is `skipped == 0`, so the test now fails if the
+   panel ever emits a shape the module cannot produce.
+
+   Two things surfaced in closing that gap. The panel **repeats the
+   registration frame with `-1` in the type slot** (`0:-1:1:P1  H:1:0:3:3`),
+   exactly as it repeats a status frame — a parser reading that field as
+   unsigned drops it silently. And two frames are not formatted from a reply at
+   all: a bare `-1` (36 times across the captures) and `Client Connected`, kept
+   as `literal::BARE_FILLER` and `literal::CLIENT_CONNECTED` because a
+   replacement must emit them verbatim or a consumer notices their absence.
 
 #### The 404-byte command, from the binary
 
