@@ -95,7 +95,7 @@ def generic_user_paths(text: str) -> list[str]:
 def _local_identifiers() -> list[tuple[str, "re.Pattern[str]"]]:
     """Author-specific literals, read from an untracked file beside this one.
 
-    THE POINT: a scanner that carries "look for the string Workstation" tells
+    THE POINT: a scanner that carries "look for the string <hostname>" tells
     every reader the hostname it is protecting. This file previously did
     exactly that, for a hostname and for two personal domains, and it is
     published. So the literals live in `ci/pubscan.local`, which .gitignore
@@ -210,6 +210,27 @@ def main() -> int:
                 hits[f] = n
         print("    %-26s %3d file(s)  %4d hit(s)   [discloses nothing]"
               % (label, len(hits), sum(hits.values())))
+
+    # The SELF files are skipped above because they carry detector patterns by
+    # construction -- 10\.10\.\d+ would match its own regex. That exclusion is
+    # right for patterns and WRONG for prose, and it hid a real leak: this
+    # file's own docstring named the author's hostname while explaining why the
+    # hostname should not be in this file. Published, and invisible to the tool
+    # by design. So the SELF files are checked explicitly against the private
+    # identifier list, which is the one thing they must never contain.
+    leaked = {}
+    for label, rx in _local_identifiers():
+        for f in sorted(SELF):
+            b = blobs.get(f)
+            if b and rx.findall(b):
+                leaked.setdefault(f, []).append(label)
+    if leaked:
+        print()
+        for f, labels in leaked.items():
+            print("  !! %s CONTAINS an identifier from pubscan.local (%s)"
+                  % (f, ", ".join(labels)))
+            print("     A detector file that names what it hunts has disclosed it.")
+        total += len(leaked)
 
     print()
     if total:
