@@ -3305,34 +3305,41 @@ offset 0 because `mem.index` was ignored.
   from Barracuda's single `sigHandler` caller; this replaces that inference
   with the mechanism.
 
-  A third strand arrived after this was written and is **stronger than either
-  of the above**: `supervis` creates exactly one thread,
-  `serverThreadForCamera` at `0xc5e8`, and that thread touches no queue, no
-  kill and no clock.
+  A third strand, and the strongest: **`supervis` creates AT MOST ONE thread,
+  and it is not a monitor.** Stock creates one, `serverThreadForCamera` at
+  `0xc5e8`, which touches no queue, no kill and no clock. **The live v13
+  creates none** — P9 replaces the `bl pthread_create` at that address with
+  `mov r0,#1`, so the site is gone.
 
-  ⚠ **OPEN — two statements about P9 that cannot both stand as worded, and this
-  gates stage 6.** The first account said the finding holds on the live panel
-  because *"v13 differs from the stock binary in exactly the four P9 bytes,
-  which are nowhere near this path"*. The second said `0xc5e8` is *"the precise
-  address P9 patches out, so on this panel it is never created"*. If P9 removes
-  the only thread `supervis` creates, then P9 is not nowhere near this path —
-  it is the reason the conclusion holds *here*, which also means the conclusion
-  is **panel-specific rather than a property of stock `supervis`**. The two may
-  be reconcilable if "this path" meant the `SupervisTimeout` decision path
-  specifically, with the camera thread a separate concern; that is a plausible
-  reading and it is not the one the words carry.
+  **P9 is therefore ON this path, not "nowhere near" it as first recorded, and
+  that strengthens the conclusion rather than weakening it.** The property that
+  matters is *no thread that could monitor*, not *one benign thread*: zero
+  satisfies it more completely than one. So the answer holds for stock by the
+  first reading and for the in-service binary by the second, which is why it is
+  safe either side of P9 — and that is a better result than the version this
+  entry originally carried.
 
-  **Do not book the window on this entry until that is resolved.** The
-  underlying conclusion may well be right by three independent routes; what is
-  not yet established is whether it depends on P9 being applied. Raised with
-  the firmware session 2026-09-07.
+  ⚠ **Do not state this as "creates one thread".** That is the shape of the
+  stock binary, not the requirement, and it reads as false against the panel
+  actually in service. "At most one, and P9 removes it here" is the accurate
+  form. An earlier draft of this very entry got that wrong.
+
+  **It is now executable: `probe/supervis_heartbeat.py <rootfs>/supervis`.**
+  Seven assertions, taking the vendor binary from the operator the way
+  `ci/test_hdr.py` takes `TUXEDO_FW_DIR`, since the binaries are deliberately
+  absent from this repo. Measured by the firmware session: stock 7 ok / 0 fail,
+  live v13 6 ok / 0 fail, **and Barracuda as a negative control 2 ok / 3 fail**
+  — it goes red against a binary where the claim is false, rather than crashing
+  or quietly passing. Anything it cannot evaluate exits non-zero, because
+  "could not check" must not render as "checked and fine".
 
   Recorded on behalf of the firmware session, which found it and could not
   commit it while this repository was held for the publication rewrite.
   **Not independently re-derived here** — the vendor binaries are deliberately
   not in this repo, so this session could not check the four `time()` sites or
-  the `SupervisTimeout` inputs against them. Treat it with the weight the rest
-  of §5 gives a decoded-and-stated finding, and re-confirm before stage 6 is
+  the `SupervisTimeout` inputs against them. **That gap is what the checker
+  above closes**: the finding stopped being a claim carried on trust and became
+  something anyone with the binary can run. Re-confirm before stage 6 is
   booked if anything else about `supervis` turns out to be wrong.
 - Long-run stability. The longest any test binary had run on this panel was ~50
   seconds. No soak, no memory-growth-over-hours measurement, no concurrency
