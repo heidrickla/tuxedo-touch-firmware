@@ -1,8 +1,31 @@
 #!/bin/bash
 # Start one tree and LEAVE IT RUNNING, so an external client can drive it.
 set -u
-T="$1"; LABEL="$2"
-pkill -f "qemu-arm-static" 2>/dev/null; pkill -f mqdrain.py 2>/dev/null; sleep 2
+T="$1"; LABEL="$2"; FORCE="${3:-}"
+
+# REFUSE to start when another instance is live. Do not kill it.
+#
+# This used to open with an unscoped `pkill -f qemu-arm-static`. On a VM two
+# sessions share, that silently kills whatever the other one is running, and the
+# damage is invisible: both of us started a rig, each killed the other's, and
+# then read the dead instance's log as evidence about our own. Hours of
+# "deterministic startup segfault" came out of it. The ABORT below could never
+# catch the collision either, because the pkill had already freed the ports it
+# checks.
+#
+# The pattern is split because `pkill -f` also matches the CALLER's own command
+# line -- running this over ssh with the literal in the command kills the ssh
+# session. That cost a session too.
+PAT="qemu-arm-sta""tic /opt/webserver/Barracuda"
+LIVE=$(pgrep -f "$PAT" | head -1)
+if [ -n "${LIVE:-}" ] && [ "$FORCE" != "--force" ]; then
+    echo "ABORT: an emulated Barracuda is already running."
+    echo "       pid $LIVE, root $(readlink "/proc/$LIVE/root" 2>/dev/null || echo '?')"
+    echo "       Someone may be mid-soak. Stop it deliberately, or pass --force."
+    exit 1
+fi
+[ -n "${LIVE:-}" ] && echo "--force given: stopping pid $LIVE"
+pkill -f "$PAT" 2>/dev/null; pkill -f "mqdra""in.py" 2>/dev/null; sleep 2
 ss -lnt 2>/dev/null | grep -qE ":(80|443|6280|9443)\b" && { echo "ABORT: ports held"; exit 1; }
 for m in dev/mq proc dev/pts; do mountpoint -q "$T/$m" && umount -l "$T/$m"; done
 mkdir -p "$T/dev/mq" "$T/dev/pts" "$T/proc" "$T/usr/bin"
