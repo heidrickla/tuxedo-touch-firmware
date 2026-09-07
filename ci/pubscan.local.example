@@ -1,0 +1,17 @@
+# pubscan.local -- author-specific identifiers, NEVER committed.
+#
+# Copy to `ci/pubscan.local` and fill in your own. .gitignore excludes that
+# name, which is the entire point: a published scanner that carries the literal
+# string it is looking for has disclosed it. This file previously held a real
+# hostname and two personal domains as regexes, in a public repo.
+#
+# Format: label<TAB>regex   (one per line, matched case-insensitively)
+# Lines that are blank, start with #, or contain no tab are ignored.
+#
+# Anything structural -- private address ranges, MAC shapes, key headers,
+# Windows user paths -- belongs in pubscan.py itself, where it identifies
+# nobody and everyone benefits from it. Only put a literal here.
+
+author hostnames	\b(my-workstation|my-forge-host)\b
+author domains	\b[a-z0-9-]+\.(?:example|example-two)\.com\b
+author paths	[A-Za-z]:\\{1,2}(?:MyRepoDir|MyProjectsDir)\b

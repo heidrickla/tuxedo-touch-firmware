@@ -11,3 +11,8 @@ venv/
 # the push-stream captures the tuxweb tests are built on; no key material,
 # no addresses, and without them a clean checkout cannot run its own tests
 !tuxweb/tests/fixtures/*.bin
+
+# pubscan's author-specific patterns. Untracked ON PURPOSE: a published
+# scanner that carries the literal it hunts for has already disclosed it.
+# ci/pubscan.local.example documents the format and IS tracked.
+ci/pubscan.local

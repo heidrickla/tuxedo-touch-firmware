@@ -50,8 +50,13 @@ SELF = {"ci/checks.sh", "ci/pubscan.py"}
 #: repo holds exactly one real MAC. Over-reporting is not the safe direction:
 #: this file's own docstring says a scanner that cries about placeholders gets
 #: skimmed on the day it finds something, and it did that on its first run.
+#: `00:d0:2d:00:00:01` joins them: it is what the real MAC was replaced WITH
+#: when this repo's history was genericised. The Resideo OUI is kept because
+#: the integration's DHCP discovery matches on it and the docs explain that,
+#: but the host part is zeroed, so it is an example and not a device.
 _PLACEHOLDER_MAC = re.compile(
-    r"^(?:00:00:00:00:00:00|ff:ff:ff:ff:ff:ff|[0-9a-f][26ae]:)", re.I)
+    r"^(?:00:00:00:00:00:00|ff:ff:ff:ff:ff:ff|00:d0:2d:00:00:01"
+    r"|[0-9a-f][26ae]:)", re.I)
 
 
 def real_macs(text: str) -> list[str]:
@@ -59,17 +64,52 @@ def real_macs(text: str) -> list[str]:
             if not _PLACEHOLDER_MAC.match(m)]
 
 
+def _local_identifiers() -> list[tuple[str, "re.Pattern[str]"]]:
+    """Author-specific literals, read from an untracked file beside this one.
+
+    THE POINT: a scanner that carries "look for the string Workstation" tells
+    every reader the hostname it is protecting. This file previously did
+    exactly that, for a hostname and for two personal domains, and it is
+    published. So the literals live in `ci/pubscan.local`, which .gitignore
+    excludes, and the tracked file keeps only patterns that are structural -
+    private address ranges, MAC shapes, key headers - which identify nobody.
+
+    Format: one entry per line, `label<TAB>regex`. Blank lines and `#`
+    comments ignored. Absent file means no author literals, which is the right
+    behaviour for anyone who is not the author and cannot be a false clean:
+    the structural detectors still run and still report.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pubscan.local")
+    if not os.path.exists(path):
+        return []
+    out = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "\t" not in line:
+                continue
+            label, _, pattern = line.partition("\t")
+            try:
+                out.append((label.strip(), re.compile(pattern.strip(), re.I)))
+            except re.error as err:
+                print("pubscan: bad pattern in pubscan.local for %r: %s" % (label, err))
+    return out
+
+
 #: Identifiers belonging to the AUTHOR, which publication would disclose.
+#: Structural only. Nothing here names a person, a host or a domain, so this
+#: list can be published without disclosing what it defends. Anything that
+#: WOULD name one goes in ci/pubscan.local -- see _local_identifiers.
 YOURS = [
     ("private addresses, 10.10.x", re.compile(r"\b10\.10\.\d{1,3}\.\d{1,3}\b")),
     ("real MAC addresses", real_macs),
-    ("author hostnames", re.compile(r"(?i)\b(Workstation|forge-host)\b")),
-    ("author domains", re.compile(r"(?i)\b[a-z0-9-]+\.(?:example\|example-two)\.com\b")),
-    ("local filesystem paths", re.compile(r"[A-Za-z]:\\(?:Users|LocalRepo|PersonalProjects|temp)\b")),
+    # A Windows user directory discloses the account name whoever it is, so the
+    # shape is worth reporting on its own without naming anybody.
+    ("local filesystem paths", re.compile(r"[A-Za-z]:\\{1,2}(?:Users|temp|Temp)\b")),
     ("wifi ssid / psk", re.compile(r"(?i)\b(ssid|psk|wpa_passphrase)\s*[:=]\s*\S")),
     ("private keys", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")),
     ("bearer tokens", re.compile(r"\b(?:ghp|gho|github_pat|xox[baprs])[-_][0-9A-Za-z_-]{16,}")),
-]
+] + _local_identifiers()
 
 #: Present, but the VENDOR's, so publishing them discloses nothing about you.
 VENDOR = [
