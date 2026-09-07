@@ -60,11 +60,20 @@ pub fn path(head: &str) -> &str {
 /// `Connection: close` is forced upstream so the end of the body is
 /// unambiguous — the alternative is trusting `Content-Length` and chunked
 /// encoding from a server whose own headers already violate one RFC.
+///
+/// `secure_cookies` is the single deliberate exception to relaying bytes
+/// unchanged. The panel omits `Secure` from the session cookie whenever the
+/// login that produced it was plaintext (`tls/THREAT-MODEL.md` §5), and through
+/// the shim that login is always plaintext, because the upstream hop is
+/// loopback. A browser would then keep resending the session in the clear. Set
+/// it when the CLIENT's connection is encrypted, which is the only thing the
+/// attribute is about.
 pub fn forward<C: Read + Write>(
     upstream: &str,
     head: &str,
     body_seen: &[u8],
     client: &mut C,
+    secure_cookies: bool,
 ) -> Result<(), String> {
     let mut up = TcpStream::connect(upstream).map_err(|e| format!("connect {upstream}: {e}"))?;
     up.set_read_timeout(Some(Duration::from_secs(30)))
@@ -108,8 +117,17 @@ pub fn forward<C: Read + Write>(
     }
     up.flush().ok();
 
-    // and stream the reply straight back
+    // The reply head is read whole only when something has to be changed in
+    // it; otherwise the response is streamed without ever being assembled.
     let mut b = [0u8; 8192];
+    if secure_cookies {
+        let (rhead, rest) = read_head(&mut up, 64 * 1024)?;
+        if client.write_all(mark_cookies_secure(&rhead).as_bytes()).is_err()
+            || client.write_all(&rest).is_err()
+        {
+            return Ok(());
+        }
+    }
     loop {
         match up.read(&mut b) {
             Ok(0) => return Ok(()),
@@ -121,6 +139,29 @@ pub fn forward<C: Read + Write>(
             Err(e) => return Err(format!("upstream read: {e}")),
         }
     }
+}
+
+/// Add `Secure` to every `Set-Cookie` that lacks it, leaving the rest alone.
+pub fn mark_cookies_secure(head: &str) -> String {
+    let mut out = String::with_capacity(head.len() + 32);
+    for line in head.split_inclusive("\r\n") {
+        let trimmed = line.trim_end_matches("\r\n");
+        let is_cookie = trimmed
+            .split_once(':')
+            .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case("set-cookie"));
+        let has_secure = trimmed
+            .split(';')
+            .any(|a| a.trim().eq_ignore_ascii_case("secure"));
+        if is_cookie && !has_secure && !trimmed.is_empty() {
+            // the panel ends this header with a bare ';', so a naive append
+            // gives "HttpOnly; ; Secure" -- legal, but not something to ship
+            out.push_str(trimmed.trim_end().trim_end_matches(';').trim_end());
+            out.push_str("; Secure\r\n");
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Does this cookie name a session Barracuda currently recognises?

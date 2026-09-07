@@ -47,6 +47,16 @@ fn load_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
         .ok_or_else(|| format!("{path}: no private key found"))
 }
 
+/// May a password cross an unencrypted client connection?
+///
+/// Default no. `tls/THREAT-MODEL.md` section 5 is about a login that succeeds
+/// over plain HTTP and then cannot use the session it was given, which is worse
+/// than a refusal because nothing reports it. Only an explicit `1` turns it back
+/// on, so a stray empty variable does not.
+fn plaintext_login_allowed() -> bool {
+    std::env::var("TUXWEB_ALLOW_PLAINTEXT_LOGIN").ok().as_deref() == Some("1")
+}
+
 /// Build a TLS config from TUXWEB_CHAIN and TUXWEB_KEY, or None for plaintext.
 /// Exits rather than silently serving in the clear if one is set and unusable:
 /// a listener that was meant to be encrypted and is not should not start.
@@ -100,6 +110,7 @@ fn main() {
             // is expired and its key is public, so this end is where TLS is
             // worth terminating.
             tls: tls_from_env(),
+            allow_plaintext_login: plaintext_login_allowed(),
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");
@@ -117,6 +128,7 @@ fn main() {
             // a bare cookie cannot be renewed; expiry is fatal and says so
             creds: None,
             tls: tls_from_env(),
+            allow_plaintext_login: plaintext_login_allowed(),
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");

@@ -87,15 +87,16 @@ There is likewise only one EhDir object, at `0x55b59c`. So authenticating the
 push stream is a single change at the directory, not a per-port exercise, and a
 fix that appeared to work on port 80 alone would be a sign something was wrong.
 
-**Status 2026-09-06: the fix is built and verified, and not yet flashed.** P13
-(`PUSH-STREAM-AUTH.md`) gates the endpoint on the session. Run under `qemu-user`
-against the real ARM binary with the panel's own configuration, it returns
-`HTTP/1.1 401` to an anonymous client on all four listeners while an
-authenticated client still receives frames, with `/` and `/home.html` unchanged
-and no fault in the request path. The live-panel baseline it has to beat was
-measured the same day and is the table above.
+**Status 2026-09-06: CLOSED on this panel.** P13 (`PUSH-STREAM-AUTH.md`) gates
+the endpoint on the session and shipped in v13, which is the running firmware.
+An anonymous client now gets `HTTP/1.1 401` on all four listeners and an
+authenticated one still receives frames; `/` and `/home.html` are unchanged and
+the request path shows no fault. Verified first under `qemu-user` against the
+real ARM binary with the panel's own configuration, then on the panel after the
+flash: 13/13 patch sites, 401 on all four listeners, conformance 20/20, no
+restarts. The anonymous baseline above is what it replaced.
 
-**Until it is flashed, this is still open on the panel.**
+Still open on stock firmware, which is what the paragraphs above describe.
 
 ### 4. The camera scan broadcasts the LAN inventory
 
@@ -114,6 +115,35 @@ present over HTTPS), so a browser will happily keep and resend it in the clear. 
 way: a client misconfigured to plain HTTP authenticates successfully, then
 silently fails every command, because the session is real and the API redirect is
 not followed. It looks like a working integration that cannot arm.
+
+**What has been done about it, 2026-09-06.** The panel's own behaviour is
+unchanged — fixing it there means refusing a login in Barracuda, which belongs
+with the stage-8 work that makes port 80 redirect-only. What is fixed is the
+path this project controls, in `tuxweb`:
+
+- a login through the shim over an unencrypted connection is **refused** with
+  `403` and a body that names the reason, rather than relayed. `403` and not
+  `401` on purpose: a `401` reads as a bad password and gets retried.
+  `TUXWEB_ALLOW_PLAINTEXT_LOGIN=1` turns it off for anyone who means it, and
+  the shim says at startup which way it is set.
+- the session cookie gets `Secure` put back when the client's connection is
+  encrypted. Through the shim the upstream login is *always* plaintext, because
+  the upstream hop is loopback, so the panel always omits the attribute — this
+  is the only place it can be restored.
+
+Measured on the panel, both directions:
+
+```
+login POST, plaintext shim :8081     403, refused, not relayed
+GET the same page, plaintext         200, 6553 B relayed as before
+push stream with a token, plaintext  200, 12 frames
+login POST direct to Barracuda :80   302, z9ZAqJtI_...; path=/; HttpOnly;
+login POST through the TLS shim      302, z9ZAqJtI_...; path=/; HttpOnly; Secure
+```
+
+The refusal covers a POST anywhere under `/authenticated/`, and any POST whose
+body carries `log1=`, so a client that posts credentials to some other page is
+caught too.
 
 ### 6. Failed logins: FIXED on this panel by P1, still present on stock
 
@@ -199,5 +229,11 @@ Priority order, with what has shipped struck out:
    **already done, and always was.** P1 removed the permanent on-disk lockout,
    and the residual 300 s one is per source address by construction. Verified in
    the binary, not inferred. **Do not raise this again.**
-4. §5 refuse plaintext login, so a misconfigured client fails loudly at the door
-   — **now the top open item.**
+4. ~~§5 refuse plaintext login, so a misconfigured client fails loudly at the
+   door~~ — **done for `tuxweb`, 2026-09-06.** A login through the shim over an
+   unencrypted connection is refused with `403`, and the session cookie gets
+   `Secure` back when the client's connection is encrypted. Measured both ways
+   on the panel. Barracuda's own plaintext login is untouched and belongs with
+   stage 8, which makes port 80 redirect-only.
+5. Make port 80 redirect-only on the panel itself (stage 8), which retires the
+   plaintext login rather than working around it — **now the top open item.**

@@ -40,6 +40,22 @@ Server: \r\n\
 Connection: close\r\n\
 Content-Length: 0\r\n\r\n";
 
+/// Sent to a client that tries to log in over an unencrypted connection.
+///
+/// `tls/THREAT-MODEL.md` §5: the panel accepts a login over plain HTTP, issues
+/// a working session, and drops `Secure` from the cookie when it does, while
+/// every REST call answers `302 -> https`. A client misconfigured that way
+/// authenticates successfully and then silently fails every command — it reads
+/// as a working integration that cannot arm. Refusing is louder and cheaper.
+/// The body says which of the two problems this is; the status alone would be
+/// read as bad credentials.
+const NO_PLAINTEXT_LOGIN: &[u8] = b"HTTP/1.1 403 Forbidden\r\n\
+Server: \r\n\
+Connection: close\r\n\
+Content-Type: text/plain\r\n\
+Content-Length: 90\r\n\r\n\
+Credentials refused on an unencrypted connection: use https, or reach the panel directly.\n";
+
 /// Kept so the shim can log in again when the panel expires its session.
 /// Without it the shim works until the first expiry and then serves nothing,
 /// forever, with no error a client can see -- the silent failure this project
@@ -68,6 +84,11 @@ pub struct Shim {
     /// to stop exactly that. `None` is only for a deliberately open test and
     /// says so loudly at startup.
     pub token: Option<String>,
+    /// Let a password cross an unencrypted connection. Off by default; the
+    /// escape hatch exists so the refusal is a policy someone can turn off
+    /// deliberately, not a wall that sends them back to talking to the panel
+    /// in the clear without noticing.
+    pub allow_plaintext_login: bool,
 }
 
 /// Constant-time compare, so a wrong token cannot be found a byte at a time.
@@ -166,6 +187,32 @@ impl Sink {
         };
         let _ = s.set_write_timeout(Some(d));
     }
+
+    /// Whether anything written here is protected on the wire. The decision to
+    /// carry credentials hangs on this, so it reads the connection rather than
+    /// a flag someone could set and be wrong about.
+    fn is_encrypted(&self) -> bool {
+        matches!(self, Sink::Tls(_))
+    }
+}
+
+/// Does this request carry a password?
+///
+/// The panel's login is a POST to `/authenticated/index.html?url=...` whose body
+/// holds `log=` and `log1=`, the two HMACs. Match on the method and the
+/// directory rather than the exact query, because the query varies with the
+/// page the client wanted; and match `log1=` in whatever body arrived with the
+/// head, because a client that posts credentials somewhere else under
+/// `/authenticated/` is doing the same dangerous thing.
+pub fn carries_credentials(head: &str, body_seen: &[u8]) -> bool {
+    let mut w = head.split_whitespace();
+    let method = w.next().unwrap_or("");
+    let path = w.next().unwrap_or("");
+    if !method.eq_ignore_ascii_case("POST") {
+        return false;
+    }
+    path.starts_with("/authenticated/")
+        || String::from_utf8_lossy(body_seen).contains("log1=")
 }
 
 impl Shim {
@@ -232,29 +279,6 @@ impl Shim {
         }
     }
 
-    /// Read the client's request head so its credential can be checked before
-    /// anything is served. Bounded, and it never reads a body.
-    fn read_request_head(client: &mut TcpStream) -> Result<String, String> {
-        client
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .map_err(|e| e.to_string())?;
-        let mut acc = Vec::new();
-        let mut b = [0u8; 1024];
-        loop {
-            let n = client.read(&mut b).map_err(|e| format!("client read: {e}"))?;
-            if n == 0 {
-                return Err("client closed before sending a request".into());
-            }
-            acc.extend_from_slice(&b[..n]);
-            if find(&acc, b"\r\n\r\n").is_some() {
-                return Ok(String::from_utf8_lossy(&acc).to_string());
-            }
-            if acc.len() > 16 * 1024 {
-                return Err("client request head too large".into());
-            }
-        }
-    }
-
     /// Serve one client for as long as both sides stay up.
     /// Accept clients and fan ONE upstream subscription out to all of them.
     ///
@@ -281,6 +305,18 @@ impl Shim {
             ),
         }
 
+        if self.allow_plaintext_login {
+            println!(
+                "tuxweb shim: *** plaintext login ALLOWED -- a password may cross \
+                 this listener in the clear ***"
+            );
+        } else if self.tls.is_none() {
+            println!(
+                "tuxweb shim: no TLS, so logins through here are refused \
+                 (TUXWEB_ALLOW_PLAINTEXT_LOGIN=1 overrides)"
+            );
+        }
+
         let clients: Arc<Mutex<Vec<Sink>>> = Arc::new(Mutex::new(Vec::new()));
 
         // Accept, authenticate, and enrol. Done off the relay thread so a
@@ -289,6 +325,7 @@ impl Shim {
         let token = self.token.clone();
         let tls = self.tls.clone();
         let upstream = self.upstream.clone();
+        let allow_plaintext_login = self.allow_plaintext_login;
         std::thread::spawn(move || {
             for s in l.incoming() {
                 let raw = match s {
@@ -310,7 +347,23 @@ impl Shim {
                 // and it makes the consumer's session bind to loopback so it
                 // stays valid for every later request through here.
                 if !crate::proxy::path(&head).starts_with("/SimpleDebugger.interface/") {
-                    if let Err(e) = crate::proxy::forward(&upstream, &head, &body, &mut c) {
+                    if carries_credentials(&head, &body) && !c.is_encrypted()
+                        && !allow_plaintext_login
+                    {
+                        let _ = c.write_all(NO_PLAINTEXT_LOGIN);
+                        let _ = c.flush();
+                        eprintln!("shim: {peer}: login refused, connection is not encrypted");
+                        continue;
+                    }
+                    // The panel omits `Secure` from the session cookie when the
+                    // login that produced it was plaintext, and through the shim
+                    // that login is ALWAYS plaintext because the upstream hop is
+                    // loopback. Putting it back on a TLS client connection is
+                    // the one place this defect can be fixed.
+                    let secure = c.is_encrypted();
+                    if let Err(e) =
+                        crate::proxy::forward(&upstream, &head, &body, &mut c, secure)
+                    {
                         eprintln!("shim: {peer}: proxy: {e}");
                     }
                     continue;
@@ -459,6 +512,58 @@ mod tests {
         assert!(d.starts_with("HTTP/1.1 401"), "must be a status a stream client can see");
         assert!(d.contains("Content-Length: 0"), "no body to read silently to EOF");
         assert!(d.to_lowercase().contains("connection: close"));
+    }
+
+    #[test]
+    fn a_login_is_recognised_wherever_it_is_posted() {
+        let post = |p: &str| format!("POST {p} HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(carries_credentials(
+            &post("/authenticated/index.html?url=tuxedoapi.html"), b""));
+        // the query varies with the page the client wanted; the directory does not
+        assert!(carries_credentials(&post("/authenticated/index.html"), b""));
+        // and a POST anywhere carrying the login body is the same exposure
+        assert!(carries_credentials(
+            &post("/somewhere/else"), b"log=aa&log1=bb&identity=cc"));
+
+        // reading a page is not a login, and neither is a REST call
+        assert!(!carries_credentials(
+            "GET /authenticated/index.html HTTP/1.1\r\n\r\n", b""));
+        assert!(!carries_credentials(&post("/system_http_api/GetSecurityStatus"), b""));
+    }
+
+    #[test]
+    fn the_plaintext_refusal_says_what_is_wrong() {
+        let r = String::from_utf8(NO_PLAINTEXT_LOGIN.to_vec()).unwrap();
+        // 403, not 401: a 401 would be read as "wrong password" and retried
+        assert!(r.starts_with("HTTP/1.1 403"), "must not look like bad credentials");
+        let (head, body) = r.split_once("\r\n\r\n").unwrap();
+        let len: usize = head
+            .split("\r\n")
+            .find_map(|l| l.strip_prefix("Content-Length: "))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(len, body.len(), "a wrong length here hangs the client");
+        assert!(body.contains("https"), "the body has to name the fix");
+    }
+
+    #[test]
+    fn secure_is_added_only_where_it_is_missing() {
+        // the trailing ';' after HttpOnly is the panel's, copied from a real
+        // login response; appending naively gives "HttpOnly; ; Secure"
+        let head = "HTTP/1.1 302 Found\r\n\
+Set-Cookie: z9ZAqJtI_1=abc; path=/; HttpOnly;\r\n\
+Set-Cookie: _zFL=q; path=/; Secure\r\n\
+Location: /x\r\n\r\n";
+        let out = crate::proxy::mark_cookies_secure(head);
+        assert!(out.contains("z9ZAqJtI_1=abc; path=/; HttpOnly; Secure\r\n"), "{out}");
+        // already secure: untouched, not doubled
+        assert!(out.contains("_zFL=q; path=/; Secure\r\n"));
+        assert_eq!(out.matches("Secure").count(), 2);
+        // nothing else moves -- the status line and other headers are relayed
+        assert!(out.starts_with("HTTP/1.1 302 Found\r\n"));
+        assert!(out.contains("Location: /x\r\n"));
+        assert!(out.ends_with("\r\n\r\n"));
     }
 
     /// Feeding the shim's re-emitter a real capture must give back the same
