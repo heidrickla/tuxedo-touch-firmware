@@ -2425,33 +2425,73 @@ mode. That still delivers modern TLS, real certificates, an authenticated push
 stream and a new UI — the vendor binary survives as an IPC shim behind loopback.
 Materially worse, but not a dead end, and it is why stage 3 comes first.
 
-### 5.2 `supervis`'s poll period, and the size of the stage-6 window
+### 5.2 `supervis`'s poll period, and the size of the stage-6 window — ANSWERED, 2026-09-06
 
-`SupervisTimeout` re-arms with `ArmSWTimer(timer, 0x258, 0, 0, 0)`. Whether
-`0x258` (600) is milliseconds or seconds is a 1000x difference: a 0.6 s poll or a
-10 minute one. It sets how much slack stage 6 has before the relaunch counter
-starts climbing, and therefore how conservative the deadman timer must be.
+**Units are seconds, and the number that matters is 5, not 600.**
 
-**Cheapest experiment:** free. Read `CreateSWTimer`/`ArmSWTimer` in `supervis`
-statically and determine the units. Also read `SuperViseMemoryUsage` /
-`BARRACUDA_MEMORY` for the memory ceiling while in there — a ~1 MB Rust process
-is almost certainly far under it, but "almost certainly" is not a number.
+`ArmSWTimer(void* timer, int secs, long long, bool repeating)` writes its `int`
+argument straight into `it_value.tv_sec` of the `itimerspec` it hands
+`timer_settime` — `str r7, [fp,#-0x2c]`, with the struct based at `fp-0x34`, so
+that slot is `tv_sec`. The `bool` selects repeating: set, and `it_interval` is
+filled too; clear, and the timer is one-shot and its handler re-arms it.
 
-### 5.3 Does killing Barracuda risk the hardware watchdog?
+`main` creates **seven** timers, and the `0x258` one is not the interesting one:
 
-Both `supervis` and Barracuda hold fd 4 on `/dev/watchdog`; the standard Linux
-driver refuses a second open, so inheritance is the likely explanation but was
-not confirmed. **INFERRED.** If Barracuda's exit somehow released the watchdog,
-the stage-6 window would end in a reset. It should not — closing one duplicate of
-an open file description does not close the other — but "should not" is doing
-work here.
+| timer | handler | period |
+|---|---|---|
+| six app supervisors | `RelaunchBarracudaHndlr`, `relaunchTuxedo`, `RelaunchTcHndlr`, `RelaunchVrecHndlr`, `RelaunchFtpcliHndlr`, `RelaunchAudioappHndlr` | **5 s**, one-shot, re-armed |
+| housekeeping | `SupervisTimeout` — `get_num_fds`, `SuperViseMemoryUsage` | 600 s |
+| watchdog kick | `wdg_init`'s handler | **1 s, repeating** |
 
-**Cheapest experiment:** free, static. Confirm `wdg_init` opens `/dev/watchdog`
-once at `supervis` startup and never closes it, and that no `Barracuda` symbol
-mentions the watchdog (already **MEASURED**: zero watchdog/wdg symbols in
-Barracuda). Unresolved side note kept for the record: the extracted `config.gz`
-says `# CONFIG_WATCHDOG is not set` yet `/dev/watchdog` exists and is kicked. The
-config is probably stale or mismatched; it was not reconciled.
+So `0x258` is a ten-minute *housekeeping* pass, and **Barracuda is checked every
+5 seconds**. The earlier framing of this question — 0.6 s versus 10 minutes —
+had the wrong timer in view.
+
+**Corroborated by stage 5**, which is the point of having both: killing
+Barracuda produced a new pid within 2 s, impossible on a 600 s poll and
+consistent with a 5 s one-shot caught partway through.
+
+**Stage 6 therefore has a ~5 second window**, not ten minutes. The deadman has
+to be sized against that.
+
+**The memory ceiling, which the question also asked for as a number.** It is a
+proportion, not a constant. `__static_initialization_and_destruction_0` computes
+all four limits from `SYSTEM_TOTAL_MEMORY` at startup:
+
+| global | value |
+|---|---|
+| `SYSTEM_MAX_ALLOWED_MEMORY` | 95% of total — and `SuperViseMemoryUsage` compares **system-wide** usage against it, not per-process |
+| `BARRACUDA_MEMORY` | **25% of total** |
+| `TUXEDO_MAX_MEMORY` | 75% of total |
+| `VIDAPP_MAX_MEMORY` | 75% of total |
+
+On this panel `MemTotal` is 126016 kB, so **`BARRACUDA_MEMORY` is about
+31500 kB (~30 MB)**. Measured alongside it: Barracuda's current RSS is 6104 kB
+and `/tuxedo`'s is 32924 kB. A ~1 MB Rust process has roughly thirty times the
+headroom it needs, which is now a number rather than a hope.
+
+### 5.3 Does killing Barracuda risk the hardware watchdog? — ANSWERED NO, 2026-09-06
+
+It cannot. Barracuda has no code that could open or close it.
+
+- `wdg_init()` @`0xb590` does `open("/dev/watchdog", O_RDWR)` **once**, stores
+  the fd in a global, `ioctl`s it to enable, and arms a kick timer with
+  `ArmSWTimer(t, 1, 0, 0, 1)` — **1 second, repeating** (the `bool` sets
+  `it_interval`). The only close is in `wdg_deinit()`, a separate teardown path.
+- Barracuda contains **zero** watchdog symbols and **zero** occurrences of the
+  string `/dev/watchdog`. `supervis` has three symbols
+  (`wdg_init`, `wdg_deinit`, `WdgKickHndlr`) and exactly one such string.
+
+So Barracuda's fd 4 is inherited across the `system("/opt/webserver/Barracuda &")`
+launch and nothing more. Closing one descriptor of an inherited open file
+description does not close `supervis`'s, and Barracuda has no way to ask.
+Upgraded from **INFERRED** to **READ**: the previous wording rested on "should
+not", and the thing that removes the doubt is that the code to do it does not
+exist in that binary.
+
+Unresolved side note kept for the record: the extracted `config.gz` says
+`# CONFIG_WATCHDOG is not set` yet `/dev/watchdog` exists and is kicked once a
+second. The config is probably stale or mismatched; it was not reconciled.
 
 ### 5.4 Does `comm` follow the basename? — ANSWERED YES, 2026-09-06
 
