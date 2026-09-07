@@ -3174,3 +3174,15 @@ offset 0 because `mem.index` was ignored.
   killed its own ssh session (`TRAPS.md` §4). Note `/tmp` is tmpfs: a panel
   reboot loses the log, which is acceptable — a reboot voids the soak anyway,
   and losing the log is how we would find out.
+
+  **At 11.8 h (142 samples):** pid unchanged, listener up in 142 of 142, fds
+  flat at 6, RSS 544 -> 764 kB (+1.9 kB/h, which puts the 31 MB ceiling 670
+  days out), Barracuda flat at ~12.4 MB.
+
+  `MemFree` fell 67332 -> 57528 kB over the same period, which reads like a
+  leak and is not one: `Cached` is 28120 kB against `Buffers` 8 kB and `Slab`
+  4284 kB, so the decline is reclaimable page cache. **The sampler does not
+  record `Cached`, so its `MemFree` column cannot be read on its own** -- check
+  `/proc/meminfo` before treating a fall as growth. The column is deliberately
+  not being added mid-run: the report parses by position and this is a running
+  measurement.
