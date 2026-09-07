@@ -69,6 +69,7 @@ VENDOR = {
     "ProgCV.hdr": 0x8720,
     "seconboot.hdr": 0xBDA7,
 }
+VENDOR_CHECKED = 0
 if FW and os.path.isdir(FW):
     for name, want in VENDOR.items():
         p = os.path.join(FW, name)
@@ -77,7 +78,17 @@ if FW and os.path.isdir(FW):
             continue
         size = struct.unpack_from("<I", open(p, "rb").read(HDR_SIZE), 8)[0]
         check(f"vendor {name}", checksum(p, HDR_SIZE, size), want)
+        VENDOR_CHECKED += 1
 else:
     print("skip vendor images (set TUXEDO_FW_DIR to enable)")
+
+# State the coverage as a NUMBER rather than leaving it to be inferred from
+# which lines are absent. checks.sh used to decide by looking for the string
+# "skip vendor images", which is wrong whenever TUXEDO_FW_DIR points at a real
+# directory holding none of the five headers: every image prints
+# "skip <name> (absent)", the summary line above never appears, and the wrapper
+# concluded vendor images had been verified when nothing had. A count cannot be
+# read that way round.
+print(f"vendor images checked: {VENDOR_CHECKED}")
 
 sys.exit(FAILED)

@@ -184,11 +184,23 @@ check_redirect_gate() {
 
 # 7. `$?` after `cmd || true` is the status of true, never of cmd. Made the one
 #    line meant to report success always report success.
+# The awk exit status is judged, not just whether it printed anything.
+#
+# Same conflation as check_hdr_checksum, one severity down: `awk ... | grep -q .`
+# reads empty output as "no violations", and awk missing or erroring produces
+# empty output too. Lower stakes - awk is present wherever this runs, and this
+# is a lint rather than the gate in front of a flash - but it is the same shape
+# and free to close while in the file.
 check_status_after_or_true() {
-    local bad=""
+    local bad="" hits rc
     for f in $(ls_files '*.sh' 'upload-handler/*'); do
         [ -f "$f" ] || continue
-        awk '/\|\| *true *$/ {prev=NR} /\$\?/ {if (NR==prev+1) print FILENAME": "NR}' "$f" | grep -q . && bad="$bad $f"
+        hits=$(awk '/\|\| *true *$/ {prev=NR} /\$\?/ {if (NR==prev+1) print FILENAME": "NR}' "$f" 2>&1); rc=$?
+        if [ "$rc" -ne 0 ]; then
+            bad="$bad $f(awk exited $rc, so it was not scanned)"
+        elif [ -n "$hits" ]; then
+            bad="$bad $f"
+        fi
     done
     [ -z "$bad" ] && pass "no \$? read after || true" || fail "no \$? read after || true" "$bad"
 }
@@ -234,9 +246,33 @@ check_hdr_checksum() {
         fail "header checksum" \
              "ci/test_hdr.py exited $rc - it did not pass, or did not run"
     elif printf '%s\n' "$out" | grep -q FAIL; then
-        fail "header checksum" "see ci/test_hdr.py output"
+        fail "header checksum" "see the output above"
     else
-        pass "header checksum"
+        # The verdict line carries the coverage, because the verdict line is
+        # what gets read. test_hdr.py checks the algorithm against four
+        # synthetic fixtures and the five vendor headers only when
+        # TUXEDO_FW_DIR points at them. A bare "ok" invites the reader to
+        # conclude real firmware was verified, which is the claim TRAPS
+        # section 2 exists to stop: verify the card, not the staging dir.
+        #
+        # Read from test_hdr.py's own COUNT, not from the absence of a "skip"
+        # line. A first version of this looked for the string "skip vendor
+        # images" and got it wrong the moment TUXEDO_FW_DIR pointed at a real
+        # directory holding none of the headers: each image prints
+        # "skip <name> (absent)", that summary line never appears, and the
+        # wrapper reported vendor images verified having checked none. The
+        # same "did not run reads as passed" defect this function was rewritten
+        # to remove, reintroduced one level down.
+        local n
+        n=$(printf '%s\n' "$out" | sed -n 's/^vendor images checked: \([0-9]*\)$/\1/p')
+        if [ -z "$n" ]; then
+            fail "header checksum" \
+                 "ci/test_hdr.py printed no coverage count; it is older than this check"
+        elif [ "$n" -eq 0 ]; then
+            pass "header checksum (algorithm only - set TUXEDO_FW_DIR for vendor images)"
+        else
+            pass "header checksum (algorithm and $n vendor image(s))"
+        fi
     fi
 }
 
