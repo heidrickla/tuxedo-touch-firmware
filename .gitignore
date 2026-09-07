@@ -7,3 +7,7 @@
 __pycache__/
 build/
 venv/
+
+# the push-stream captures the tuxweb tests are built on; no key material,
+# no addresses, and without them a clean checkout cannot run its own tests
+!tuxweb/tests/fixtures/*.bin

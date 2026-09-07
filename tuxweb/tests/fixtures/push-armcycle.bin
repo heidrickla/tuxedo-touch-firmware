@@ -1,0 +1,363 @@
+HTTP/1.1 200 OK
+Date: Sun, 06 Sep 2026 14:04:29 GMT
+Server: 
+Connection: Close
+Cache-Control: no-store, no-cache, must-revalidate
+Pragma: no-cache
+Content-type: multipart/x-mixed-replace;boundary="EH912ZZ"
+
+--EH912ZZ
+Content-type: text/plain
+
+['setCid',3461147938]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["Client Connected"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','noOfClient',[2]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:504:1:P1  H:1:0:3:3"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:1:P1  H:1:0:3:3"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:1:P1  H:1:0:3:3"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:1:P1  H:1:0:3:3"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:fe:þ1Ready To Arm:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:18:1 P1  H:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:fe:þ1Ready To Arm:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:fe:þ1Ready To Arm:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ259  Secs Remaining:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ259  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ259  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ259  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ254  Secs Remaining:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ254  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ254  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ254  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ244  Secs Remaining:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ244  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ244  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ244  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ234  Secs Remaining:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ234  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ234  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ234  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:18:1 P1  H:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ234  Secs Remaining:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ234  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ234  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ234  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ21  Secs Remaining:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ21  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ21  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ21  Secs Remaining"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ2Armed Stay:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:18:1 P1  H:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["-1"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ2Armed Stay:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:ff:ÿ2Armed Stay:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:ÿ2Armed Stay"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:21:1:fe:þ1Ready To Arm:2"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--
+--EH912ZZ
+Content-type: text/plain
+
+['ud','SimpleDbgServer2ClientIntf','statusMessageText',["0:-1:þ1Ready To Arm"]]
+--EH912ZZ--

@@ -1,0 +1,69 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The same script the pre-push hook and the Gitea runner use. Every check in
+  # it corresponds to a failure that actually happened here, several of them
+  # costing a flash, so this is the job that matters.
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # check_attribution reads the whole history, not HEAD
+
+      - name: install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-numpy binutils-arm-linux-gnueabi
+
+      - name: run checks
+        run: bash ci/checks.sh
+
+  # tuxweb is the Barracuda replacement; its tests pin the wire format the
+  # panel's own consumers depend on, including the vendor's RFC 2046 violation.
+  tuxweb:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tuxweb
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+
+      - name: test
+        run: cargo test --locked --all-targets
+
+      - name: build
+        run: cargo build --locked --release
+
+      # Cross-compilation is what actually ships, and it has its own failure
+      # mode: ring needs a C cross-compiler, and cc-rs looks for one that does
+      # not exist on Ubuntu. Building it here means BUILD.md's recipe is tested
+      # rather than remembered.
+      - name: cross-build for the panel
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-arm-linux-gnueabi
+          rustup target add arm-unknown-linux-musleabi
+          cargo build --locked --release --target arm-unknown-linux-musleabi
+        env:
+          CC_arm_unknown_linux_musleabi: arm-linux-gnueabi-gcc
+          AR_arm_unknown_linux_musleabi: arm-linux-gnueabi-ar
+
+      - name: the shipped binary is a static ARM executable
+        run: |
+          f=target/arm-unknown-linux-musleabi/release/tuxweb
+          file "$f"
+          file "$f" | grep -q "ARM" || { echo "not an ARM binary"; exit 1; }
+          file "$f" | grep -q "statically linked" || {
+            echo "not static -- the panel has glibc 2.5 and will not load it"; exit 1; }
