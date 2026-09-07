@@ -5,6 +5,14 @@
 # string it is looking for has disclosed it. This file previously held a real
 # hostname and two personal domains as regexes, in a public repo.
 #
+# ⚠ WITHOUT ci/pubscan.local, PUBSCAN CANNOT GIVE A CLEAN RESULT, and it says
+# so rather than implying one. A fresh clone has no local file, so the
+# author-specific detectors do not exist -- and on 2026-09-07 those were the
+# ONLY detectors that caught anything: an author hostname in pubscan.py's own
+# docstring, a monitoring host's DNS name, and author paths in a sibling repo.
+# The structural detectors that survive a clone would have found none of them.
+# Restore this file before treating any repo as checked.
+#
 # Format: label<TAB>regex   (one per line, matched case-insensitively)
 # Lines that are blank, start with #, or contain no tab are ignored.
 #

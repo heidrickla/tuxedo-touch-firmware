@@ -224,6 +224,23 @@ VENDOR = [
 ]
 
 
+def untracked(repo: str) -> list[str]:
+    """Files that are neither tracked nor ignored.
+
+    These are invisible to `git ls-files` and were the entire exposure in a
+    sibling repo: 22 untracked, unignored files carrying a real MAC, house
+    addresses and author paths, in a repo that is public. Scanning only tracked
+    files would have called it clean.
+
+    They are reported in their own bucket rather than folded into the total,
+    because they are not published YET -- but they are one `git add -A` from
+    being exactly that, which is the state this tool is meant to be run before.
+    """
+    r = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
+                       cwd=repo, capture_output=True, text=True)
+    return [f for f in r.stdout.splitlines() if f.strip()] if not r.returncode else []
+
+
 def tracked(repo: str) -> list[str]:
     r = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True,
                        text=True)
@@ -253,8 +270,37 @@ def main() -> int:
             continue
 
     print("pubscan: %d tracked files in %s" % (len(blobs), args.repo))
-    print("         (%s excluded: they hold detector patterns by construction)\n"
+    print("         (%s excluded: they hold detector patterns by construction)"
           % ", ".join(sorted(SELF)))
+
+    # SAY HOW MANY AUTHOR DETECTORS ARE LOADED, AS A NUMBER.
+    #
+    # The author-specific patterns live in ci/pubscan.local, which .gitignore
+    # excludes -- so a FRESH CLONE HAS NONE OF THEM. Eight of the fourteen
+    # categories simply vanish, silently, and the closing line was byte
+    # identical either way. The eight that vanish are the ones that caught every
+    # leak found on 2026-09-07: the author hostname in this file's own
+    # docstring, the monitoring host's DNS name, and the author paths in a
+    # sibling repo. The six structural detectors that survive would have caught
+    # none of them.
+    #
+    # The old docstring reasoned that an absent file "cannot be a false clean".
+    # That is true for a stranger, who has no author literals to find. It is
+    # FALSE for the author on a fresh clone -- and re-cloning is the state this
+    # repo was just told to expect. Right for the reader it imagined, wrong for
+    # the one it gets. So: print the count, and never claim "no author
+    # identifiers found" from a run that could not look for them.
+    n_local = len(_local_identifiers())
+    if n_local:
+        print("         author literals loaded: %d from ci/pubscan.local" % n_local)
+    else:
+        print("         author literals loaded: 0 -- ci/pubscan.local ABSENT.")
+        print("         THE AUTHOR-SPECIFIC DETECTORS DID NOT RUN. This scan")
+        print("         checked structure only; it cannot see a hostname, a")
+        print("         domain, a subnet or a local path. --selftest still")
+        print("         passes because it tests the pattern SHAPE against a")
+        print("         synthetic prefix, not whether a real one is loaded.")
+    print()
     total = 0
     for label, rx in YOURS:
         find = rx if callable(rx) else rx.findall
@@ -300,22 +346,74 @@ def main() -> int:
             b = blobs.get(f)
             if b and rx.findall(b):
                 leaked.setdefault(f, []).append(label)
+    print()
     if leaked:
-        print()
         for f, labels in leaked.items():
             print("  !! %s CONTAINS an identifier from pubscan.local (%s)"
                   % (f, ", ".join(labels)))
             print("     A detector file that names what it hunts has disclosed it.")
         total += len(leaked)
+    elif n_local:
+        # Say the check RAN. Printing only on failure makes a pass and a
+        # zero-pattern loop identical in the output, which is the same defect
+        # this check exists to catch.
+        print("    %-26s %3d file(s)  %4d pattern(s)   [clean]"
+              % ("detector files vs local", len(SELF), n_local))
+    else:
+        print("    detector files vs local   NOT CHECKED -- no local patterns")
+
+    # UNTRACKED BUT NOT IGNORED. Invisible to `git ls-files`, and this was the
+    # entire exposure in a sibling repo: 22 such files carrying a real MAC,
+    # house addresses and author paths, in a public repo, where a tracked-only
+    # scan reported clean. Kept out of the total because they are not published
+    # yet -- and reported loudly because they are one `git add -A` from being
+    # exactly that, which is the state this tool is meant to be run before.
+    others = untracked(args.repo)
+    obody = {}
+    for f in others:
+        try:
+            with open(os.path.join(args.repo, f), "rb") as fh:
+                obody[f] = fh.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+    ohits = {}
+    for label, rx in YOURS:
+        find = rx if callable(rx) else rx.findall
+        for f, b in obody.items():
+            if find(b):
+                ohits.setdefault(f, set()).add(label)
+    print()
+    if ohits:
+        print("  !! %d untracked, UNIGNORED file(s) carry your identifiers."
+              % len(ohits))
+        print("     Not published yet. One `git add -A` away from being so.")
+        for f in sorted(ohits)[:8]:
+            print("        %-50s %s" % (f, ", ".join(sorted(ohits[f]))))
+        if len(ohits) > 8:
+            print("        ... and %d more" % (len(ohits) - 8))
+    else:
+        print("    untracked+unignored        %3d file(s) scanned, none carry identifiers"
+              % len(obody))
 
     print()
     if total:
         print("%d occurrence(s) of your own identifiers are in tracked files." % total)
         print("Publishing discloses them. Genericise, or decide deliberately")
         print("that they are fine -- but decide, do not default.")
+    elif not n_local:
+        # NEVER print a clean verdict from a run that could not look. Without
+        # pubscan.local this scan has no hostname, domain, subnet or path to
+        # search for, so "none found" would be a statement about the tool's
+        # configuration wearing the clothes of a statement about the repo.
+        print("NOTHING FOUND BY THE STRUCTURAL DETECTORS -- and the author-")
+        print("specific ones did not run at all. This is NOT a clean result.")
+        print("Restore ci/pubscan.local (see pubscan.local.example) and re-run")
+        print("before treating this repo as checked.")
     else:
-        print("No author identifiers found. That is not a promise the content is")
-        print("safe to publish, only that this list did not match.")
+        print("No author identifiers found, against %d structural and %d author"
+              % (len(YOURS) - n_local, n_local))
+        print("pattern(s). That is not a promise the content is safe to publish,")
+        print("only that this list did not match.")
     return 0            # a report, never a gate. See the module docstring.
 
 
