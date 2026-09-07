@@ -69,9 +69,11 @@ fn main() {
         println!("tuxweb: logged in, session acquired from this host");
         let s = shim::Shim {
             upstream: args[2].clone(),
-            cookie,
+            cookie: std::cell::RefCell::new(cookie),
             bind: args[5].clone(),
             token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
+            // keep the credentials so the session can be renewed when it expires
+            creds: Some(shim::Creds { user: args[3].clone(), password: pw }),
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");
@@ -83,9 +85,11 @@ fn main() {
     if args.len() == 5 && args[1] == "--shim" {
         let s = shim::Shim {
             upstream: args[2].clone(),
-            cookie: args[3].clone(),
+            cookie: std::cell::RefCell::new(args[3].clone()),
             bind: args[4].clone(),
             token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
+            // a bare cookie cannot be renewed; expiry is fatal and says so
+            creds: None,
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");

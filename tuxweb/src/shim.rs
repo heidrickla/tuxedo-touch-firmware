@@ -40,10 +40,23 @@ Server: \r\n\
 Connection: close\r\n\
 Content-Length: 0\r\n\r\n";
 
+/// Kept so the shim can log in again when the panel expires its session.
+/// Without it the shim works until the first expiry and then serves nothing,
+/// forever, with no error a client can see -- the silent failure this project
+/// keeps getting bitten by.
+pub struct Creds {
+    pub user: String,
+    pub password: String,
+}
+
 pub struct Shim {
     pub upstream: String,
-    pub cookie: String,
+    /// Replaced in place on re-login.
+    pub cookie: std::cell::RefCell<String>,
     pub bind: String,
+    /// `None` means a bare cookie was supplied and cannot be renewed; the shim
+    /// then fails honestly on expiry rather than pretending.
+    pub creds: Option<Creds>,
     /// Required of every client. The shim holds ONE authenticated upstream
     /// session and re-serves it, so without this it would hand live alarm
     /// state to anything that can reach the port — undoing P13, which exists
@@ -87,17 +100,45 @@ fn presents_token(req_head: &str, want: &str) -> bool {
     false
 }
 
+/// Why the relay stopped.
+enum Stop {
+    ClientGone,
+    UpstreamEnded(String),
+}
+
 impl Shim {
-    /// Open the upstream push stream. Returns the socket with the response head
-    /// already consumed, so the caller reads body bytes only.
+    /// Open the upstream stream, logging in again if the session has expired.
+    ///
+    /// Re-login is attempted at most once per call. Every successful open
+    /// re-registers, and registering makes `/tuxedo` FLUSH the reply queue, so
+    /// this must never become a retry loop.
     fn open_upstream(&self) -> Result<TcpStream, String> {
+        match self.open_upstream_once() {
+            Ok(s) => return Ok(s),
+            Err(e) if e.contains("401") => {
+                let Some(c) = self.creds.as_ref() else {
+                    return Err(format!(
+                        "{e} (session expired and no credentials to renew it)"
+                    ));
+                };
+                eprintln!("shim: upstream 401 -- session expired, logging in again");
+                let fresh = crate::login::login(&self.upstream, &c.user, &c.password)
+                    .map_err(|le| format!("re-login failed: {le}"))?;
+                *self.cookie.borrow_mut() = fresh;
+                return self.open_upstream_once();
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    fn open_upstream_once(&self) -> Result<TcpStream, String> {
         let mut s = TcpStream::connect(&self.upstream)
             .map_err(|e| format!("connect {}: {e}", self.upstream))?;
         let host = self.upstream.split(':').next().unwrap_or("panel");
         let req = format!(
             "GET /SimpleDebugger.interface/G. HTTP/1.1\r\nHost: {host}\r\n\
              Cookie: {}\r\nConnection: keep-alive\r\n\r\n",
-            self.cookie
+            self.cookie.borrow()
         );
         s.write_all(req.as_bytes()).map_err(|e| format!("upstream write: {e}"))?;
         s.set_read_timeout(Some(Duration::from_secs(40)))
@@ -153,7 +194,17 @@ impl Shim {
     }
 
     /// Serve one client for as long as both sides stay up.
+    /// Serve one client, surviving upstream drops.
+    ///
+    /// The panel ends this stream routinely, so a shim that gave up on the
+    /// first EOF would look fine in a short test and die overnight. Reconnects
+    /// are bounded and spaced: every reopen re-registers, and registering makes
+    /// the panel flush its reply queue, so a tight retry loop would be actively
+    /// harmful rather than merely wasteful.
     fn pump(&self, mut client: TcpStream) -> Result<usize, String> {
+        const MAX_RECONNECTS: u32 = 6;
+        const BACKOFF: [u64; 6] = [1, 2, 5, 10, 20, 30];
+
         let head = Self::read_request_head(&mut client)?;
         if let Some(want) = self.token.as_deref() {
             if !presents_token(&head, want) {
@@ -162,18 +213,49 @@ impl Shim {
                 return Err("denied: no valid token".into());
             }
         }
+
+        // Open upstream BEFORE promising the client a 200: if the panel will
+        // not talk to us, the client should learn that now, not from a stream
+        // that never produces a byte.
         let mut up = self.open_upstream()?;
         client.write_all(HEAD).map_err(|e| format!("client write: {e}"))?;
         client.flush().ok();
 
+        let mut sent = 0usize;
+        let mut drops = 0u32;
+        loop {
+            match self.relay(&mut up, &mut client, &mut sent) {
+                Stop::ClientGone => return Ok(sent),
+                Stop::UpstreamEnded(why) => {
+                    if drops >= MAX_RECONNECTS {
+                        return Err(format!(
+                            "upstream ended {drops} times, giving up ({why})"
+                        ));
+                    }
+                    let wait = BACKOFF[drops as usize];
+                    drops += 1;
+                    eprintln!(
+                        "shim: upstream ended ({why}); reconnect {drops}/{MAX_RECONNECTS} in {wait}s"
+                    );
+                    std::thread::sleep(Duration::from_secs(wait));
+                    up = match self.open_upstream() {
+                        Ok(u) => u,
+                        Err(e) => return Err(format!("reconnect failed: {e}")),
+                    };
+                }
+            }
+        }
+    }
+
+    /// Copy parts upstream -> client until one side stops.
+    fn relay(&self, up: &mut TcpStream, client: &mut TcpStream, sent: &mut usize) -> Stop {
         let mut acc: Vec<u8> = Vec::new();
         let mut buf = [0u8; 4096];
-        let mut sent = 0usize;
         loop {
             let n = match up.read(&mut buf) {
-                Ok(0) => return Ok(sent),
+                Ok(0) => return Stop::UpstreamEnded("closed".into()),
                 Ok(n) => n,
-                Err(e) => return Err(format!("upstream read: {e}")),
+                Err(e) => return Stop::UpstreamEnded(e.to_string()),
             };
             acc.extend_from_slice(&buf[..n]);
 
@@ -187,10 +269,10 @@ impl Shim {
                 p.encode(&mut out);
             }
             if client.write_all(&out).is_err() {
-                return Ok(sent); // client went away; not an error
+                return Stop::ClientGone;
             }
             client.flush().ok();
-            sent += parts.len();
+            *sent += parts.len();
             let keep = acc.len() - rest;
             acc.drain(..keep);
         }

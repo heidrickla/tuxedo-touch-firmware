@@ -1682,9 +1682,26 @@ panel's. §4.10 already anticipates a token-gated stream; this is that.
 Running with no token set is still possible and prints a loud warning naming the
 bind address, because an open alarm feed should never be quiet about it.
 
-**Also not yet done:** one client at a time — measured, not assumed: back-to-back
-probes during testing returned nothing until spaced apart, because a second
-client waits for the first to finish. And no TLS termination in this mode. Fan-out matters beyond convenience — each upstream registration makes the
+**Session renewal: implemented, NOT verified on hardware.** The shim keeps the
+credentials, and on an upstream `401` it logs in again once and retries; on an
+upstream drop it reconnects with a bounded, spaced backoff (6 attempts,
+1/2/5/10/20/30 s) because **every reopen re-registers and registering flushes
+the panel's reply queue**, so a tight retry loop would be actively harmful. With
+a bare cookie and no credentials it fails honestly instead of pretending.
+
+That path has **not been exercised against the panel**. An attempt to force it
+by logging in from another host did not invalidate the shim's session — no
+`401`, no re-login line in its log — so the earlier guess that a new login voids
+prior sessions is unsupported. Verifying it needs either a session left to
+expire on its own or a way to revoke one; until then this is code that compiles
+and is unit-tested, not a demonstrated recovery.
+
+**One client at a time** — measured, not assumed, and twice mistaken for
+something else: back-to-back probes returned nothing until spaced apart, which
+looked first like a broken gate and later like a failed reconnect. A second
+client waits for the first.
+
+**No TLS termination in this mode.** Fan-out matters beyond convenience — each upstream registration makes the
 panel flush its reply queue, so one shared subscription is strictly better than
 one per client.
 
