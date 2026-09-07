@@ -2355,8 +2355,19 @@ Mandatory safety features, all in the binary before this stage runs:
 **Proves — and this is the decisive test of the entire plan:** that a process
 other than Barracuda, as sole reader, actually receives tuxedo's replies. Lewis
 presses keys on the touchscreen; the log fills with 556-byte messages whose
-`msgType` values match the 43-entry map. It also gives us the raw payloads for
-the 36 msgTypes that were never decoded past `+0x0E`.
+`msgType` values match the 43 constants Barracuda's own dispatch compares.
+
+It is no longer how we get the payloads. `reply-layouts.txt` decodes all 92
+send sites and 26 msgTypes statically, so **the window now confirms the map
+rather than discovering it** — and a disagreement between the two is itself the
+result, with the capture right and the static read incomplete (`TRAPS.md` §1).
+Expect only the relayed set unless keys are pressed that exercise more: the
+captures so far carry 18, 21 and 504.
+
+The runbook is `emu/stage6-panel.sh`, split into phases so the booked window
+holds only the part that needs someone at the panel. `phase0` is read-only,
+can be run days early, and already passes on the live panel except for the
+staged binary.
 
 #### The shim CANNOT be served from queue replies alone — corrected 2026-09-07
 
