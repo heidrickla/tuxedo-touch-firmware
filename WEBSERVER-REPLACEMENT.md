@@ -261,21 +261,70 @@ Worth noting while we are here: the key comes from `aes_init` inside the
 binary, so the `enc` in the filename is obfuscation, not protection, against
 anyone holding the firmware.
 
-**The choice, which is an owner decision and not a technical one:**
+**DECIDED 2026-09-06: (a) — `tuxweb` maintains the vendor file.** Keypad and web
+stay one account list and the system-data count stays right. The rest of this
+section is the format that decision requires, all of it verified against the
+panel's real file rather than inferred from the writer.
 
-- **(a) Maintain the vendor file.** `tuxweb` writes the vendor's JSON through
-  the same AES-OFB envelope. Keypad and web stay one account list, the system
-  data count stays right. Cost: reproduce a schema and an envelope we would
-  otherwise never touch, and keep matching them.
-- **(b) Own our store and accept the split.** Cheapest, and it is what §1.6
-  currently says. Requires documenting plainly that the keypad's account screen
-  edits a list the web no longer uses.
-- **(c) Own our store, mirror a minimal vendor file.** Write just enough for the
-  touchscreen and the count to stay coherent, without treating the vendor file
-  as the source of truth.
+#### The account file format
 
-Until this is decided, **§1.6 is not settled and stage 6 should not assume it
-is.**
+**Envelope.** AES-128 in **OFB**, no padding, so ciphertext length equals
+plaintext length exactly — the panel's file is 1053 bytes of each. The call is
+`AES_ofb(128, key, in, out, len, 0, iv)` and both operands are 16-byte constants
+in `/tuxedo`'s `.data`:
+
+| | address in `/tuxedo` |
+|---|---|
+| key | `0xd09654` |
+| iv | `0xd09664` |
+
+They are **static, compiled in, and therefore identical on every panel running
+this firmware**. Deliberately not reproduced here, and `tuxweb` should not embed
+them either — it should read them out of `/tuxedo` at runtime, which keeps key
+material out of this repository and follows the vendor if it ever changes them.
+
+Because they are static, `enc` in the filename is obfuscation. Anyone holding
+the firmware can decrypt any panel's account file, which contains `userName`,
+`passWord` and `EncNamePass` for every web user. That belongs in the threat
+model, not just here.
+
+**Two files, byte identical.** `webuseraccountsenc.json` and
+`webuseraccountsenc_sec.json` had the **same md5** on the panel. `_sec` is a
+mirror, **not a CRC sidecar** — which means §1.6's stated reason for not
+inheriting vendor files, an unknown CRC scheme, genuinely does not apply to this
+one. Writing the file means writing the same bytes twice.
+
+**Schema**, recovered from `createWebUserAccSetupJSONFile` and confirmed by
+decrypting the live file:
+
+```
+{"WEBUSERS": [ five entries, always five, matching the 5-slot count loop
+               in get_systemdata_message ]}
+```
+
+each entry carrying exactly these ten fields:
+
+| field | type |
+|---|---|
+| `u8UserId` | int |
+| `userName` | string |
+| `passWord` | string |
+| `EncNamePass` | string |
+| `status` | int |
+| `accountLocked` | int |
+| `accLockedTime` | int |
+| `userCreatedDate` | int |
+| `userUpdatedDate` | int |
+| `accLockedCount` | int |
+
+**Key order is not stable and does not matter.** In the live file entry `[0]`
+orders the last five fields differently from entries `[1]`–`[4]`. The vendor is
+inconsistent with itself, which is useful: it proves `/tuxedo` reads these by
+name, so a writer does not have to reproduce an ordering.
+
+**Still to establish before writing entries:** how `passWord` and `EncNamePass`
+are derived. Reading and rewriting the file is fully specified; *creating a
+credential the keypad will accept* is not, and that is the next piece of work.
 
 ### 1.7 The blockers the IPC mapping found, and which one reshapes the plan
 

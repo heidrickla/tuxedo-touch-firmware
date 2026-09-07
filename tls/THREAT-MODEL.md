@@ -207,6 +207,31 @@ relaunches. So a replacement that fails to start does not fail quietly — it
 resets the unit. This is a robustness constraint on the replacement, not an
 attack, but it is the failure mode most likely to be hit by accident.
 
+### 9. The web account store is encrypted with a key compiled into the firmware
+
+**MEASURED 2026-09-06.** `/opt/tuxedo/configuration/webuseraccountsenc.json`
+holds every web user's `userName`, `passWord` and `EncNamePass`. It is AES-128 in
+OFB mode, and both the 16-byte key and the 16-byte IV are **static constants in
+`/tuxedo`'s `.data`** (`0xd09654`, `0xd09664`). They are identical on every panel
+running this firmware.
+
+So the `enc` is obfuscation, not protection: anyone holding the firmware image —
+a public download — can decrypt any panel's account file. Verified by decrypting
+this unit's own file using the constants read out of the binary; it produced
+valid JSON on the first attempt.
+
+`webuseraccountsenc_sec.json` is a **byte-identical mirror**, not a checksum, so
+it provides no tamper detection either.
+
+The consequence is bounded by what is already true: the file is world-readable
+on a box where everything runs as root, so it grants a *local* attacker nothing
+new. What it does mean is that account material is recoverable from any backup,
+image dump, or discarded unit — no login required, only bytes.
+
+Owner action is the same as §2: treat physical access to the panel as total, and
+do not reuse the web password anywhere else. This compounds the point in
+`README.md` that on this panel the web password is also the panel user code.
+
 ## The honest summary
 
 After this work the panel has **a real certificate and a modern TLS stack**, and
