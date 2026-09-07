@@ -114,6 +114,12 @@ check_secrets() {
 check_vendor_blobs() {
     local bad=""
     for f in $(git ls-files); do
+        # Our own captures of the wire, not vendor content: recorded frames of
+        # the push protocol, no vendor code and no vendor markup. The tests
+        # include them with include_bytes!, so excluding them means a clean
+        # checkout cannot compile its own test suite. Kept to this one
+        # directory so the exemption cannot spread.
+        case "$f" in tuxweb/tests/fixtures/*.bin) continue;; esac
         case "$f" in
             *.bin|*.hdr|*.img|*.jffs2|*.zip|*.so|*.so.*|*.elf|*.hex|*.ko)
                 bad="$bad $f" ;;
