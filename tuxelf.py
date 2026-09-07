@@ -46,8 +46,20 @@ class Elf:
 
         self.secs = []
         symtabs = []
+        #: Sections that occupy NO file bytes. An SHT_NOBITS (8) section still
+        #: carries an sh_offset and a large sh_size in its header, so a file
+        #: offset "inside" one actually lands on whatever physically lives
+        #: there. Recorded by TYPE rather than by the name ".bss": .tbss and any
+        #: other NOBITS section has the identical problem and a name check
+        #: misses it. Kept as a separate set rather than a fifth tuple field
+        #: because q56.py, reply-layouts.py and settable.py all unpack
+        #: self.secs as a 4-tuple.
+        self.nobits = set()
         for nameoff, typ, flags, addr, off, size, link, info, align, entsz in raw:
-            self.secs.append((cstr(shstr, nameoff), addr, off, size))
+            name = cstr(shstr, nameoff)
+            self.secs.append((name, addr, off, size))
+            if typ == 8:
+                self.nobits.add(name)
             if typ in (2, 11) and entsz:                 # SYMTAB, DYNSYM
                 symtabs.append((off, size, entsz, raw[link][4]))
 
@@ -165,7 +177,7 @@ class Elf:
         for n, a, o, s in self.secs:
             if a == 0:
                 continue          # not loaded; an address here is not data
-            if s and a <= va < a + s and n != ".bss":
+            if s and a <= va < a + s and n not in self.nobits:
                 return o + (va - a)
         return None
 
@@ -183,10 +195,23 @@ class Elf:
         confident wrong answer rather than nothing -- and it was used to rank
         code-cave risk, which is exactly where a phantom reference is most
         expensive. Skip unmapped sections.
+
+        SHT_NOBITS IS THE SECOND HALF OF THE SAME TRAP AND WAS OPEN LONGER.
+        .bss occupies zero file bytes, but its header carries an sh_offset and
+        a large sh_size, so this mapped any offset in that nominal span onto a
+        .bss address -- and refs() then reported byte patterns belonging to
+        whatever physically lives there as references into .bss. Two phantom
+        "indirect senders" were nearly published from exactly that. v2o carried
+        the guard and o2v did not, which is the mirror of the sh_addr == 0 case
+        described above, where o2v carried it and v2o did not. **Fixing one
+        direction of an asymmetry does not fix the other**, and both halves of
+        this pair were found that way, months apart.
         """
         for n, a, o, s in self.secs:
             if a == 0:
                 continue          # not loaded; an offset here has no VA
+            if n in self.nobits:
+                continue          # occupies no file bytes; the offset is not its
             if s and o <= off < o + s:
                 return a + (off - o)
         return None
