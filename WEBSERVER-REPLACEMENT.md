@@ -2326,19 +2326,41 @@ This section used to also claim the window proves "the legacy shim emits frames
 matching the stage-0 corpus; HA's alarm state tracks the touchscreen." **It
 cannot, and the reason is structural rather than a matter of effort.**
 
-Three of the four frame builders need a field that is not in the reply:
+**Corrected an hour later, from the code rather than from the signatures.** The
+first version of this section said three of the four builders need external
+state. Reading the actual `bprintf` call sites in `gettuxedoIPCCommFunc` shows
+it is **one**, and which one matters:
 
-| builder | needs | in the 556-byte reply? |
+| builder | the extra field really is | from the reply? |
 |---|---|---|
-| `frame_status(r, quick_arm)` | `quick_arm` | **no** |
-| `frame_typed(r, trailing)` | `trailing` | **no** |
-| `frame_registration(r, extra)` | four more words | **no** |
-| `frame_filler(r)` | — | yes, fully |
+| `frame_filler(r)` | — | yes |
+| `frame_typed(r, trailing)` | **`r.arg`** | **yes** |
+| `frame_status(r, quick_arm)` | `getQuickArmStatus()` | **no** |
+| `frame_registration(r, extra)` | not yet resolved | unknown |
 
-`Reply` carries `session`, `msg_type`, `arg` and `text`, and `frame_status`
-consumes all four plus `quick_arm`. In the captured frame
-`0:21:1:fe:þ1Ready To Arm:2` the trailing `2` is that field. Barracuda supplies
-it from its own state — and during the cutover Barracuda is not running.
+The frames are built by `bprintf` with `":"` passed as an argument — the string
+at `0x84f5c` — which is why the format strings look like `%d%s%d%s...`. The
+reply sits at `sp+0x274` in that function, so `sp+0x274` is `session`,
+`sp+0x27c` is `arg`, and `sp+0x282` is the state byte at `+0x0E`.
+
+- **Status**, `'%d%s%d%s%d%s%x%s%s%s%d'` at `0xdb04`. The final `%d` is stored
+  at `sp+0x20` from `r0` immediately after `bl getQuickArmStatus()` at
+  `0xdac8`. So `quick_arm` is genuinely Barracuda's, and
+  `getQuickArmStatus` reads a byte out of a table — `[0x55b990]` indexes
+  `[0x55ba18]` — after calling `setQuickArmStatus()` to refresh it. Config
+  derived, so probably reproducible, but not from the reply.
+- **Typed**, `'%d%s%d%s%s%s%d'` at `0xda1c`. The final `%d` is
+  `ldr r3,[sp,#0x27c]` — **the reply's `arg`**. `frame_typed`'s `trailing`
+  parameter and `Reply::arg` are the same value.
+
+The corpus test could not have caught that: for the 4-field shape it builds
+`Reply { arg: 0, .. }` and passes the trailing field separately, so it proves
+the formatter faithful while leaving the two names looking independent.
+
+The signature-level reading was not wrong about `frame_status`, but it
+generalised from a parameter list to a conclusion about three builders when the
+code said one. Parameters describe an interface; only the call site says where
+the argument comes from.
 
 This was hiding behind a passing test. `every_captured_frame_is_reproducible_from_its_fields`
 checks 150 frames, but it works *backwards*: it splits a captured frame on `:`
@@ -2347,32 +2369,32 @@ formatters. It says nothing about where the inputs come from, and it silently
 assumes the reply text contains no `:` — an assumption that has never been
 checked and is load-bearing for the split.
 
-**Consequences, and the second is bigger than the first:**
+**Consequences:**
 
-1. **Stage 6 is log-only.** That is now the correct design rather than a
-   reduced one. HA goes dark for the window instead of merely losing control.
-2. **This is a stage-7 blocker, not a stage-6 one.** The replacement's promise
-   of a byte-compatible legacy shim depends on emitting these frames, and
-   three of the four shapes cannot currently be emitted from what `/tuxedo`
-   sends. That has to be solved before the vendor is retired, not before the
-   read-only window runs.
+1. **Stage 6 stays log-only**, but for a smaller reason than first written: the
+   status frame is the one that carries alarm state, and it is the one that
+   needs `getQuickArmStatus()`. Serving typed and filler frames while silently
+   omitting status would give HA a stream that looks alive and never reports
+   arming, which is worse than going dark.
+2. **The stage-7 blocker is narrower than it looked.** One value, from a
+   config-derived table, not three unknowns.
 
-### 5.12 Where do the frame fields that are not in the reply come from?
+### 5.12 `quick_arm`, and the registration frame — PARTLY ANSWERED 2026-09-07
 
-`quick_arm`, `trailing`, and the four registration words. Barracuda builds the
-colon-joined payload into a buffer and `BookmarksHandler_send2Browser`
-@`0x1d180` only ships it — `EventHandler_sendData2All` with the interface name
-and `statusMessageText`, taking the data from `[r0,#8]` and its length from
-`[r0,#0xc]`. So the values are supplied by whatever fills that buffer, which is
-the next thing to read.
+Answered for status and typed, above. Two pieces remain:
 
-**Cheapest experiment:** free, static. Find the callers that fill the bookmark
-buffer before `send2Browser`, and read what they pass. Worth doing before stage
-7 is planned, and it costs nothing to do before stage 6 runs.
+- **`getQuickArmStatus()`** @`0x2d4e4` returns `byte[[0x55ba18] + [0x55b990] - 1]`
+  after `setQuickArmStatus()` refreshes it. Reading `setQuickArmStatus` says
+  where the value originates, and whether a replacement can compute the same
+  answer from the same configuration. **Free, static.**
+- **The registration frame.** `'%d%s%d%s%d%s%d%s%d%s%s'` at `0xdd44` has six
+  values, not the eight fields the corpus test decomposes, so either that is a
+  different frame or the 8-field shape is built elsewhere. Not chased.
 
-**Also worth settling while there:** whether the reply text can contain a `:`.
-If it can, the corpus test's field-splitting is wrong and some of its 150
-"reproduced" frames are reproduced by accident.
+**Also unsettled, and it undermines the corpus test if wrong:** whether the
+reply text can contain a `:`. The test splits captured frames on `:` and
+assumes it cannot. Now that `sp+0x274` is known to be the reply, the text is at
+`+0x0E` and what `/tuxedo` puts there can be read directly.
 
 **Revert:** authenticated "fall back now" call, or wait for the deadman, or SSH
 `mv` and restart. Three independent paths, one of them automatic.
