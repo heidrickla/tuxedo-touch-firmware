@@ -1716,7 +1716,39 @@ upstream subscription at all while nobody is listening.
 This also retires the single-client serialisation that misled me twice — once
 looking like a broken token gate, once like a failed reconnect.
 
-**No TLS termination in this mode.** Fan-out matters beyond convenience — each upstream registration makes the
+#### Pointing a consumer at the shim: proxy done, one blocker left
+
+The shim now passes everything that is not the push stream through to Barracuda
+(`src/proxy.rs`), which is what lets a consumer name **one** host. Verified on
+the panel, all three through `:8081`:
+
+| step | result |
+|---|---|
+| log in through the shim | session obtained |
+| push stream with that session, **no token** | `200`, 16 frames, 8 with live alarm state |
+| REST `GetSecurityStatus` | `302 -> https://203.0.113.5:443/...` |
+
+The push result matters: the shim validated the client's **real panel session**
+rather than a side-channel token, which it can do precisely because everything
+reaches Barracuda from loopback. Logging in through the shim binds the session
+to `127.0.0.1`, and every later request through the shim arrives from there too.
+
+**The blocker is that same property.** The panel forces TLS on the REST
+namespace (§5), so a plain-HTTP consumer gets a `302` to `https://panel:443`,
+which the shim proxies faithfully — that part is correct behaviour, not a
+defect. But **a consumer that follows it leaves the shim**, and its next request
+reaches Barracuda from the consumer's own address carrying a session bound to
+loopback, which the panel will reject. Mixing the two paths breaks the session
+in a way that looks like a random logout.
+
+So a consumer cannot be pointed at the shim until the shim serves the REST
+namespace itself — either by terminating TLS for the consumer, or by forwarding
+that namespace to `127.0.0.1:443` over TLS internally so the consumer can stay
+on one plain-HTTP endpoint. The second is less work and keeps the consumer's
+configuration to a single host and port.
+
+**No TLS termination in this mode** yet; the TLS listener is the binary's other
+mode. Fan-out matters beyond convenience — each upstream registration makes the
 panel flush its reply queue, so one shared subscription is strictly better than
 one per client.
 

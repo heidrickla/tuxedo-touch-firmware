@@ -16,6 +16,7 @@
 mod frame;
 mod ipc;
 mod login;
+mod proxy;
 mod shim;
 
 use std::fs::File;

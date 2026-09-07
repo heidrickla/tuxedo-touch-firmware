@@ -135,6 +135,29 @@ pub fn frame_typed(r: &Reply, trailing: u32) -> Vec<u8> {
     o
 }
 
+/// msgType 504, handler `0xf638`: `%d%s%d%s%d%s%s%s%d%s%d%s%d%s%d` — fifteen
+/// conversions, eight fields with seven `':'` between them.
+///
+/// This is the registration reply, produced by `/tuxedo`'s `registerclient`
+/// after it flushes the reply queue. `extra` are the five trailing values it
+/// gathers: `GetZWControllerStatus`, panel cal, operation mode, total
+/// partitions and current partition, in the order the handler reads them.
+pub fn frame_registration(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
+    let mut o = Vec::new();
+    push_u32(&mut o, r.session);
+    o.push(b':');
+    push_u32(&mut o, r.msg_type);
+    o.push(b':');
+    push_u32(&mut o, r.arg);
+    o.push(b':');
+    o.extend_from_slice(&r.text);
+    for v in extra {
+        o.push(b':');
+        push_u32(&mut o, v);
+    }
+    o
+}
+
 /// The `-1` filler, `%d%s%d%s%s` with `mvn r5,#0` in the type position.
 /// The status handler emits three of these after every status frame; they are
 /// deliberate, not a transport quirk.

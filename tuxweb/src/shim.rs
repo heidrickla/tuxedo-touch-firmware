@@ -219,6 +219,7 @@ impl Shim {
         // client that connects and says nothing cannot stall the stream.
         let accept_clients = Arc::clone(&clients);
         let token = self.token.clone();
+        let upstream = self.upstream.clone();
         std::thread::spawn(move || {
             for s in l.incoming() {
                 let mut c = match s {
@@ -226,24 +227,42 @@ impl Shim {
                     Err(e) => { eprintln!("accept: {e}"); continue; }
                 };
                 let peer = c.peer_addr().map(|a| a.to_string()).unwrap_or_default();
-                let head = match Self::read_request_head(&mut c) {
+                let (head, body) = match crate::proxy::read_head(&mut c, 16 * 1024) {
                     Ok(h) => h,
                     Err(e) => { eprintln!("shim: {peer}: {e}"); continue; }
                 };
-                if let Some(want) = token.as_deref() {
-                    if !presents_token(&head, want) {
-                        let _ = c.write_all(DENY);
-                        let _ = c.flush();
-                        eprintln!("shim: {peer}: denied, no valid token");
-                        continue;
+
+                // Everything that is not the push stream is Barracuda's to
+                // answer. Proxying it is what lets a consumer point at ONE host,
+                // and it makes the consumer's session bind to loopback so it
+                // stays valid for every later request through here.
+                if !crate::proxy::path(&head).starts_with("/SimpleDebugger.interface/") {
+                    if let Err(e) = crate::proxy::forward(&upstream, &head, &body, &mut c) {
+                        eprintln!("shim: {peer}: proxy: {e}");
                     }
+                    continue;
+                }
+
+                // The push path is served from the shared subscription, so it
+                // is gated here rather than by Barracuda. Either a configured
+                // token, or the client's own panel session -- which can be
+                // checked because everything reaches Barracuda from loopback.
+                let by_token = token.as_deref().is_some_and(|t| presents_token(&head, t));
+                let by_session = crate::proxy::header(&head, "cookie")
+                    .is_some_and(|ck| crate::proxy::session_is_valid(&upstream, ck));
+                if !(by_token || by_session) {
+                    let _ = c.write_all(DENY);
+                    let _ = c.flush();
+                    eprintln!("shim: {peer}: denied, no token and no valid session");
+                    continue;
                 }
                 if c.write_all(HEAD).is_err() {
                     continue;
                 }
                 let _ = c.flush();
                 let _ = c.set_write_timeout(Some(Duration::from_secs(5)));
-                println!("shim: {peer} subscribed");
+                println!("shim: {peer} subscribed ({})",
+                         if by_token { "token" } else { "session" });
                 accept_clients.lock().unwrap().push(c);
             }
         });
