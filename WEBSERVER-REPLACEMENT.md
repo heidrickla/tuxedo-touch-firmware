@@ -1606,6 +1606,37 @@ a login page, the P13-gated push path answers `401`.
 because that is the only variable that changed. The field holding it has not
 been located in the binary.
 
+#### Stage 3 legacy shim: WORKING 2026-09-06, off-panel
+
+`tuxweb --shim-login <host:port> <user> <pwfile> <bind>` logs in itself, opens
+the vendor push stream, and re-serves it. Run on the build VM against the live
+panel, a client pointed at the shim received:
+
+```
+HTTP/1.1 200 OK          Server: present and EMPTY      Connection: Close
+boundary="EH912ZZ"       18 opening / 18 close delimiters
+17 statusMessageText frames, 8 carrying live alarm state
+  Client Connected
+  0:504:1:P1  H:1:0:3:3          the registration frame
+  0:-1:1:P1  H:1:0:3:3           x3, the fillers
+  0:21:1:fe:<0xFE>1Ready To Arm:2
+```
+
+Every vendor quirk `conformance.py` asserts is reproduced, including the
+RFC 2046 violation of closing every part, and the frames carry real panel state
+rather than replay. That is the compatibility promise of §2.5 demonstrated
+against the live panel, with Barracuda untouched.
+
+It logs in from wherever it runs, which is required rather than tidy — see the
+source-IP binding above. The password is read from a file so it never reaches
+`ps`; the binary never takes it on the command line.
+
+**Not yet done for this stage:** it serves one client at a time and does not
+terminate TLS (the TLS listener is the other mode of the same binary, proven
+separately). Fan-out to multiple clients is the next piece, and it matters
+because registering costs the panel a reply-queue flush — one upstream
+registration shared by many clients is strictly better than one each.
+
 ### Stage 3 — `tuxweb` as a TLS reverse proxy, spare port
 
 **Change:** one new binary, run by hand on port 8443. Barracuda untouched and

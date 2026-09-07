@@ -15,6 +15,7 @@
 
 mod frame;
 mod ipc;
+mod login;
 mod shim;
 
 use std::fs::File;
@@ -51,6 +52,33 @@ fn main() {
     // stage 3 shim: re-serve the vendor push stream byte for byte.
     //   tuxweb --shim <upstream host:port> <cookie> <bind-addr>
     // The cookie is passed in; this binary never handles the panel password.
+    // Log in from HERE and shim: the session must be created by the host that
+    // will use it, because panel sessions are bound to the source address.
+    //   tuxweb --shim-login <host:port> <user> <password-file> <bind-addr>
+    // The password comes from a file so it never appears in `ps`.
+    if args.len() == 6 && args[1] == "--shim-login" {
+        let pw = match std::fs::read_to_string(&args[4]) {
+            Ok(p) => p.lines().next().unwrap_or("").to_string(),
+            Err(e) => { eprintln!("tuxweb: {}: {e}", args[4]); std::process::exit(1); }
+        };
+        let pw = pw.split_once(':').map(|(_, p)| p.to_string()).unwrap_or(pw);
+        let cookie = match login::login(&args[2], &args[3], &pw) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("tuxweb: login: {e}"); std::process::exit(1); }
+        };
+        println!("tuxweb: logged in, session acquired from this host");
+        let s = shim::Shim {
+            upstream: args[2].clone(),
+            cookie,
+            bind: args[5].clone(),
+        };
+        if let Err(e) = s.run() {
+            eprintln!("tuxweb: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if args.len() == 5 && args[1] == "--shim" {
         let s = shim::Shim {
             upstream: args[2].clone(),
@@ -67,6 +95,7 @@ fn main() {
     if args.len() != 4 {
         eprintln!("usage: {} <bind-addr> <chain.pem> <server.key>", args[0]);
         eprintln!("       {} --shim <host:port> <cookie> <bind-addr>", args[0]);
+        eprintln!("       {} --shim-login <host:port> <user> <pwfile> <bind-addr>", args[0]);
         std::process::exit(2);
     }
     let (addr, chain_path, key_path) = (&args[1], &args[2], &args[3]);

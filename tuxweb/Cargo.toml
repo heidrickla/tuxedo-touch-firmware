@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pemfile = "2"
+# already in the tree via rustls; named directly so login.rs can use HMAC-SHA512
+ring = "0.17"
 
 [profile.release]
 opt-level = "z"
