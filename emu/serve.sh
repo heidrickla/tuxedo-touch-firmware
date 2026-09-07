@@ -74,7 +74,20 @@ echo "binary: $(md5sum "$T/opt/webserver/Barracuda" | cut -d' ' -f1)"
 echo "config: CRCdata $(md5sum "$CFG/CRCdata.json" 2>/dev/null | cut -d' ' -f1 || echo missing)"
 setsid chroot "$T" /usr/bin/qemu-arm-static /opt/webserver/Barracuda </dev/null >/tmp/barra.$LABEL.log 2>&1 &
 sleep 6
-Q=$(ls "$T/dev/mq" 2>/dev/null | sed 's|^|/|' | tr '\n' ' ')
+# Drain every queue EXCEPT the one Barracuda reads commands FROM.
+#
+# The names are from /tuxedo's point of view: Barracuda SENDS on
+# /Q_ServCmdRcver, which is why draining it is needed at all -- nothing else
+# consumes it under emu and the main thread blocks in mq_timedsend once it
+# fills. But Barracuda RECEIVES on /Q_ServCmdTrsmtr, and draining that one eats
+# anything a driver posts to force a status push, before the dispatcher sees it.
+#
+# The symptom of getting this wrong is a stack count that does not move, which
+# is indistinguishable from the leak being fixed. Excluded by name rather than
+# left to whoever writes the next driver to notice.
+INBOUND=/Q_ServCmdTrsmtr
+Q=$(ls "$T/dev/mq" 2>/dev/null | sed 's|^|/|' | grep -vx "$INBOUND" | tr '\n' ' ')
+echo "draining: ${Q:-none}   (leaving $INBOUND for drivers)"
 setsid python3 /tmp/mqdrain.py $Q </dev/null >/tmp/drain.$LABEL.log 2>&1 &
 for i in $(seq 1 40); do ss -lnt 2>/dev/null | grep -q ":80\b" && break; sleep 1; done
 PID=$(ss -lntp 2>/dev/null | grep ":80 " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
