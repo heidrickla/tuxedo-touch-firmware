@@ -100,12 +100,6 @@ fn presents_token(req_head: &str, want: &str) -> bool {
     false
 }
 
-/// Why the relay stopped.
-enum Stop {
-    ClientGone,
-    UpstreamEnded(String),
-}
-
 impl Shim {
     /// Open the upstream stream, logging in again if the session has expired.
     ///
@@ -194,72 +188,112 @@ impl Shim {
     }
 
     /// Serve one client for as long as both sides stay up.
-    /// Serve one client, surviving upstream drops.
+    /// Accept clients and fan ONE upstream subscription out to all of them.
     ///
-    /// The panel ends this stream routinely, so a shim that gave up on the
-    /// first EOF would look fine in a short test and die overnight. Reconnects
-    /// are bounded and spaced: every reopen re-registers, and registering makes
-    /// the panel flush its reply queue, so a tight retry loop would be actively
-    /// harmful rather than merely wasteful.
-    fn pump(&self, mut client: TcpStream) -> Result<usize, String> {
-        const MAX_RECONNECTS: u32 = 6;
-        const BACKOFF: [u64; 6] = [1, 2, 5, 10, 20, 30];
+    /// The single upstream matters for the panel, not just for tidiness: each
+    /// registration makes `/tuxedo` flush its reply queue, so a subscription
+    /// per client would mean a flush per client. One shared reader costs one.
+    ///
+    /// Threads rather than a poll loop because the work is entirely blocking
+    /// I/O; `available_parallelism()` reporting 1 is an argument against a
+    /// CPU-sized worker pool, not against a thread that spends its life in
+    /// `read`.
+    pub fn run(&self) -> Result<(), String> {
+        use std::sync::{Arc, Mutex};
 
-        let head = Self::read_request_head(&mut client)?;
-        if let Some(want) = self.token.as_deref() {
-            if !presents_token(&head, want) {
-                let _ = client.write_all(DENY);
-                let _ = client.flush();
-                return Err("denied: no valid token".into());
-            }
+        let l = TcpListener::bind(&self.bind).map_err(|e| format!("bind {}: {e}", self.bind))?;
+        println!("tuxweb shim: {} -> {}", self.upstream, self.bind);
+        println!("tuxweb shim: NOTE registering flushes the panel's reply queue");
+        match self.token {
+            Some(_) => println!("tuxweb shim: clients must present a token"),
+            None => println!(
+                "tuxweb shim: *** NO TOKEN SET -- live alarm state is served to ANY \
+                 client that can reach {} ***",
+                self.bind
+            ),
         }
 
-        // Open upstream BEFORE promising the client a 200: if the panel will
-        // not talk to us, the client should learn that now, not from a stream
-        // that never produces a byte.
-        let mut up = self.open_upstream()?;
-        client.write_all(HEAD).map_err(|e| format!("client write: {e}"))?;
-        client.flush().ok();
+        let clients: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
 
-        let mut sent = 0usize;
+        // Accept, authenticate, and enrol. Done off the relay thread so a
+        // client that connects and says nothing cannot stall the stream.
+        let accept_clients = Arc::clone(&clients);
+        let token = self.token.clone();
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                let mut c = match s {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("accept: {e}"); continue; }
+                };
+                let peer = c.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+                let head = match Self::read_request_head(&mut c) {
+                    Ok(h) => h,
+                    Err(e) => { eprintln!("shim: {peer}: {e}"); continue; }
+                };
+                if let Some(want) = token.as_deref() {
+                    if !presents_token(&head, want) {
+                        let _ = c.write_all(DENY);
+                        let _ = c.flush();
+                        eprintln!("shim: {peer}: denied, no valid token");
+                        continue;
+                    }
+                }
+                if c.write_all(HEAD).is_err() {
+                    continue;
+                }
+                let _ = c.flush();
+                let _ = c.set_write_timeout(Some(Duration::from_secs(5)));
+                println!("shim: {peer} subscribed");
+                accept_clients.lock().unwrap().push(c);
+            }
+        });
+
+        // One upstream, relayed to everyone.
+        const MAX_RECONNECTS: u32 = 6;
+        const BACKOFF: [u64; 6] = [1, 2, 5, 10, 20, 30];
         let mut drops = 0u32;
         loop {
-            match self.relay(&mut up, &mut client, &mut sent) {
-                Stop::ClientGone => return Ok(sent),
-                Stop::UpstreamEnded(why) => {
-                    if drops >= MAX_RECONNECTS {
-                        return Err(format!(
-                            "upstream ended {drops} times, giving up ({why})"
-                        ));
+            if clients.lock().unwrap().is_empty() {
+                // Nothing to serve: do not hold a subscription, because holding
+                // one is not free for the panel.
+                std::thread::sleep(Duration::from_millis(500));
+                continue;
+            }
+            let mut up = match self.open_upstream() {
+                Ok(u) => { drops = 0; u }
+                Err(e) => {
+                    if drops as usize >= BACKOFF.len() {
+                        return Err(format!("upstream unavailable: {e}"));
                     }
-                    let wait = BACKOFF[drops as usize];
+                    let w = BACKOFF[drops as usize];
                     drops += 1;
-                    eprintln!(
-                        "shim: upstream ended ({why}); reconnect {drops}/{MAX_RECONNECTS} in {wait}s"
-                    );
-                    std::thread::sleep(Duration::from_secs(wait));
-                    up = match self.open_upstream() {
-                        Ok(u) => u,
-                        Err(e) => return Err(format!("reconnect failed: {e}")),
-                    };
+                    eprintln!("shim: upstream open failed ({e}); retry {drops}/{MAX_RECONNECTS} in {w}s");
+                    std::thread::sleep(Duration::from_secs(w));
+                    continue;
                 }
+            };
+            if let Err(e) = self.broadcast(&mut up, &clients) {
+                eprintln!("shim: upstream ended ({e})");
             }
         }
     }
 
-    /// Copy parts upstream -> client until one side stops.
-    fn relay(&self, up: &mut TcpStream, client: &mut TcpStream, sent: &mut usize) -> Stop {
+    /// Relay upstream parts to every subscriber, dropping the ones that fail.
+    /// A slow or dead client is removed rather than allowed to stall the rest.
+    fn broadcast(
+        &self,
+        up: &mut TcpStream,
+        clients: &std::sync::Arc<std::sync::Mutex<Vec<TcpStream>>>,
+    ) -> Result<(), String> {
         let mut acc: Vec<u8> = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
             let n = match up.read(&mut buf) {
-                Ok(0) => return Stop::UpstreamEnded("closed".into()),
+                Ok(0) => return Err("closed".into()),
                 Ok(n) => n,
-                Err(e) => return Stop::UpstreamEnded(e.to_string()),
+                Err(e) => return Err(e.to_string()),
             };
             acc.extend_from_slice(&buf[..n]);
-
-            // parse whole parts only; keep the remainder for the next read
             let (parts, rest) = frame::parse(&acc);
             if parts.is_empty() {
                 continue;
@@ -268,39 +302,20 @@ impl Shim {
             for p in &parts {
                 p.encode(&mut out);
             }
-            if client.write_all(&out).is_err() {
-                return Stop::ClientGone;
+            {
+                let mut cs = clients.lock().unwrap();
+                let before = cs.len();
+                cs.retain_mut(|c| c.write_all(&out).is_ok() && c.flush().is_ok());
+                if cs.len() != before {
+                    println!("shim: {} subscriber(s) dropped", before - cs.len());
+                }
+                if cs.is_empty() {
+                    return Err("no subscribers left".into());
+                }
             }
-            client.flush().ok();
-            *sent += parts.len();
             let keep = acc.len() - rest;
             acc.drain(..keep);
         }
-    }
-
-    pub fn run(&self) -> Result<(), String> {
-        let l = TcpListener::bind(&self.bind).map_err(|e| format!("bind {}: {e}", self.bind))?;
-        println!("tuxweb shim: {} -> {}", self.upstream, self.bind);
-        println!("tuxweb shim: NOTE registering flushes the panel's reply queue");
-        match self.token {
-            Some(_) => println!("tuxweb shim: clients must present a token"),
-            None => println!(
-                "tuxweb shim: *** NO TOKEN SET -- live alarm state is served to                  ANY client that can reach {} ***",
-                self.bind
-            ),
-        }
-        for s in l.incoming() {
-            let c = match s {
-                Ok(c) => c,
-                Err(e) => { eprintln!("accept: {e}"); continue; }
-            };
-            let peer = c.peer_addr().map(|a| a.to_string()).unwrap_or_default();
-            match self.pump(c) {
-                Ok(n) => println!("shim: {peer} closed after {n} parts"),
-                Err(e) => eprintln!("shim: {peer}: {e}"),
-            }
-        }
-        Ok(())
     }
 }
 

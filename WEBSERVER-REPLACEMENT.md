@@ -1696,10 +1696,25 @@ prior sessions is unsupported. Verifying it needs either a session left to
 expire on its own or a way to revoke one; until then this is code that compiles
 and is unit-tested, not a demonstrated recovery.
 
-**One client at a time** — measured, not assumed, and twice mistaken for
-something else: back-to-back probes returned nothing until spaced apart, which
-looked first like a broken gate and later like a failed reconnect. A second
-client waits for the first.
+**Fan-out: DONE and verified on the panel.** One upstream subscription is now
+shared by every subscriber, which matters to the panel and not just to
+throughput — each registration flushes the reply queue, so a subscription per
+client would mean a flush per client. Measured with four simultaneous clients:
+
+```
+client1   200 OK   16 frames, 2269 B
+client2   200 OK   16 frames, 2269 B     identical -> one shared stream
+client3   200 OK   16 frames, 2269 B
+no-token  401       0 frames,   77 B
+```
+
+Accept and authenticate happen on a separate thread, so a client that connects
+and then says nothing cannot stall the stream, and a subscriber whose write
+fails is dropped rather than allowed to block the rest. The shim holds no
+upstream subscription at all while nobody is listening.
+
+This also retires the single-client serialisation that misled me twice — once
+looking like a broken token gate, once like a failed reconnect.
 
 **No TLS termination in this mode.** Fan-out matters beyond convenience — each upstream registration makes the
 panel flush its reply queue, so one shared subscription is strictly better than
