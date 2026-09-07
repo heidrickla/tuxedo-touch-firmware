@@ -2024,7 +2024,22 @@ panel's. §4.10 already anticipates a token-gated stream; this is that.
 Running with no token set is still possible and prints a loud warning naming the
 bind address, because an open alarm feed should never be quiet about it.
 
-**Session renewal: VERIFIED under emulation, 2026-09-06.** The shim keeps the
+**Session renewal: VERIFIED ON THE PANEL, 2026-09-07** — it fired by itself
+during the stage-3 soak, which is the one way this was never going to be
+staged. The panel expired the shim's session after roughly three hours; the log
+shows `shim: upstream 401 -- session expired, logging in again`, and a
+subscriber connecting afterwards is served `200` with 20 frames including
+`0:21:1:fe:þ1Ready To Arm:2`. No re-login failure, and the process is the same
+pid it started as.
+
+One trap in reading that: the first probe after the renewal came back empty and
+looked like a failure. It was not — the re-login is a full HTTP round trip on a
+2009 CPU, and a client that gives up in 14 seconds disconnects before it
+finishes, which the shim then reports as `1 subscriber(s) dropped`. A patient
+client gets the frames. A short timeout here would have recorded "renewal
+fired but produced nothing", which is the opposite of what happened.
+
+**Previously verified under emulation, 2026-09-06.** The shim keeps the
 credentials, and on an upstream `401` it logs in again once and retries; on an
 upstream drop it reconnects with a bounded, spaced backoff (6 attempts,
 1/2/5/10/20/30 s) because **every reopen re-registers and registering flushes
@@ -2379,17 +2394,46 @@ checked and is load-bearing for the split.
 2. **The stage-7 blocker is narrower than it looked.** One value, from a
    config-derived table, not three unknowns.
 
-### 5.12 `quick_arm`, and the registration frame — PARTLY ANSWERED 2026-09-07
+### 5.12 `quick_arm` — ANSWERED AND VERIFIED ON THE PANEL, 2026-09-07
 
-Answered for status and typed, above. Two pieces remain:
+**A replacement can emit the status frame.** The chain is short and every link
+is now read or measured:
 
-- **`getQuickArmStatus()`** @`0x2d4e4` returns `byte[[0x55ba18] + [0x55b990] - 1]`
-  after `setQuickArmStatus()` refreshes it. Reading `setQuickArmStatus` says
-  where the value originates, and whether a replacement can compute the same
-  answer from the same configuration. **Free, static.**
-- **The registration frame.** `'%d%s%d%s%d%s%d%s%d%s%s'` at `0xdd44` has six
-  values, not the eight fields the corpus test decomposes, so either that is a
-  different frame or the 8-field shape is built elsewhere. Not chased.
+```
+/opt/tuxedo/configuration/quickarmstate      eight ints, fscanf "%d%d%d%d%d%d%d%d"
+   -> setQuickArmStatus()  @0x2d420          into the array at 0x55ba18
+   -> getQuickArmStatus()  @0x2d4e4          byte[0x55ba18 + partition - 1]
+   -> the status frame's trailing field
+```
+
+`setQuickArmStatus` reads the file after
+`validateCRCFileOnFileRead("…/quickarmstate", "…/quickarmstate_")`, and
+`getQuickArmStatus` indexes the loaded array by the current partition, taken
+from the byte at `0x55b990`.
+
+Verified end to end on the running panel:
+
+```
+/opt/tuxedo/configuration/quickarmstate   ->  "2 0 0 0 0 0 0 0"
+live frame from the shim                  ->  0:21:1:fe:þ1Ready To Arm:2
+```
+
+Partition 1 selects the first value, `2`, which is exactly the frame's trailing
+field. **So stage 7's byte-compatible legacy shim is achievable**: read that
+file and index it, which is what Barracuda does.
+
+Two notes worth keeping. `quickarmstate_` **does not exist on this panel**,
+although `setQuickArmStatus` passes it to the CRC validator — so the validator
+tolerates a missing sidecar, and a replacement writing this file must not
+assume one is required. And `fscanf` with `%d` is given eight destinations one
+byte apart (`0x55ba18`, `+1`, `+2`, …), so each four-byte store overlaps the
+next; the values happen to be small, and this is the vendor's bug, not ours.
+
+**The registration frame is still open.** `'%d%s%d%s%d%s%d%s%d%s%s'` at
+`0xdd44` has six values, not the eight fields the corpus decomposes, so either
+that is a different frame or the 8-field shape is built elsewhere. The live
+stream shows both variants — `0:504:1:P1  H:1:0:3:3` and its `-1` repeat — so
+the extras are `1:0:3:3` and the question is only where those four come from.
 
 **Also unsettled, and it undermines the corpus test if wrong:** whether the
 reply text can contain a `:`. The test splits captured frames on `:` and
