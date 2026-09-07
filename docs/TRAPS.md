@@ -369,23 +369,48 @@ and left sitting there saying the opposite of the truth.
   stream counted down correctly. Use the stream for state.
 - `supervis` allows **24 relaunches then a hardware reset**, and the counter is
   never zeroed. Check the budget before flashing a request-path change.
-  **A block at `0xc684` looks like it confirms this and DOES NOT — do not cite
-  it.** It reads a counter, `add r3,r3,#1`, `cmp r3,#0x18`, stores it back and
-  branches when it exceeds, which is exactly the shape expected. But `0xc680`
-  is an unconditional `b #0xc4f0`, and a full-coverage scan of `.text` (3323 of
-  3334 words decoded, 99.7%) finds **zero branches targeting `0xc680-0xc6b0`**.
-  Nothing reaches it. An earlier edit of this entry cited it as the mechanism,
-  "seen directly rather than quoted"; that was wrong, and the shape of the block
-  is what made it convincing. **Code that says what you expect is not evidence
-  until something reaches it.** The 24-limit itself stands on its original
-  source, not on this block.
+  **DECODED, not folklore, and the mechanism is not what it sounds like:**
+
+      0xc52c  ldrls pc, [pc, r3, lsl #2]   jump table; entries at 0xc54c,
+                                           0xc550, 0xc554 all -> 0xc684
+      0xc684  counter at 0x16be0, add #1, cmp #0x18, str back
+      0xc69c  bgt 0xc90c                   on exceeding 24
+      0xc90c  bl log_SupervisionText
+      0xc918  bl DisArmSWTimer  on the handle at 0x16c14
+      0xc91c  b  0xc4f0                    and carry on
+
+  `0x16c14` is the **watchdog kick timer** — the only functions holding it are
+  `wdg_init`, `wdg_deinit`, `main` and `SupervisTimeout`, and the binary carries
+  `WDG KICK ioctl failed`, `/dev/watchdog` and `Opening watchdog driver`. So
+  past 24 relaunches `supervis` **stops kicking the watchdog and the hardware
+  resets the panel.** There is no explicit reboot call; the reset is the
+  deliberate cessation of the kick. The counter is never zeroed because the
+  store at `0xc694` happens after the compare and no path clears it.
+
+  **The consequence is not "supervis gives up on an app".** It is the panel
+  resetting itself, possibly with somebody standing in front of it during a
+  booked window. Budget accordingly — a phase1 + phase2 + revert cycle spends
+  three of the 24.
+
+  ⚠ **Two scans of this block concluded "unreachable" and both were wrong the
+  same way: they modelled only `B`/`BL`.** ARM dispatches a switch with
+  `ldr pc, [pc, rN, lsl #2]` and a table of absolute addresses; one scan even
+  found the three table words and then dismissed them in a comment as "far more
+  likely an unrelated constant". **A branch scan that does not model the jump
+  table will report live code as dead**, and a false "unreachable" withholds a
+  true finding instead of publishing a false one — the better failure, and still
+  the same missing edge. Same blindness as `ldr pc,[pc,rN,lsl #2]` read as a
+  return, which section 2 already records.
 - **DO NOT read the relaunch budget out of the running `supervis`.** The counter
   is at `0x16be0` in `.bss` and the process is non-PIE with that page mapped
   `rw`, so it is at a real fixed address and looks readable. Reading it on
-  2.6.31 needs `ptrace` — and `supervis` holds `/dev/watchdog` on fd 4 and kicks
-  it at 1 Hz. **Attaching stops the process, the kicks stop, and the watchdog
-  resets the panel in hardware.** Track the budget by hand in the runbook. The
-  address being reachable is not the same as it being safe to reach.
+  2.6.31 needs `ptrace` — and `supervis` holds `/dev/watchdog` and kicks it at
+  1 Hz. **Attaching stops the process, the kicks stop, and the watchdog resets
+  the panel in hardware.** Track the budget by hand in the runbook. The address
+  being reachable is not the same as it being safe to reach.
+  **This is the same failure as the 24-limit above, not a separate risk:**
+  in both cases the panel resets because the kick stopped. Anything that halts
+  `supervis` — `ptrace`, `SIGSTOP`, a debugger — is in that class.
 - **A flash wipes anything added over SSH.** `/opt/tuxedo/configuration`
   (mtdblock17) survives.
 - **Prove request-path patches under `emu/` before flashing.** That is what
