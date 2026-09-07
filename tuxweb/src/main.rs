@@ -14,6 +14,7 @@
 // Connections are handled in sequence with a short read timeout.
 
 mod accounts;
+mod deadman;
 mod frame;
 mod ipc;
 mod login;
