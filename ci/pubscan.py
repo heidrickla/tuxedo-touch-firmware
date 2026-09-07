@@ -129,7 +129,12 @@ def _local_identifiers() -> list[tuple[str, "re.Pattern[str]"]]:
 #: list can be published without disclosing what it defends. Anything that
 #: WOULD name one goes in ci/pubscan.local -- see _local_identifiers.
 YOURS = [
-    ("private addresses, 10.10.x", re.compile(r"\b10\.10\.\d{1,3}\.\d{1,3}\b")),
+    # The host octet may be digits OR a mask. Requiring digits is how
+    # `203.0.113.x` survived three separate sweeps of this repo: a masked octet
+    # LOOKS scrubbed, and the /24 left beside it is the part that identifies
+    # the network. Mask the host and you have hidden the least useful field.
+    ("private addresses, 10.10.x",
+     re.compile(r"\b10\.10\.\d{1,3}\.(?:\d{1,3}|[xXn*])\b")),
     ("real MAC addresses", real_macs),
     # A Windows user directory discloses the account NAME, so what matters is
     # the name and not the shape. `C:\Users\dev\...` after a scrub identifies
