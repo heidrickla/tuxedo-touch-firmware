@@ -3305,42 +3305,52 @@ offset 0 because `mem.index` was ignored.
   from Barracuda's single `sigHandler` caller; this replaces that inference
   with the mechanism.
 
-  A third strand, and the strongest: **`supervis` creates AT MOST ONE thread,
-  and it is not a monitor.** Stock creates one, `serverThreadForCamera` at
-  `0xc5e8`, which touches no queue, no kill and no clock. **The live v13
-  creates none** — P9 replaces the `bl pthread_create` at that address with
-  `mov r0,#1`, so the site is gone.
+  A third strand: **the one thread `main` creates is not a monitor.** On stock
+  it is `serverThreadForCamera` at `0xc5e8`, and it calls only
+  socket/bind/listen/accept/fcntl/setsockopt/close/puts/pthread_exit — no
+  queue, no kill, no clock. On the live v13 there is **no thread at all**: P9
+  replaces the `bl pthread_create` there with `mov r0,#1`.
 
-  **P9 is therefore ON this path, not "nowhere near" it as first recorded, and
-  that strengthens the conclusion rather than weakening it.** The property that
-  matters is *no thread that could monitor*, not *one benign thread*: zero
-  satisfies it more completely than one. So the answer holds for stock by the
-  first reading and for the in-service binary by the second, which is why it is
-  safe either side of P9 — and that is a better result than the version this
-  entry originally carried.
+  **THE CONCLUSION IS NOT P9-CONTINGENT, and that was worth establishing rather
+  than assuming.** An earlier draft said "creates exactly one thread", which is
+  the stock binary's incidental shape written down as the requirement and reads
+  as false against the panel in service; the opposite error would be to treat
+  P9 as the reason the answer holds, which would leave a cutover binary running
+  before P9, without it, or on a panel where it did not take, uncovered. Both
+  are wrong. The property is *nothing that could notice silence*, and it holds
+  twice over:
 
-  ⚠ **Do not state this as "creates one thread".** That is the shape of the
-  stock binary, not the requirement, and it reads as false against the panel
-  actually in service. "At most one, and P9 removes it here" is the accurate
-  form. An earlier draft of this very entry got that wrong.
+      stock v12    thread present, and harmless   -> no monitoring
+      live v13     thread absent (P9)             -> no monitoring
 
-  **It is now executable: `probe/supervis_heartbeat.py <rootfs>/supervis`.**
-  Seven assertions, taking the vendor binary from the operator the way
+  P9 also does not divert `main`. It forces the "thread creation failed" branch,
+  and both branches converge at `0xc4f0` — the failure path costs one `puts()`
+  and skips one flag store. The queue read, `SupervisTimeout` and `time()` are
+  all downstream of that convergence and untouched. So "the P9 bytes are nowhere
+  near this path" is true of the supervision decision path and of `main`'s
+  control flow; it was only wrong as a statement about the thread site itself.
+
+  **RE-DERIVED HERE, not taken on report.** `probe/supervis_heartbeat.py
+  <rootfs>/supervis` takes the vendor binary from the operator the way
   `ci/test_hdr.py` takes `TUXEDO_FW_DIR`, since the binaries are deliberately
-  absent from this repo. Measured by the firmware session: stock 7 ok / 0 fail,
-  live v13 6 ok / 0 fail, **and Barracuda as a negative control 2 ok / 3 fail**
-  — it goes red against a binary where the claim is false, rather than crashing
-  or quietly passing. Anything it cannot evaluate exits non-zero, because
-  "could not check" must not render as "checked and fine".
+  absent from this repo. Run from this repo's own copy against three binaries on
+  the build VM:
 
-  Recorded on behalf of the firmware session, which found it and could not
-  commit it while this repository was held for the publication rewrite.
-  **Not independently re-derived here** — the vendor binaries are deliberately
-  not in this repo, so this session could not check the four `time()` sites or
-  the `SupervisTimeout` inputs against them. **That gap is what the checker
-  above closes**: the finding stopped being a claim carried on trust and became
-  something anyone with the binary can run. Re-confirm before stage 6 is
-  booked if anything else about `supervis` turns out to be wrong.
+  | binary | exit | result |
+  |---|---|---|
+  | stock `supervis` | 0 | 7 assertions hold, thread present and harmless |
+  | live v13 `supervis` | 0 | 6 hold, "no thread at all (P9 removes it)" |
+  | `Barracuda` (control) | 1 | **3 FAIL** — queue read from two threads, `SupervisTimeout` unresolvable, `time()` in 30 unexpected callers |
+
+  **The control carries more weight than the passes.** Seven assertions holding
+  on two binaries shows the checker is quiet; three failing on a binary where
+  the claim is false shows it can discriminate. Anything it cannot evaluate
+  exits non-zero, because "could not check" must not render as "checked and
+  fine".
+
+  Found by the firmware session, which could not commit it while this repository
+  was held for the publication rewrite. Re-confirm before stage 6 is booked if
+  anything else about `supervis` turns out to be wrong.
 - Long-run stability. The longest any test binary had run on this panel was ~50
   seconds. No soak, no memory-growth-over-hours measurement, no concurrency
   beyond a handful of connections, all on a single-core box. Every RSS figure in

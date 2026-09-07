@@ -369,6 +369,11 @@ and left sitting there saying the opposite of the truth.
   stream counted down correctly. Use the stream for state.
 - `supervis` allows **24 relaunches then a hardware reset**, and the counter is
   never zeroed. Check the budget before flashing a request-path change.
+  **Seen directly at `0xc684` rather than quoted**, while tracing the P9 branch
+  for the §5.11 supervision question: load the counter, `add r3,r3,#1`,
+  `cmp r3,#0x18`, store it back, branch when it exceeds. **The store happens
+  after the compare and there is no reset path**, which is the mechanism behind
+  "never zeroed".
 - **A flash wipes anything added over SSH.** `/opt/tuxedo/configuration`
   (mtdblock17) survives.
 - **Prove request-path patches under `emu/` before flashing.** That is what
