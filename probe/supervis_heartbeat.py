@@ -25,7 +25,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from capstone import CS_ARCH_ARM, CS_MODE_ARM, Cs
-from capstone.arm import ARM_INS_BL, ARM_INS_BLX, ARM_INS_LDR, ARM_OP_IMM
+from capstone.arm import (ARM_INS_B, ARM_INS_BL, ARM_INS_BLX, ARM_INS_LDR,
+                          ARM_OP_IMM, ARM_OP_REG)
 
 from tuxelf import Elf
 
@@ -102,6 +103,50 @@ def main(path: str) -> int:
               else "missing: %s" % sorted(TIME_CALLERS - tc))
     except KeyError as ex:
         check(False, "time() resolvable", str(ex))
+
+    # 3b. NO INDIRECT TRANSFER INSIDE SupervisTimeout.
+    #
+    # EVERY assertion above rests on e.calls()/e.callers(), which walk B and BL
+    # only. A jump table (`ldrls pc,[pc,rN,lsl #2]`) or a `blx reg` leaves no B
+    # or BL, so those queries return a clean, confident, INCOMPLETE answer --
+    # the same blindness that cut reply-layouts.py to 178 of 768 instructions
+    # and that made a branch scan call main's 0xc684 unreachable when three
+    # jump-table slots point straight at it.
+    #
+    # This binary happens to be safe: every indirect transfer in it sits in
+    # std::vector internals, log_SupervisionText, log_SupervisionEvent's own
+    # table, main's dispatch and __libc_csu_init, and none is in the
+    # supervision decision path. "Happens to be" is not a property a checker
+    # may inherit, so it is asserted. If a future supervis dispatches inside
+    # SupervisTimeout, the queries above stop being trustworthy and this says
+    # so instead of passing quietly.
+    #
+    # It is a GUARD, not a detector: it adds no negative control of its own,
+    # and stays green on supervis.control because redirecting a bl introduces
+    # no indirect transfer. The MqRecv redirect is still the only thing
+    # proving this script can fail.
+    try:
+        tlo = e.addr("SupervisTimeout(sigval)")
+        thi = e.end(tlo)
+        toff = e.v2o(tlo)
+        indirect = []
+        for va in range(tlo, thi, 4):
+            raw = e.d[toff + (va - tlo):toff + (va - tlo) + 4]
+            ins = next(md.disasm(raw, va), None)
+            if ins is None or not ins.operands:
+                continue
+            op0 = ins.operands[0]
+            is_pc = (op0.type == ARM_OP_REG
+                     and md.reg_name(op0.reg) == "pc"
+                     and ins.id != ARM_INS_B)
+            is_blx_reg = (ins.id == ARM_INS_BLX and op0.type == ARM_OP_REG)
+            if is_pc or is_blx_reg:
+                indirect.append("%x:%s" % (va, ins.mnemonic))
+        check(not indirect,
+              "SupervisTimeout has no indirect transfer (so the call scan is complete)",
+              str(indirect))
+    except (KeyError, TypeError) as ex:
+        check(False, "SupervisTimeout disassemblable for the indirect check", str(ex))
 
     # 4. The one thread supervis creates is the camera listener, and it touches
     #    nothing supervisory. Concluding "no monitor" from a call list alone is

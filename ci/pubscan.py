@@ -138,8 +138,13 @@ YOURS = [
     # a FOURTH pass, in the comment explaining why it should not be present.
     # The self-check at the end of main() caught that. Do not put a real
     # address in this file, not even as an illustration.
-    ("private addresses, 10.10.x",
-     re.compile(r"\b10\.10\.\d{1,3}\.(?:\d{1,3}|[xXn*])\b")),
+    #
+    # THE SUBNET ITSELF IS NOT IN THIS FILE. A /16 the author uses is an author
+    # identifier, and a first version of this hardcoded it here -- then put it
+    # in the test cases too, which is the fifth time in one day that a real
+    # value ended up in the file whose job is to keep real values out. The
+    # prefix lives in ci/pubscan.local as "house addresses"; this file supplies
+    # the mask-aware machinery and nothing else. See masked_addr_re.
     ("real MAC addresses", real_macs),
     # A Windows user directory discloses the account NAME, so what matters is
     # the name and not the shape. `C:\Users\dev\...` after a scrub identifies
@@ -152,6 +157,62 @@ YOURS = [
     ("private keys", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")),
     ("bearer tokens", re.compile(r"\b(?:ghp|gho|github_pat|xox[baprs])[-_][0-9A-Za-z_-]{16,}")),
 ] + _local_identifiers()
+
+def masked_addr_re(prefix: str) -> "re.Pattern[str]":
+    """Match `<prefix>.<octet>.<host>` where the host may be digits OR a mask.
+
+    Requiring digits in the host octet let a masked address survive three
+    separate sweeps of this repo. A masked host LOOKS scrubbed while the
+    network part beside it is the half that identifies anything; masking the
+    host hides the least useful field.
+
+    `\\*` sits OUTSIDE the character class and the tail is `(?!\\w)` rather than
+    `\\b`, and both are load-bearing. `\\b` after `*` -- a non-word character --
+    asserts that a WORD character follows, so a `.*` form can never match in any
+    context. The first version listed `*` inside the class and therefore claimed
+    four mask forms while catching three: the alternative LOOKED covered because
+    the character was sitting right there, which is the same shape as the bug
+    this pattern exists to find.
+
+    `prefix` is a regex fragment such as `10\\.10`, supplied by the caller.
+    Real prefixes belong in ci/pubscan.local, never here.
+    """
+    return re.compile(r"\b" + prefix + r"\.\d{1,3}\.(?:\d{1,3}|[xXn]+|\*)(?!\w)")
+
+
+#: Cases for masked_addr_re, run by `--selftest`, against a SYNTHETIC prefix.
+#:
+#: A detector with no case that makes it FIRE is the failure this repo has been
+#: chasing all day, and this one shipped with a dead branch. The negative cases
+#: matter as much: `[xXn]+` could plausibly swallow an ordinary word after a
+#: dotted quad, and `.next` proves it does not.
+SELFTEST_PREFIX = r"10\.77"
+MASK_CASES = (
+    ("10.77.52.5", True), ("10.77.52.x", True), ("10.77.52.X", True),
+    ("10.77.52.n", True), ("10.77.52.xxx", True),
+    ("10.77.52.*", True), ("10.77.52.* end", True), ("addr 10.77.52.*", True),
+    ("10.77.52.*)", True), ("panel at 10.77.54.x on the vlan", True),
+    ("10.77.52.next", False), ("10.77.52.name", False), ("10.77.52.node1", False),
+    ("192.168.1.x", False), ("10.20.30.x", False), ("203.0.113.x", False),
+    ("110.77.52.5", False), ("10.100.52.5", False),
+)
+
+
+def selftest() -> int:
+    """Prove masked_addr_re fires and refuses on the right inputs."""
+    rx = masked_addr_re(SELFTEST_PREFIX)
+    bad = 0
+    for text, want in MASK_CASES:
+        got = bool(rx.search(text))
+        if got != want:
+            bad += 1
+            print("  FAIL %-34r want %s got %s" % (text, want, got))
+    print("  %d case(s), %d failure(s)" % (len(MASK_CASES), bad))
+    if not any(w for _, w in MASK_CASES):
+        print("  ABORT: no case expects a match; this test cannot fail")
+        return 2
+    return 1 if bad else 0
+
 
 #: Present, but discloses nothing about you: the vendor's own defaults, and
 #: paths whose account name is a placeholder. Reported so the count is honest
@@ -175,7 +236,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))))
+    ap.add_argument("--selftest", action="store_true",
+                    help="check the private-address pattern against MASK_CASES")
     args = ap.parse_args()
+
+    if args.selftest:
+        return selftest()
 
     files = tracked(args.repo)
     blobs = {}
