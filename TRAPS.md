@@ -156,6 +156,10 @@ and left sitting there saying the opposite of the truth.
   `python D:/temp/tux-disarm.py`. They read the code from `D:/temp/tuxpw.txt`
   (4 bytes — it is the panel code, and the same value is the web password), and
   the disarm tool exits non-zero unless it confirms a disarmed state.
+- **Panel sessions are bound to the client's source IP.** A cookie obtained on
+  one host gets `401` on the push path and the login page on `/authenticated/*`
+  from another, byte-identical and at the same moment. Log in from the host that
+  will use the session; do not hand a cookie between machines.
 - **The panel's reply to an arm/disarm means "command sent", not "code
   accepted"** — `{"Status":"Sucess", ... "Command sent sucessfully"}`, vendor
   spelling. Confirm the outcome from the stream or the status, never from that.

@@ -1572,6 +1572,40 @@ cases and missed msgTypes 1, 111 and 147, all three of which do format frames.
 **Revert:** `rm /tmp/*`. Precedent exists — the runtime survey left `/tmp` with
 exactly its original four entries and 356K used. **MEASURED.**
 
+#### MEASURED 2026-09-06: panel sessions are bound to the client's source IP
+
+Found by building the stage-3 shim, handing it a session cookie obtained on a
+workstation, and watching it take `401` from the build VM while that same cookie
+worked from the workstation at the same moment.
+
+Protocol held constant — both plain HTTP on port 80, byte-identical cookie:
+
+| source | `/authenticated/index.html` | `/SimpleDebugger.interface/G.` |
+|---|---|---|
+| workstation `198.51.100.x` (created the session) | `302` → `/home.html`, recognised | `200`, streams |
+| build VM `203.0.113.40` | `200`, 6553 B **login page** | `401` |
+
+The panel simply does not know the cookie from the second address. Note the two
+different denials for one cause: the `FormAuthenticator` path answers `200` with
+a login page, the P13-gated push path answers `401`.
+
+**Consequences.**
+
+* **A shim cannot borrow a session — it must log in from wherever it runs.**
+  For stage 3 as designed (`tuxweb` on the panel, talking to Barracuda over
+  loopback) the session comes from `127.0.0.1` and the problem does not arise.
+  It surfaced only because the shim was being exercised from a third host,
+  which is not where it will live.
+* **`ha-tuxedo-touch` must log in from the host that will use the session.** A
+  cookie obtained on one machine does not work from another.
+* A real if modest security property: a stolen cookie is useless from another
+  address. Belongs in `tls/THREAT-MODEL.md` next to what TLS does and does not
+  fix.
+
+**Inferred, not read:** the binding is *presumed* to be on source address
+because that is the only variable that changed. The field holding it has not
+been located in the binary.
+
 ### Stage 3 — `tuxweb` as a TLS reverse proxy, spare port
 
 **Change:** one new binary, run by hand on port 8443. Barracuda untouched and

@@ -15,6 +15,7 @@
 
 mod frame;
 mod ipc;
+mod shim;
 
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
@@ -46,8 +47,26 @@ fn load_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    // stage 3 shim: re-serve the vendor push stream byte for byte.
+    //   tuxweb --shim <upstream host:port> <cookie> <bind-addr>
+    // The cookie is passed in; this binary never handles the panel password.
+    if args.len() == 5 && args[1] == "--shim" {
+        let s = shim::Shim {
+            upstream: args[2].clone(),
+            cookie: args[3].clone(),
+            bind: args[4].clone(),
+        };
+        if let Err(e) = s.run() {
+            eprintln!("tuxweb: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if args.len() != 4 {
         eprintln!("usage: {} <bind-addr> <chain.pem> <server.key>", args[0]);
+        eprintln!("       {} --shim <host:port> <cookie> <bind-addr>", args[0]);
         std::process::exit(2);
     }
     let (addr, chain_path, key_path) = (&args[1], &args[2], &args[3]);
