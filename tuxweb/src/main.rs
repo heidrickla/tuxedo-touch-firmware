@@ -14,6 +14,7 @@
 // Connections are handled in sequence with a short read timeout.
 
 mod accounts;
+mod cutover;
 mod deadman;
 mod frame;
 mod ipc;
@@ -138,6 +139,24 @@ fn main() {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     if called_as == "Barracuda" {
+        // Launched by supervis under the vendor's name. Almost always this is
+        // a passthrough; exactly once, when a window has been armed, it is the
+        // cutover. Taking the marker CONSUMES it, so a crash during the window
+        // is relaunched as a passthrough rather than as another window.
+        if cutover::take_arm_marker(cutover::ARM_MARKER) {
+            let vendor = std::env::var("TUXWEB_EXEC")
+                .unwrap_or_else(|_| "/opt/webserver/vendor/Barracuda".to_string());
+            let window = std::env::var("TUXWEB_CUTOVER_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(std::time::Duration::from_secs)
+                .unwrap_or(deadman::DEFAULT_WINDOW);
+            cutover::run(cutover::Config {
+                vendor,
+                log: "/tmp/cutover.tsv".into(),
+                window,
+            });
+        }
         passthrough(&args[0], &args[1..]);
     }
     if args.get(1).map(String::as_str) == Some("--passthrough") {
@@ -234,6 +253,21 @@ fn main() {
             Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
         }
         return;
+    }
+
+    // Stage 6, the IPC cutover. Read-only, bounded, hands the panel back.
+    //   tuxweb --cutover <vendor-binary> [seconds] [logfile]
+    if args.len() >= 3 && args[1] == "--cutover" {
+        let window = args
+            .get(3)
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(deadman::DEFAULT_WINDOW);
+        cutover::run(cutover::Config {
+            vendor: args[2].clone(),
+            log: args.get(4).cloned().unwrap_or_else(|| "/tmp/cutover.tsv".into()),
+            window,
+        });
     }
 
     // stage 3 shim: re-serve the vendor push stream byte for byte.
