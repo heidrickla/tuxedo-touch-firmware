@@ -29,6 +29,26 @@ and left sitting there saying the opposite of the truth.
 - **A check that can pass for the wrong reason is not a check.**
   `len(body) > 0` is true of a 401 error body, so it reported a gated panel as
   "delivers frames with no credential".
+- **A CHECK MUST DISTINGUISH "RAN AND PASSED" FROM "DID NOT RUN".** Deciding a
+  verdict by searching a command's output for a failure word conflates them,
+  because the absence of that word is produced by success and by absence alike.
+  `check_hdr_checksum` was
+  `python3 ci/test_hdr.py | grep -q FAIL && fail || pass`, so a missing script,
+  an `ImportError`, a syntax error or no `python3` at all each printed
+  **`ok  header checksum`**, and the suite then printed `all checks passed`.
+  Confirmed by moving the script aside and watching it go green. That was the
+  check between a wrong header checksum and an image reaching the panel.
+  **Judge the exit status**, and keep the text search only as a second gate.
+- **A multi-file `grep -q` hides a missing file.** `grep -q PAT a.md b.md`
+  matches in `a.md`, returns 0, and reports a full pass having searched half of
+  what it names. It does not fail and it does not even skip. This went stale for
+  real when the documents moved into `docs/`. **Confirm each input exists before
+  searching it**, and say which one was missing.
+- **Prove the check can go red.** After fixing either of the above, move the
+  input away and confirm the suite fails; a fix that leaves it green did not
+  work. Then run the whole suite either side and **diff the ok/skip/fail
+  counts** — a check that has quietly stopped checking looks exactly like a
+  check that passed.
 - **Revert the feature and watch the test go red, or you have not tested it.**
   I wrote `test_the_entry_loads_and_streams_from_the_relay` for the HA push
   source and it passes with the feature REVERTED — the fake panel serves the

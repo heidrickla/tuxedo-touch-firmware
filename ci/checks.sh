@@ -211,17 +211,53 @@ check_dropbear_flags() {
 
 # 9. Header checksum algorithm, against a hand-computed fixture and the vendor
 #    values when the images are present.
+# Judged on the EXIT STATUS, not on whether the output contains "FAIL".
+#
+# It was `python3 ci/test_hdr.py | grep -q FAIL && fail || pass`, and that
+# verdict cannot tell "ran and passed" from "did not run at all": a missing
+# script, an ImportError, a syntax error, or no python3 on the box all produce
+# output with no FAIL in it, and every one of them took the pass branch.
+# Demonstrated rather than reasoned - moving ci/test_hdr.py aside made the suite
+# print `ok header checksum` and then `all checks passed`.
+#
+# This is the check between a wrong header checksum and an image going onto the
+# panel. A bad header bricks a flash, and supervis allows 24 relaunches before a
+# hardware reset, so "was never examined" is the one answer it must not be able
+# to give silently. test_hdr.py already ends in sys.exit(FAILED), so the status
+# is meaningful; the FAIL grep stays as a second gate in case a later edit
+# reports a failure without setting the status.
 check_hdr_checksum() {
-    python3 ci/test_hdr.py 2>&1 | sed 's/^/       /' | grep -q FAIL \
-        && fail "header checksum" "see ci/test_hdr.py output" \
-        || pass "header checksum"
+    local out rc
+    out=$(python3 ci/test_hdr.py 2>&1); rc=$?
+    printf '%s\n' "$out" | sed 's/^/       /'
+    if [ "$rc" -ne 0 ]; then
+        fail "header checksum" \
+             "ci/test_hdr.py exited $rc - it did not pass, or did not run"
+    elif printf '%s\n' "$out" | grep -q FAIL; then
+        fail "header checksum" "see ci/test_hdr.py output"
+    else
+        pass "header checksum"
+    fi
 }
 
 # 10. Documented addresses stay consistent with the tools.
+# Each document is confirmed to EXIST before it is searched.
+#
+# This was `grep -q '0x80003864' ssh/BUILD.md docs/TUXEDO-BUILD.md`, and a
+# multi-file grep hides a missing file completely: grep matches in the first
+# argument, returns 0, and the check reports a full pass while searching half of
+# what it names. It does not even skip. The path went stale for real when the
+# documents moved into docs/, and the check stayed green throughout.
 check_docs_agree() {
-    local bad=""
-    grep -q '0x80003864' ssh/BUILD.md docs/TUXEDO-BUILD.md 2>/dev/null || bad="checksum routine address missing from docs"
-    grep -q 'cfg_services' ssh/BUILD.md 2>/dev/null || bad="$bad; cfg_services finding missing"
+    local bad="" f
+    for f in ssh/BUILD.md docs/TUXEDO-BUILD.md; do
+        [ -f "$f" ] || bad="$bad; $f is missing, so nothing was searched in it"
+    done
+    grep -q '0x80003864' ssh/BUILD.md docs/TUXEDO-BUILD.md 2>/dev/null \
+        || bad="$bad; checksum routine address missing from docs"
+    grep -q 'cfg_services' ssh/BUILD.md 2>/dev/null \
+        || bad="$bad; cfg_services finding missing"
+    bad="${bad#; }"
     [ -z "$bad" ] && pass "docs record the key addresses" || fail "docs record the key addresses" "$bad"
 }
 
