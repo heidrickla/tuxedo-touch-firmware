@@ -72,6 +72,19 @@ and left sitting there saying the opposite of the truth.
   above was caught only because Barracuda was run through the same code and also
   came back "not referenced", which is impossible. Without the control it would
   have been published as a finding about `/tuxedo`.
+- **Build the control INTO the tool, not into the session.** `reply-layouts.py`
+  asserts `registerclient`'s five hand-read fields under `--check` and failed
+  4 of 5 on its first run — one of those failures was in the check itself,
+  which kept only the last row per offset and so reported a field the tool had
+  actually recovered. A control that lives only in your head is not run again
+  after the change that breaks it.
+- **When a rewrite finds MORE, diff what it finds LESS.** Going from 45 to 92
+  resolved layouts looked like unambiguous progress; the diff showed 17 fields
+  the old tool had and the new one did not, of which four were real regressions
+  in the rewrite and two were old false positives. Neither group is visible
+  from the totals. Compare like for like and adjudicate every difference by
+  reading the code — assuming the new one is right because it is newer is how
+  the false positives would have been preserved and the regressions shipped.
 - **"No case for X" is not "X does not exist."** A receiver's dispatch table
   says what it handles, never what the sender emits. msgType **20 is real** —
   `/tuxedo` sends it with the keypad display — and Barracuda simply has no case,
@@ -98,6 +111,35 @@ and left sitting there saying the opposite of the truth.
 - **`mnemonic.startswith("bl")` also matches `blo`, `bls`, `blt`, `ble`.** Four
   conditional branches read as calls; whole subtrees go unexplored and the
   result still looks tidy. Test `m in ("bl", "blx")`.
+- **`ldr pc, [pc, rN, lsl #2]` is a switch, not a return.** gcc puts the table
+  immediately after the instruction, so reading it as a return cuts every case
+  off *and* leaves the table's own words in the instruction stream.
+  `refreshUploadZoneList` reached 178 of its 768 instructions and two of its
+  `osal_MqSend` sites vanished from a map that still read as complete. The
+  bound is the preceding `cmp rN, #k`; targets follow at `addr+8`.
+- **An epilogue in the middle of a function is not on the path after it.**
+  `pop {r4,r5,pc}`, and `pop {r4,r5,lr}` before a tail-call `b`, restore the
+  caller's registers; letting them clobber state for the code that follows
+  wiped buffer pointers held in callee-saved registers and turned five
+  resolved functions into "unresolvable".
+- **Do not fall through an unconditional `b`.** The next address is reachable
+  only by branch, so carrying registers across it attributes one path's values
+  to another. This reported two message buffers as `osal_Free()` and
+  `CTimer2::start()` — values that are obviously not buffers, which is the only
+  reason it was caught. Walk the CFG; a linear pass also interprets literal
+  pools as code.
+- **`cmp rD, #0` does not write `rD`.** Nor do `cmn`, `tst`, `teq`, `push`.
+  Treating operand 0 as a destination destroys the tested value one
+  instruction before the predicated store that consumes it, so
+  `cmp r0,#0` / `strbeq r0,[sp,#0xb8]` lost the field's source.
+- **A store with a register index is not a store at offset 0.**
+  `str r6,[r0,r7]` has `mem.disp == 0`; ignoring `mem.index` published a
+  phantom `+0x000` field. Refuse the operand instead of guessing.
+- **Matching by register NAME is not matching the object.** A backward walk
+  that finds `mov r1, r3` and then collects every store through "r3" in the
+  function pulls in stores from disjoint branches and from after the buffer was
+  freed. Two published fields were exactly that. Resolve what the register
+  *points at* — same symbolic root, offsets subtracted — not what it is called.
 - **Not every case in a switch has a comparison.** After `cmp #127` and
   `cmp #125`, gcc knows 126 is the only value left and emits the handler with
   no test at all; a contiguous run like 300-303 shares one block behind a

@@ -3020,47 +3020,111 @@ token in a URL lands in access logs and `Referer` headers; there is no reason to
 accept that cost now that the header form is demonstrated on the actual client.
 The shim already gates on either (`shim.rs::presents_token`).
 
-### 5.10 The reply payload beyond `+0x0E` — LARGELY ANSWERED STATICALLY, 2026-09-07
+### 5.10 The reply payload beyond `+0x0E` — ANSWERED STATICALLY, 2026-09-07
 
 It did not need the window. Every builder is a named function in `/tuxedo` that
 passes `0x22c` to `osal_MqSend`, so the layouts can be read out of the binary,
 and the stage-6 capture becomes confirmation rather than discovery.
 
-`reply-layouts.py` finds all **78 builders**, resolves the buffer register and
-its base offset, and records every store through it. **45 layouts resolved, 19
-msgTypes recovered** — 20, 21, 51, 59, 60, 61, 62, 101, 103, 109, 111, 112, 147,
-150, 151, 153, 154, 504, 600 — against the 7 this section previously listed. The
-map is committed as `reply-layouts.txt`.
+`reply-layouts.py` interprets each builder forwards over its control-flow
+graph, giving every register a symbolic pointer — `sp`, an argument, a
+literal-pool constant, a load, a call's return value. Two registers point at
+the same object when their roots match, so the buffer is whatever `r1` holds at
+the send and a field is any store, or any `strcpy`/`memcpy`/`sprintf`, whose
+destination shares that root.
 
-Two things already read off it:
+**78 builders, 92 send sites, all 92 resolved. 20 msgTypes** — 20, 21, 51, 59,
+60, 61, 62, 101, 103, 109, 111, 112, 147, 150, 151, 152, 153, 154, 504, 600 —
+against the 7 this section originally listed. **105 text fields** that a
+store-only method cannot see. The map is committed as `reply-layouts.txt`.
 
+What it says:
+
+- **msgType 20's payload is at `+0x0E`.** `wsltHandleRawDataFromPanel` builds
+  it with `strcpy` then `strcat` from `apl_getEcpConsoleModeData()`. This is
+  the console-mode message P10 made real, and it is the one field I said would
+  still need the window. It does not.
 - **msgType 21's `+0x08` is `GetOnlineStatus()`.** The field `ipc.rs` calls
-  `arg` is the panel's online flag on that path, and the observed frame
+  `arg` is the panel's online flag on that path; the observed frame
   `0:21:1:fe:…` has `arg=1`, i.e. online. A generic name concealed a specific
   meaning.
-- **msgType 21 has two builders with different shapes.**
-  `sltSendChangedPartitionStatus` and `sltSendPartitionDetailsToWebClient`, the
-  second putting `GetCurrentPartition()` at `+0x04` and a word at `+0x90`. So
-  even one msgType is not one layout.
+- **One msgType is not one layout.** 21 has two builders with different shapes
+  (`sltSendChangedPartitionStatus`, `sltSendPartitionDetailsToWebClient`); 101
+  has four and 103 has three.
+- **`registerclient` (504) writes nothing at `+0x0E`.** Its payload is
+  `GetCurrentPartition()` at `+0x90`, a partition description `strcpy`'d to
+  `+0x91`, and single bytes at `+0xaf`..`+0xb8` from `GetPanelCalImplementation`,
+  `GetArmingModes() & 8`, `GetOperationMode`, `GetTotalPartitions` and
+  `isRisSupported`. So `ipc.rs`'s `Reply::parse` is right for the status path it
+  came from and wrong for a 504.
+- **`sltGoAuthLevelReceived` carries four partition descriptions** at `+0x010`,
+  `+0x02f`, `+0x04e`, `+0x06d` — a 31-byte stride — plus the literal texts
+  `VALID_USER_CODE`, `INVALID_USER_CODE` and
+  `Global ARMING - Not Authorized...!`.
 
-**The gap, stated because a short entry is easy to misread:** only store
-instructions are recorded. Text arrives by `strcpy`/`memcpy`/`sprintf` and is
-invisible to this method — which is why `registerclient` shows no `+0x91`
-despite the partition description demonstrably being there. An entry listing
-only session and msgType means *the payload does not arrive by store*, not that
-the message is empty. **msgType 20 is exactly such an entry**, so the console
-payload still wants the window.
+**The method's limits, stated because a short entry is easy to misread.** Only
+reachable code is read, so a send with no path from the function entry is
+reported as `NOT REACHED`, never dropped. A function with several cases shares
+one frame across all of them and stores are pooled per function, so entries
+marked `NOTE` may list a field belonging to a different case — the store
+address is printed for exactly that check. `<- f(out)` attributes a value to
+the first non-library call to receive the pointer, which is right for a scratch
+buffer filled once and read after and can mislead for one reused twice. `<- rN`
+means the field is real but its producer is not claimed.
 
-**33 builders did not resolve** and are listed rather than dropped, because a
-map that looks complete is the failure mode here.
+**Seven defects were found while building this, and every one had already
+produced a confident wrong answer.** They are recorded because the pattern
+matters more than the fixes: each looked like a tidy result.
 
-Two defects found while building it, both of which had produced a plausible
-wrong answer: predicated stores (`strbne`, `strbeq`) were silently skipped, so
-`registerclient`'s `+0xb0` and `+0xb8` were missing from a map that looked
-finished; and a `None`-versus-`int` comparison in the sort crashed the run
-partway, leaving a truncated file whose builder count read as a result. The
-first count of "45 resolved" and the second of "15" were both from crashed runs
-and neither was real.
+1. Predicated stores (`strbne`, `strbeq`) were skipped by a mnemonic-keyed
+   width table, so `registerclient`'s `+0xb0` and `+0xb8` were missing from a
+   map that looked finished. Widths now come from capstone's instruction id.
+2. A `None`-versus-`int` sort comparison crashed the run partway. The counts
+   "45 resolved" and then "15" were both from crashed runs; neither was real.
+3. The backward walk that found the buffer register stopped 11 instructions
+   back, and `CReceiverThread::run()` sets `r1` at 12 — the fixed-distance
+   bound TRAPS §1 warns about, hit again. That plus four other shapes left
+   **33 of 78 builders unresolved**.
+4. `cmp r0, #0` was treated as *writing* `r0`, destroying the tested value one
+   instruction before the predicated store that consumes it.
+5. A `pop {r4,r5,pc}` early-return epilogue in the middle of a function
+   clobbered registers for the code after it, and `pop {r4,r5,lr}` before a
+   tail call did the same.
+6. Reading the function linearly fell **through** an unconditional `b` into a
+   block only a branch can reach, which reported two buffer pointers as
+   `osal_Free()` and `CTimer2::start()`. It also decoded literal pools as
+   instructions. Replaced with a worklist over the CFG.
+7. `ldrls pc,[pc,r3,lsl #2]` — a gcc jump table — was read as a return, cutting
+   every case off: `refreshUploadZoneList` reached 178 of its 768 instructions
+   and **two of its send sites disappeared from the map without comment.**
+   Decoding the table also required stepping over its own entries, because
+   capstone's `disasm()` stops at the first undecodable word rather than
+   skipping it (TRAPS §1 again).
+
+Two further errors were caught by the regression diff rather than by the tool:
+`osal_MqSend` was being recorded regardless of length, so a **580-byte**
+message four instructions away was published as a layout of the reply union;
+and `strlen(s)` immediately before `strcpy(dst, s)` was reported as the source
+of `dst`.
+
+Guards that now travel with the tool, since all of the above were found by
+comparison rather than by inspection:
+
+- `registerclient` is a **positive control** built into `--check`. Its five
+  fields were read by hand before the tool existed, so a run that does not
+  reproduce them fails loudly. It caught four defects on its first run.
+- A send site the linear scan finds but the CFG walk does not reach is
+  **reported**, not dropped. That is how the jump-table bug would have been
+  caught had it existed then.
+- The buffer length is checked from the dataflow at the send *and* by the
+  linear scan, so the two methods have to agree.
+
+Two fields the previous tool reported are deliberately **not** in the new map,
+both false positives confirmed by reading the code: `setEventIndex +0x000` is a
+store to a global (`ldr r3,[pc,#0xb8]; strb r4,[r3]`) on the branch that does
+not send, matched only because the old tool compared register *names*; and
+`sltSetEventIndex +0x000` is `str r6,[r0,r7]`, a register-indexed store read as
+offset 0 because `mem.index` was ignored.
 
 ### 5.11 Loose ends recorded, not planned around
 

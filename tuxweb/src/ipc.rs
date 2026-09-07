@@ -33,13 +33,26 @@ pub const COMMAND_LEN: usize = 404;
 /// (RIS supported). Nothing of interest sits at `+0x0E` in that one.
 ///
 /// So `parse` is right for the status path it was derived from, and must not be
-/// pointed at a 504 and believed. Decoding the rest means reading each builder,
-/// and the builders are already identified: they are the `/tuxedo` functions
-/// that pass `0x22c` to `osal_MqSend`.
+/// pointed at a 504 and believed.
+///
+/// The rest is decoded. `reply-layouts.py` reads all 78 builders -- the
+/// `/tuxedo` functions that pass `0x22c` to `osal_MqSend` -- over their
+/// control-flow graphs and prints one map per send site. The result is
+/// `reply-layouts.txt`: 92 sites, 20 msgTypes. Consult it before assuming an
+/// offset. Two of its results bear directly on this struct:
+///
+/// * **msgType 20 does put its text at `+0x0E`.** `wsltHandleRawDataFromPanel`
+///   `strcpy`s then `strcat`s it there from `apl_getEcpConsoleModeData()`, so
+///   `parse` is right for the console-mode message as well as for status.
+/// * **`arg` is a container, not a meaning.** On `sltSendChangedPartitionStatus`
+///   (msgType 21) `+0x08` is `GetOnlineStatus()`, so the observed
+///   `0:21:1:fe:...` frame means *online*.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {
     pub session: u32,
     pub msg_type: u32,
+    /// `+0x08`. Per-type: `GetOnlineStatus()` on msgType 21's
+    /// `sltSendChangedPartitionStatus`. See `reply-layouts.txt`.
     pub arg: u32,
     /// From `+0x0E`, NUL-terminated, latin-1. Not utf-8: the first byte is
     /// commonly 0xFE or 0xFF.
