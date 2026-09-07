@@ -101,14 +101,15 @@ and left sitting there saying the opposite of the truth.
 
 - Python on Windows: `"/tmp/x"` silently becomes `C:\tmp\x`; `"/c/tmp/x"`
   raises FileNotFoundError. **Use `C:/...`.**
-- **Heredoc + non-raw python string eats `\r\n`.** Inside `'''…'''` it becomes a
-  REAL newline in the file you write. **Rule, no exceptions: if a heredoc emits
-  code or data containing a backslash, the python string is `r'''…'''`.**
-  Broken four times in one day, including once writing Rust where it compiled
-  cleanly and surfaced only as a wrong test result. Writing this entry did not
-  stop me repeating it. Two things do: prefer the Edit tool over a heredoc for
-  files with escapes, and when a heredoc is unavoidable, check the result with
-  `sed -n '/marker/,/end/p' file | cat -A` before trusting it.
+- **Do not use heredocs on this machine. Write files with the Write/Edit tools,
+  then run them.** This is Lewis's instruction and it is not conditional.
+  Backslashes get eaten somewhere between the shell and the interpreter, so
+  `\r\n` becomes a real newline in whatever you write. It has cost a day across
+  at least seven occurrences: a silently-wrong Rust test that compiled cleanly,
+  three failed `assert` guards on replacement text, and — twice — the mangling
+  of *this bullet* while editing it. A narrower version of this rule ("use
+  `r'''…'''`") was written here and then broken again the same session, which is
+  why it now says: don't.
 - Foreground `sleep` is blocked. Use an `until` loop or `run_in_background`.
 - **Windows `curl` is schannel, not OpenSSL.** `--cacert <private-ca>` fails with
   `schannel: the revocation status is unknown` because a private CA publishes no
