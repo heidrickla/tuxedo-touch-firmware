@@ -1658,13 +1658,33 @@ port. On a spare port for a timed test that is contained — the process was
 stopped and `:8081` confirmed closed immediately after — but it must not ship
 this way, and it would be an easy thing to leave running by accident.
 
-**Before this runs anywhere but a test:** it needs the same gate P13 applies,
-i.e. require a session on the shim's own listener and validate it against the
-panel. §2.5 already commits the replacement to authenticating this stream; that
-obligation starts now, not at cutover.
+**FIXED and verified on the panel the same day.** The shim now requires a token
+of every client, set with `TUXWEB_TOKEN`, accepted as
+`Authorization: Bearer <tok>` or `Cookie: tuxweb_token=<tok>`, compared in
+constant time. Measured on the live panel:
 
-**Also not yet done:** one client at a time, and no TLS termination in this
-mode. Fan-out matters beyond convenience — each upstream registration makes the
+| client | result |
+|---|---|
+| no credential | **401**, 0 frames |
+| wrong token | **401**, 0 frames |
+| correct `Authorization: Bearer` | 200, 9 frames, 4 with alarm state |
+| correct `Cookie: tuxweb_token=` | 200, 4 frames, 4 with alarm state |
+
+The denial is a real `401` with `Content-Length: 0` and an immediate close, not
+a 200-with-page — the shape P13's design note argues for, because a stream
+decoder reads a 200 body silently to EOF and hangs.
+
+**Why a token rather than the vendor session:** the shim cannot validate a
+client's panel session. Sessions are bound to the source IP, so a cookie the
+client obtained from its own address is not verifiable by the shim from the
+panel's. §4.10 already anticipates a token-gated stream; this is that.
+
+Running with no token set is still possible and prints a loud warning naming the
+bind address, because an open alarm feed should never be quiet about it.
+
+**Also not yet done:** one client at a time — measured, not assumed: back-to-back
+probes during testing returned nothing until spaced apart, because a second
+client waits for the first to finish. And no TLS termination in this mode. Fan-out matters beyond convenience — each upstream registration makes the
 panel flush its reply queue, so one shared subscription is strictly better than
 one per client.
 

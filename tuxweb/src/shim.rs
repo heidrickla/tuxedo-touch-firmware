@@ -31,10 +31,60 @@ Cache-Control: no-store, no-cache, must-revalidate\r\n\
 Pragma: no-cache\r\n\
 Content-type: multipart/x-mixed-replace;boundary=\"EH912ZZ\"\r\n\r\n";
 
+/// Sent to a client that presents no valid token. Shaped like P13's denial —
+/// a real status and an immediate close — because a stream consumer that reads
+/// a 200-with-login-page silently to EOF is the failure mode that design note
+/// was written to avoid.
+const DENY: &[u8] = b"HTTP/1.1 401 Unauthorized\r\n\
+Server: \r\n\
+Connection: close\r\n\
+Content-Length: 0\r\n\r\n";
+
 pub struct Shim {
     pub upstream: String,
     pub cookie: String,
     pub bind: String,
+    /// Required of every client. The shim holds ONE authenticated upstream
+    /// session and re-serves it, so without this it would hand live alarm
+    /// state to anything that can reach the port — undoing P13, which exists
+    /// to stop exactly that. `None` is only for a deliberately open test and
+    /// says so loudly at startup.
+    pub token: Option<String>,
+}
+
+/// Constant-time compare, so a wrong token cannot be found a byte at a time.
+fn token_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
+/// Accepts `Authorization: Bearer <tok>` or `Cookie: tuxweb_token=<tok>`.
+/// The cookie form exists because the known consumer already sends a `Cookie`
+/// header and adding a second one is cheaper than a new code path for it.
+fn presents_token(req_head: &str, want: &str) -> bool {
+    for line in req_head.split("\r\n") {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        let (k, v) = (k.trim(), v.trim());
+        if k.eq_ignore_ascii_case("authorization") {
+            if let Some(t) = v.strip_prefix("Bearer ") {
+                if token_eq(t.trim(), want) {
+                    return true;
+                }
+            }
+        } else if k.eq_ignore_ascii_case("cookie") {
+            for c in v.split(';') {
+                if let Some((n, val)) = c.trim().split_once('=') {
+                    if n == "tuxweb_token" && token_eq(val, want) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 impl Shim {
@@ -79,8 +129,39 @@ impl Shim {
         }
     }
 
+    /// Read the client's request head so its credential can be checked before
+    /// anything is served. Bounded, and it never reads a body.
+    fn read_request_head(client: &mut TcpStream) -> Result<String, String> {
+        client
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|e| e.to_string())?;
+        let mut acc = Vec::new();
+        let mut b = [0u8; 1024];
+        loop {
+            let n = client.read(&mut b).map_err(|e| format!("client read: {e}"))?;
+            if n == 0 {
+                return Err("client closed before sending a request".into());
+            }
+            acc.extend_from_slice(&b[..n]);
+            if find(&acc, b"\r\n\r\n").is_some() {
+                return Ok(String::from_utf8_lossy(&acc).to_string());
+            }
+            if acc.len() > 16 * 1024 {
+                return Err("client request head too large".into());
+            }
+        }
+    }
+
     /// Serve one client for as long as both sides stay up.
     fn pump(&self, mut client: TcpStream) -> Result<usize, String> {
+        let head = Self::read_request_head(&mut client)?;
+        if let Some(want) = self.token.as_deref() {
+            if !presents_token(&head, want) {
+                let _ = client.write_all(DENY);
+                let _ = client.flush();
+                return Err("denied: no valid token".into());
+            }
+        }
         let mut up = self.open_upstream()?;
         client.write_all(HEAD).map_err(|e| format!("client write: {e}"))?;
         client.flush().ok();
@@ -119,6 +200,13 @@ impl Shim {
         let l = TcpListener::bind(&self.bind).map_err(|e| format!("bind {}: {e}", self.bind))?;
         println!("tuxweb shim: {} -> {}", self.upstream, self.bind);
         println!("tuxweb shim: NOTE registering flushes the panel's reply queue");
+        match self.token {
+            Some(_) => println!("tuxweb shim: clients must present a token"),
+            None => println!(
+                "tuxweb shim: *** NO TOKEN SET -- live alarm state is served to                  ANY client that can reach {} ***",
+                self.bind
+            ),
+        }
         for s in l.incoming() {
             let c = match s {
                 Ok(c) => c,
@@ -154,6 +242,34 @@ mod tests {
         assert!(h.contains("Connection: Close"));
         assert!(h.contains("multipart/x-mixed-replace;boundary=\"EH912ZZ\""));
         assert!(h.ends_with("\r\n\r\n"));
+    }
+
+    #[test]
+    fn token_gate_accepts_both_forms_and_rejects_everything_else() {
+        let want = "s3cr3t-token";
+        let head = |h: &str| format!("GET / HTTP/1.1\r\n{h}\r\n\r\n");
+
+        assert!(presents_token(&head("Authorization: Bearer s3cr3t-token"), want));
+        assert!(presents_token(&head("Cookie: a=b; tuxweb_token=s3cr3t-token"), want));
+
+        // the exact failure this gate exists to stop: no credential at all
+        assert!(!presents_token(&head("Host: x"), want));
+        assert!(!presents_token(&head("Authorization: Bearer wrong"), want));
+        // a vendor session cookie is NOT a token. Sessions are IP-bound, so the
+        // shim cannot validate a client's session against the panel -- which is
+        // exactly why this is a token gate and not a session check.
+        assert!(!presents_token(&head("Cookie: z9ZAqJtI_1=deadbeef"), want));
+        // neither a prefix nor a suffix may pass
+        assert!(!presents_token(&head("Authorization: Bearer s3cr3t"), want));
+        assert!(!presents_token(&head("Authorization: Bearer s3cr3t-token-x"), want));
+    }
+
+    #[test]
+    fn denial_is_a_real_status_not_a_page() {
+        let d = String::from_utf8(DENY.to_vec()).unwrap();
+        assert!(d.starts_with("HTTP/1.1 401"), "must be a status a stream client can see");
+        assert!(d.contains("Content-Length: 0"), "no body to read silently to EOF");
+        assert!(d.to_lowercase().contains("connection: close"));
     }
 
     /// Feeding the shim's re-emitter a real capture must give back the same

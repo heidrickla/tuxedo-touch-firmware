@@ -71,6 +71,7 @@ fn main() {
             upstream: args[2].clone(),
             cookie,
             bind: args[5].clone(),
+            token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");
@@ -84,6 +85,7 @@ fn main() {
             upstream: args[2].clone(),
             cookie: args[3].clone(),
             bind: args[4].clone(),
+            token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");
