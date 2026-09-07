@@ -60,7 +60,19 @@ else
     cp -a "$SEED/." "$CFG/"
     echo "config: re-seeded from $SEED ($(ls -A "$CFG" | wc -l) entries)"
 fi
-cp /usr/bin/qemu-arm-static "$T/usr/bin/"
+# Write beside and rename, NEVER cp over a file that might be mapped.
+#
+# cp truncates and rewrites in place, keeping the same inode, so the page cache
+# changes underneath any process that has the file mmap'd for execution and the
+# next page it touches is torn. The symptom is SIGSEGV in a process that did
+# nothing wrong -- `uncaught target signal 11` from an instance someone else
+# started. rename(2) is atomic and leaves the OLD inode intact for anything
+# still holding it, so a running instance keeps the file it started with.
+#
+# This bit hard: a binary swapped over a colleague's running instance killed it,
+# and the resulting fault was nearly recorded as a Barracuda startup defect.
+cp /usr/bin/qemu-arm-static "$T/usr/bin/qemu-arm-static.new"
+mv "$T/usr/bin/qemu-arm-static.new" "$T/usr/bin/qemu-arm-static"
 mount -t proc proc "$T/proc"; mount -t devpts devpts "$T/dev/pts" 2>/dev/null
 mount -t mqueue none "$T/dev/mq"
 for n in "ptmx c 5 2" "urandom c 1 9" "random c 1 8" "null c 1 3" "zero c 1 5"; do
