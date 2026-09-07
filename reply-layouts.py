@@ -602,7 +602,12 @@ class Layouts:
                     # dataflow, so this and the linear scan in builders() have
                     # to agree or the tripwire fires.
                     if regs["r2"] == ptr(("imm",), REPLY_LEN):
-                        at_send[ins.address] = regs["r1"]
+                        # r0 is the queue. A 556-byte reply is not necessarily
+                        # bound for the web queue -- the video app gets some --
+                        # so recording the destination is what stops "Barracuda
+                        # has no case for this type" being read as "dropped"
+                        # when it was never addressed to Barracuda.
+                        at_send[ins.address] = (regs["r1"], regs["r0"])
                 elif tgt in self.copies:
                     copies.append((ins.address, regs["r0"], self.copies[tgt],
                                    regs["r1"], regs["r2"], ins.cc))
@@ -779,11 +784,11 @@ class Layouts:
         at_send, stores, copies, cleared, outp, size = self.trace(fn)
         for va in expect:
             if va not in at_send:
-                at_send[va] = ptr(("unreached",))
+                at_send[va] = (ptr(("unreached",)), ptr(("?", va)))
         out = []
-        for send_va, buf in sorted(at_send.items()):
+        for send_va, (buf, q) in sorted(at_send.items()):
             if buf[0][0] in ("?", "unreached"):
-                out.append((send_va, buf, False, None, size))
+                out.append((send_va, buf, q, False, None, size))
                 continue
             root, boff = buf
             confirmed = any(c[0] == buf and c[1] == ptr(("imm",), REPLY_LEN)
@@ -803,12 +808,12 @@ class Layouts:
                 what = "<- %s(%s)" % (
                     cname, self.source(src, outp) or self.describe(src))
                 fields.setdefault((dst[1] - boff, n, what), []).append((addr, cc))
-            out.append((send_va, buf, confirmed, fields, size))
+            out.append((send_va, buf, q, confirmed, fields, size))
         return out
 
 
 def render(L, fn, entries, sink):
-    for send_va, buf, confirmed, fields, size in entries:
+    for send_va, buf, q, confirmed, fields, size in entries:
         sink("== %s" % fn)
         if fields is None:
             sink("   send 0x%x, %s" % (send_va, "NOT REACHED from the function"
@@ -828,8 +833,8 @@ def render(L, fn, entries, sink):
                 sorted(k[2][3:] for k in at4))
         else:
             mt = "msgType NOT WRITTEN HERE; the buffer arrives pre-filled"
-        sink("   send 0x%x, buffer %s%s, %s" % (
-            send_va, L.describe(buf),
+        sink("   send 0x%x -> queue %s, buffer %s%s, %s" % (
+            send_va, L.describe(q), L.describe(buf),
             ", memset 0x22c confirms" if confirmed else "", mt))
         if size > 0x400:
             sink("   NOTE function is 0x%x bytes over several cases; they share"
@@ -848,26 +853,44 @@ def main(path, check):
     L = Layouts(path)
     bs = L.builders()
     lines, resolved, unresolved, sites, control = [], 0, 0, 0, {}
-    prefilled = {}
+    prefilled, queues = {}, {}
     for fn in sorted(bs):
         entries = L.layout(fn, bs[fn])
         sites += len(entries)
         for e in entries:
-            if e[3] is None:
+            if e[4] is None:
                 unresolved += 1
             else:
                 resolved += 1
-                if not any(k[0] == 4 for k in e[3]):
+                queues.setdefault(L.describe(e[2]), set()).add(
+                    "%s @0x%x" % (fn, e[0]))
+                if not any(k[0] == 4 for k in e[4]):
                     cls = fn.split("::")[0] if "::" in fn else None
                     prefilled.setdefault((e[1][0], e[1][1], cls),
                                          []).append(fn)
-        if fn == CONTROL_FN and entries and entries[0][3] is not None:
+        if fn == CONTROL_FN and entries and entries[0][4] is not None:
             # Join every row at an offset. A dict comprehension keeps only the
             # last, so a predicated pair reported one arm and the control
             # failed on a field the tool had in fact recovered.
-            for k in entries[0][3]:
+            for k in entries[0][4]:
                 control.setdefault(k[0], []).append(k[2])
         render(L, fn, entries, lines.append)
+
+    if queues:
+        lines.append("")
+        lines.append("=== WHICH QUEUE EACH REPLY GOES TO ===")
+        lines.append("")
+        lines.append("A 556-byte reply is not automatically bound for the web.")
+        lines.append("Barracuda's dispatch comparing no constant for a msgType")
+        lines.append("means it drops that type ONLY if the type is sent to the")
+        lines.append("queue Barracuda reads; otherwise it was never addressed")
+        lines.append("to Barracuda at all.")
+        lines.append("")
+        for q, fns in sorted(queues.items(), key=lambda kv: -len(kv[1])):
+            lines.append("-- queue %s: %d send site(s)" % (q, len(fns)))
+            for f in sorted(fns):
+                lines.append("     %s" % f)
+            lines.append("")
 
     if prefilled:
         lines.append("")

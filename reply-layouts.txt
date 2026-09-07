@@ -40,31 +40,31 @@
 #   is reported as NOT REACHED rather than dropped.
 
 == CAccountsSetup::sendHTTPSupdateToWeb()
-   send 0x32611c, buffer sp+0x4, msgType 61
+   send 0x32611c -> queue [*0xd2f25c], buffer sp+0x4, msgType 61
      +0x000 u32  = 61                                   @0x326118
      +0x004 u32  = 61                                   @0x326110
      +0x00d u8   = 0                                    @0x326114
 
 == CAccountsSetup::sendLocalLoginupdateToWeb()
-   send 0x3260c8, buffer sp+0x4, msgType 62
+   send 0x3260c8 -> queue [*0xd2f25c], buffer sp+0x4, msgType 62
      +0x000 u32  = 62                                   @0x3260c4
      +0x004 u32  = 62                                   @0x3260bc
      +0x00d u8   = 0                                    @0x3260c0
 
 == CAccountsSetup::sendUpdateCommandToWeb()
-   send 0x326074, buffer sp+0x4, msgType 60
+   send 0x326074 -> queue [*0xd2f25c], buffer sp+0x4, msgType 60
      +0x000 u32  = 60                                   @0x326070
      +0x004 u32  = 60                                   @0x326068
      +0x00d u8   = 0                                    @0x32606c
 
 == CChannelDBInterface::SendChannelDataRefreshtoVideoApp()
-   send 0x4336b4, buffer sp+0x244, msgType 151
+   send 0x4336b4 -> queue [*0xd2f25c], buffer sp+0x244, msgType 151
      +0x000 u32  = 0                                    @0x4336a8
      +0x004 u32  = 151                                  @0x4336ac
      +0x008 u32  = 1                                    @0x4336b0
 
 == CConfigureMailIds::slthandleOKpress()
-   send 0x381050, buffer sp+0x19fc, msgType 152
+   send 0x381050 -> queue [*0xd2f25c], buffer sp+0x19fc, msgType 152
    NOTE function is 0x700 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  = 0                                    @0x381028
@@ -72,31 +72,31 @@
      +0x008 u32  = 1                                    @0x38104c
 
 == CHomeScreen::sltHandleDoorBtnPress()
-   send 0x41acc, buffer sp+0x4, msgType 600
+   send 0x41acc -> queue [*0xd2f25c], buffer sp+0x4, msgType 600
      +0x000 u32  = 0                                    @0x41ac8
      +0x004 u32  = 600                                  @0x41ac0
      +0x00d u8   = 0                                    @0x41ac4
 
 == CInitialAccountsSetup::sendHTTPSupdateToWeb()
-   send 0x4ede0c, buffer sp+0x4, msgType 61
+   send 0x4ede0c -> queue [*0xd2f25c], buffer sp+0x4, msgType 61
      +0x000 u32  = 61                                   @0x4ede08
      +0x004 u32  = 61                                   @0x4ede00
      +0x00d u8   = 0                                    @0x4ede04
 
 == CInitialAccountsSetup::sendLocalAuthenticationupdateToWeb()
-   send 0x4eddb8, buffer sp+0x4, msgType 62
+   send 0x4eddb8 -> queue [*0xd2f25c], buffer sp+0x4, msgType 62
      +0x000 u32  = 62                                   @0x4eddb4
      +0x004 u32  = 62                                   @0x4eddac
      +0x00d u8   = 0                                    @0x4eddb0
 
 == CInitialAccountsSetup::sendUpdateCommandToWeb()
-   send 0x4edd64, buffer sp+0x4, msgType 60
+   send 0x4edd64 -> queue [*0xd2f25c], buffer sp+0x4, msgType 60
      +0x000 u32  = 60                                   @0x4edd60
      +0x004 u32  = 60                                   @0x4edd58
      +0x00d u8   = 0                                    @0x4edd5c
 
 == CReceiverThread::getAllZoneListFunc()
-   send 0x13fb40, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x13fb40 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x00d u8   = 0                                    @0x13fb30?
      +0x00d u8   = 1                                    @0x13fb34?
      +0x094 str  <- sprintf("%s%s%s")                   @0x13fc2c
@@ -128,11 +128,11 @@
      +0x0e0 u32  = 0                                    @0x13fb50
 
 == CReceiverThread::getPartitionDetails(char*)
-   send 0x140584, buffer arg r0+0x18, msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x140584 -> queue [*0xd2f25c], buffer arg r0+0x18, msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x008 u32  = 8                                    @0x140574
 
 == CReceiverThread::refreshUploadZoneList(int, int const*)
-   send 0x145bc8, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x145bc8 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0xc18 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00d u8   = 0                                    @0x145ce0 0x145db0 0x145e80
@@ -145,7 +145,7 @@
      +0x00e str  <- strcpy(arg r0+0x280)                @0x145bb8
 
 == CReceiverThread::refreshUploadZoneList(int, int const*)
-   send 0x1460e0, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x1460e0 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0xc18 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00d u8   = 0                                    @0x145ce0 0x145db0 0x145e80
@@ -158,7 +158,7 @@
      +0x00e str  <- strcpy(arg r0+0x280)                @0x145bb8
 
 == CReceiverThread::refreshUploadZoneList(int, int const*)
-   send 0x1461e4, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x1461e4 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0xc18 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00d u8   = 0                                    @0x145ce0 0x145db0 0x145e80
@@ -171,7 +171,7 @@
      +0x00e str  <- strcpy(arg r0+0x280)                @0x145bb8
 
 == CReceiverThread::registerclient()
-   send 0x13c3ac, buffer sp+0x0, msgType 504
+   send 0x13c3ac -> queue [*0xd2f25c], buffer sp+0x0, msgType 504
      +0x000 u32  = 0                                    @0x13c314
      +0x004 u32  = 504                                  @0x13c318
      +0x090 u8   <- GetCurrentPartition()               @0x13c370
@@ -187,7 +187,7 @@
      +0x0b8 u8   = 1                                    @0x13c3a8?
 
 == CReceiverThread::run()
-   send 0x147548, buffer sp+0xc8, msgType from [sp+0x2f8]
+   send 0x147548 -> queue [*0xd2f25c], buffer sp+0xc8, msgType from [sp+0x2f8]
    NOTE function is 0xc18 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  = 0                                    @0x147530
@@ -196,24 +196,24 @@
      +0x008 u32  = 1                                    @0x147540?
 
 == CReceiverThread::setEventIndex()
-   send 0x13e878, buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x13e878 -> queue [*0xd2f25c], buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x00d u8   = 0                                    @0x13e870
      +0x00e 10   <- memcpy("COMPLETED")                 @0x13e860
 
 == CReceiverThread::sltCameraDatabaseModified()
-   send 0x13c25c, buffer sp+0x4, msgType 51
+   send 0x13c25c -> queue [*0xd2f25c], buffer sp+0x4, msgType 51
      +0x000 u32  = 51                                   @0x13c258
      +0x004 u32  = 51                                   @0x13c250
      +0x00d u8   = 0                                    @0x13c254
 
 == CReceiverThread::sltCameraDiscoverystatus(int)
-   send 0x13c208, buffer sp+0x4, msgType 59
+   send 0x13c208 -> queue [*0xd2f25c], buffer sp+0x4, msgType 59
      +0x000 u32  = 59                                   @0x13c204
      +0x004 u32  = 59                                   @0x13c200
      +0x008 u32  <- arg r1                              @0x13c1f0
 
 == CReceiverThread::sltGetCameraCredentials(web_request*)
-   send 0x142da4, buffer sp+0x0, msgType from [arg r1+0x4]
+   send 0x142da4 -> queue [*0xd2f25c], buffer sp+0x0, msgType from [arg r1+0x4]
    NOTE function is 0x564 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- [arg r1]                            @0x142a18
@@ -225,7 +225,7 @@
      +0x0a0 128  <- memcpy(sp+0x22c)                    @0x142d90
 
 == CReceiverThread::sltGoAuthLevelReceived(SaplData)
-   send 0x13ddc0, buffer sp+0x0, memset 0x22c confirms, msgType from r3
+   send 0x13ddc0 -> queue [*0xd2f25c], buffer sp+0x0, memset 0x22c confirms, msgType from r3
    NOTE function is 0x440 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- r2                                  @0x13dd0c
@@ -252,7 +252,7 @@
      +0x06d 30   <- memcpy(GetPartitionDescription(out)) @0x13df84
 
 == CReceiverThread::sltGoAuthLevelReceived(SaplData)
-   send 0x13de74, buffer sp+0x0, memset 0x22c confirms, msgType from r3
+   send 0x13de74 -> queue [*0xd2f25c], buffer sp+0x0, memset 0x22c confirms, msgType from r3
    NOTE function is 0x440 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- r2                                  @0x13dd0c
@@ -279,7 +279,7 @@
      +0x06d 30   <- memcpy(GetPartitionDescription(out)) @0x13df84
 
 == CReceiverThread::sltGoAuthLevelReceived(SaplData)
-   send 0x13dee8, buffer sp+0x0, memset 0x22c confirms, msgType from r3
+   send 0x13dee8 -> queue [*0xd2f25c], buffer sp+0x0, memset 0x22c confirms, msgType from r3
    NOTE function is 0x440 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- r2                                  @0x13dd0c
@@ -306,7 +306,7 @@
      +0x06d 30   <- memcpy(GetPartitionDescription(out)) @0x13df84
 
 == CReceiverThread::sltGoAuthLevelReceived(SaplData)
-   send 0x13dff4, buffer sp+0x0, memset 0x22c confirms, msgType from r3
+   send 0x13dff4 -> queue [*0xd2f25c], buffer sp+0x0, memset 0x22c confirms, msgType from r3
    NOTE function is 0x440 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- r2                                  @0x13dd0c
@@ -333,7 +333,7 @@
      +0x06d 30   <- memcpy(GetPartitionDescription(out)) @0x13df84
 
 == CReceiverThread::sltGoAuthLevelReceived(SaplData)
-   send 0x13e06c, buffer sp+0x0, memset 0x22c confirms, msgType from r3
+   send 0x13e06c -> queue [*0xd2f25c], buffer sp+0x0, memset 0x22c confirms, msgType from r3
    NOTE function is 0x440 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- r2                                  @0x13dd0c
@@ -360,56 +360,56 @@
      +0x06d 30   <- memcpy(GetPartitionDescription(out)) @0x13df84
 
 == CReceiverThread::sltPartitionDetailReqTimeout()
-   send 0x140364, buffer arg r0+0x18, msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x140364 -> queue [*0xd2f25c], buffer arg r0+0x18, msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x008 u32  = 8                                    @0x140354
      +0x00d u8   = 0                                    @0x14043c?
      +0x00d u8   = 1                                    @0x1403e4
 
 == CReceiverThread::sltQuickArmStateChangeMsg()
-   send 0x13c4fc, buffer sp+0x4, msgType from r3
+   send 0x13c4fc -> queue [*0xd2f25c], buffer sp+0x4, msgType from r3
      +0x000 u32  <- ip                                  @0x13c4e8
      +0x004 u32  <- r3                                  @0x13c4d4
      +0x008 u32  = 9                                    @0x13c4e4
      +0x00e 24   <- memcpy("QUICK ARM STATE CHANGED")   @0x13c4ec
 
 == CReceiverThread::sltRequestAllHADeviceStatus(web_request*)
-   send 0x13c640, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13c640 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13c61c
      +0x004 u32  <- [arg r1+0x4]                        @0x13c614
 
 == CReceiverThread::sltRequestAllHADeviceStatus(web_request*)
-   send 0x13c67c, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13c67c -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13c61c
      +0x004 u32  <- [arg r1+0x4]                        @0x13c614
 
 == CReceiverThread::sltRequestBypassAllZones(web_request*)
-   send 0x144e90, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x144e90 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0x598 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00e str  <- strcpy([[sp+0x148]+0xc])            @0x144e24
      +0x00e str  <- strcpy([[sp+0x150]+0xc])            @0x145020
 
 == CReceiverThread::sltRequestBypassAllZones(web_request*)
-   send 0x14508c, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x14508c -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0x598 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00e str  <- strcpy([[sp+0x148]+0xc])            @0x144e24
      +0x00e str  <- strcpy([[sp+0x150]+0xc])            @0x145020
 
 == CReceiverThread::sltRequestGetHomePartDetails(web_request*)
-   send 0x140630, buffer sp+0x4, msgType from r3
+   send 0x140630 -> queue [*0xd2f25c], buffer sp+0x4, msgType from r3
      +0x000 u32  <- r2                                  @0x1405e4
      +0x004 u32  <- r3                                  @0x1405e4
      +0x00e str  <- sprintf("%d %s")                    @0x140620
 
 == CReceiverThread::sltRequestSetHomePart(web_request*)
-   send 0x14706c, buffer sp+0x14, msgType from [arg r1+0x4]
+   send 0x14706c -> queue [*0xd2f25c], buffer sp+0x14, msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x147064
      +0x004 u32  <- [arg r1+0x4]                        @0x147060
      +0x00c u8   = 1                                    @0x147068
 
 == CReceiverThread::sltRequestToBypassZones(web_request*)
-   send 0x1454f4, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x1454f4 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0x818 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00e str  <- strcpy([[sp+0x140]+0xc])            @0x145488
@@ -417,7 +417,7 @@
      +0x00e str  <- strcpy([[sp+0x158]+0xc])            @0x1457ac
 
 == CReceiverThread::sltRequestToBypassZones(web_request*)
-   send 0x145630, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x145630 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0x818 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00e str  <- strcpy([[sp+0x140]+0xc])            @0x145488
@@ -425,7 +425,7 @@
      +0x00e str  <- strcpy([[sp+0x158]+0xc])            @0x1457ac
 
 == CReceiverThread::sltRequestToBypassZones(web_request*)
-   send 0x145818, buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x145818 -> queue [*0xd2f25c], buffer [arg r0+0x244], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
    NOTE function is 0x818 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x00e str  <- strcpy([[sp+0x140]+0xc])            @0x145488
@@ -433,7 +433,7 @@
      +0x00e str  <- strcpy([[sp+0x158]+0xc])            @0x1457ac
 
 == CReceiverThread::sltRequestZwaveDeviceAbort(web_request*)
-   send 0x13d6c4, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13d6c4 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13d684
      +0x004 u32  <- [arg r1+0x4]                        @0x13d67c
      +0x090 u16  <- [arg r1+0x8]                        @0x13d6b8
@@ -441,7 +441,7 @@
      +0x092 u8   = 1                                    @0x13d6a8
 
 == CReceiverThread::sltRequestZwaveDeviceAdd(web_request*)
-   send 0x13d990, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13d990 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13d95c
      +0x004 u32  <- [arg r1+0x4]                        @0x13d954
      +0x090 u16  <- [arg r1+0x8]                        @0x13d984
@@ -449,7 +449,7 @@
      +0x092 u8   = 1                                    @0x13d9e8
 
 == CReceiverThread::sltRequestZwaveDeviceDel(web_request*)
-   send 0x13d89c, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13d89c -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13d868
      +0x004 u32  <- [arg r1+0x4]                        @0x13d860
      +0x090 u16  <- [arg r1+0x8]                        @0x13d890
@@ -457,7 +457,7 @@
      +0x092 u8   = 1                                    @0x13d8f4
 
 == CReceiverThread::sltRequestZwaveDeviceFrmv(web_request*)
-   send 0x13d7ac, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13d7ac -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13d778
      +0x004 u32  <- [arg r1+0x4]                        @0x13d770
      +0x090 u16  <- zil_ZwaveRemoveFailedDevice(out)    @0x13d7a0
@@ -465,63 +465,63 @@
      +0x092 u8   = 1                                    @0x13d808
 
 == CReceiverThread::sltRequestZwaveDimmerStatSet(web_request*)
-   send 0x13c738, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13c738 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13c720
      +0x004 u32  <- [arg r1+0x4]                        @0x13c710
      +0x090 u16  <- zil_DimmerLightStatusSet(out)       @0x13c730
      +0x092 u8   = 1                                    @0x13c71c
 
 == CReceiverThread::sltRequestZwaveDoorStatSet(web_request*)
-   send 0x13d334, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13d334 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13d31c
      +0x004 u32  <- [arg r1+0x4]                        @0x13d30c
      +0x090 u16  <- zil_DoorLockStatusSet(out)          @0x13d32c
      +0x092 u8   = 1                                    @0x13d318
 
 == CReceiverThread::sltRequestZwaveGarageDoorStatSet(web_request*)
-   send 0x13d264, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13d264 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13d24c
      +0x004 u32  <- [arg r1+0x4]                        @0x13d23c
      +0x090 u16  <- zil_GarageDoorStatusSet(out)        @0x13d25c
      +0x092 u8   = 1                                    @0x13d248
 
 == CReceiverThread::sltRequestZwaveLightStatSet(web_request*)
-   send 0x13d4f4, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13d4f4 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13d4dc
      +0x004 u32  <- [arg r1+0x4]                        @0x13d4cc
      +0x090 u16  <- zil_BinaryLightStatusSet(out)       @0x13d4ec
      +0x092 u8   = 1                                    @0x13d4d8
 
 == CReceiverThread::sltRequestZwaveTermFanModeSet(web_request*)
-   send 0x13cba4, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13cba4 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13cb8c
      +0x004 u32  <- [arg r1+0x4]                        @0x13cb7c
      +0x090 u16  <- zil_ThermostatFanModeSet(out)       @0x13cb9c
      +0x092 u8   = 1                                    @0x13cb88
 
 == CReceiverThread::sltRequestZwaveTermSaveEnergyModeSet(web_request*)
-   send 0x13ca54, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13ca54 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13ca3c
      +0x004 u32  <- [arg r1+0x4]                        @0x13ca2c
      +0x090 u16  <- zil_ThermostatBasicSaveEnergyModeSet(out) @0x13ca4c
      +0x092 u8   = 1                                    @0x13ca38
 
 == CReceiverThread::sltRequestZwaveTermTarTempSet(web_request*)
-   send 0x13ccf8, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13ccf8 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13cce0
      +0x004 u32  <- [arg r1+0x4]                        @0x13ccd0
      +0x090 u16  <- zil_ThermostatSetPointTempSet(out)  @0x13ccf0
      +0x092 u8   = 1                                    @0x13ccdc
 
 == CReceiverThread::sltRequestZwaveThermoStatAllInfoSet(web_request*)
-   send 0x13ce64, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13ce64 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13ce4c
      +0x004 u32  <- [arg r1+0x4]                        @0x13ce3c
      +0x090 u16  <- zil_ThermostatModeSet(out)          @0x13ce5c
      +0x092 u8   = 1                                    @0x13ce48
 
 == CReceiverThread::sltRequestZwaveThermostatModeSet(web_request*)
-   send 0x13c92c, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13c92c -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13c8d4
      +0x004 u32  <- [arg r1+0x4]                        @0x13c8cc
      +0x090 u16  <- zil_ThermostatModeSet(out)          @0x13c8dc
@@ -529,7 +529,7 @@
      +0x092 u8   = 1                                    @0x13c960
 
 == CReceiverThread::sltRequestZwaveThermostatModeSet(web_request*)
-   send 0x13c970, buffer [*0xd2f2e8], msgType from [arg r1+0x4]
+   send 0x13c970 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType from [arg r1+0x4]
      +0x000 u32  <- [arg r1]                            @0x13c8d4
      +0x004 u32  <- [arg r1+0x4]                        @0x13c8cc
      +0x090 u16  <- zil_ThermostatModeSet(out)          @0x13c8dc
@@ -537,7 +537,7 @@
      +0x092 u8   = 1                                    @0x13c960
 
 == CReceiverThread::sltSendChangedPartitionStatus(int)
-   send 0x144aa0, buffer sp+0x0, msgType 21 or 22
+   send 0x144aa0 -> queue [*0xd2f25c], buffer sp+0x0, msgType 21 or 22
      +0x000 u32  = 0                                    @0x14489c
      +0x004 u32  = 21                                   @0x144894
      +0x004 u32  = 22                                   @0x144a74?
@@ -548,13 +548,13 @@
      +0x00f str  <- strcpy([[sp+0x258]+0xc])            @0x144948
 
 == CReceiverThread::sltSendNewPartitionDetails()
-   send 0x13e11c, buffer sp+0x4, msgType 18
+   send 0x13e11c -> queue [*0xd2f25c], buffer sp+0x4, msgType 18
      +0x000 u32  = 0                                    @0x13e0d4
      +0x004 u32  = 18                                   @0x13e0d4
      +0x00e str  <- sprintf("%d %s")                    @0x13e10c
 
 == CReceiverThread::sltSendPartitionDetailsToWebClient(int)
-   send 0x146b60, buffer arg r0+0x18, msgType 21
+   send 0x146b60 -> queue [*0xd2f25c], buffer arg r0+0x18, msgType 21
    NOTE function is 0x508 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- r2                                  @0x1469b0
@@ -569,50 +569,50 @@
      +0x090 u32  <- arg r1                              @0x1469c8 0x146bd4
 
 == CReceiverThread::sltSendUserCodeAcceptedMsg()
-   send 0x13c474, buffer sp+0x4, msgType from lr
+   send 0x13c474 -> queue [*0xd2f25c], buffer sp+0x4, msgType from lr
      +0x000 u32  <- r3                                  @0x13c454
      +0x004 u32  <- lr                                  @0x13c460
      +0x008 u32  = 1                                    @0x13c45c
      +0x00e 16   <- memcpy("VALID USER CODE")           @0x13c464
 
 == CReceiverThread::sltSendUserCodeDeclinedMsg()
-   send 0x13dc28, buffer sp+0x4, msgType from ip
+   send 0x13dc28 -> queue [*0xd2f25c], buffer sp+0x4, msgType from ip
      +0x000 u32  <- r3                                  @0x13dc08
      +0x004 u32  <- ip                                  @0x13dc14
      +0x008 u32  = 3                                    @0x13dc10
      +0x00e 19   <- memcpy("USER CODE DECLINED")        @0x13dc18
 
 == CReceiverThread::sltSendUserCodeDeclinedWithReasonMsg(QString)
-   send 0x141fd8, buffer sp+0x0, msgType from r2
+   send 0x141fd8 -> queue [*0xd2f25c], buffer sp+0x0, msgType from r2
      +0x000 u32  <- r3                                  @0x141f48
      +0x004 u32  <- r2                                  @0x141f54
      +0x008 u32  = 4                                    @0x141f54
      +0x00e str  <- strcpy([[sp+0x22c]+0xc])            @0x141f94
 
 == CReceiverThread::sltSendUserRequiredMsg(int)
-   send 0x141364, buffer sp+0x4, msgType from r3
+   send 0x141364 -> queue [*0xd2f25c], buffer sp+0x4, msgType from r3
      +0x000 u32  <- ip                                  @0x14134c
      +0x004 u32  <- r3                                  @0x141340
      +0x008 u32  = 10                                   @0x141350
      +0x00e 19   <- memcpy("USER CODE REQUIRED")        @0x141354
 
 == CReceiverThread::sltSetEventIndex()
-   send 0x13ee9c, buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x13ee9c -> queue [*0xd2f25c], buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x00d u8   = 0                                    @0x13ee04
      +0x00e 10   <- memcpy("COMPLETED")                 @0x13edf4
 
 == CReceiverThread::sltTotalNoOfEventsReceived(int)
-   send 0x13eb50, buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x13eb50 -> queue [*0xd2f25c], buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x00e str  <- sprintf("%s%d")                     @0x13ea94
      +0x00e 10   <- memcpy("NO EVENTS")                 @0x13eb18
 
 == CReceiverThread::sltTotalNoOfEventsReceived(int)
-   send 0x13eb90, buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x13eb90 -> queue [*0xd2f25c], buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x00e str  <- sprintf("%s%d")                     @0x13ea94
      +0x00e 10   <- memcpy("NO EVENTS")                 @0x13eb18
 
 == CReceiverThread::sltUploadCameraDB(web_request*)
-   send 0x143a94, buffer sp+0x10, msgType from [arg r1+0x4]
+   send 0x143a94 -> queue [*0xd2f25c], buffer sp+0x10, msgType from [arg r1+0x4]
    NOTE function is 0xbf0 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- [arg r1]                            @0x14330c
@@ -628,7 +628,7 @@
      +0x0a0 384  <- memcpy(sp+0x23c)                    @0x143874
 
 == CReceiverThread::sltUploadCameraDB(web_request*)
-   send 0x143d94, buffer sp+0x10, msgType from [arg r1+0x4]
+   send 0x143d94 -> queue [*0xd2f25c], buffer sp+0x10, msgType from [arg r1+0x4]
    NOTE function is 0xbf0 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- [arg r1]                            @0x14330c
@@ -644,32 +644,32 @@
      +0x0a0 384  <- memcpy(sp+0x23c)                    @0x143874
 
 == CReceiverThread::wdelaytimerstart(int)
-   send 0x13c2ac, buffer sp+0x4, msgType 24
+   send 0x13c2ac -> queue [*0xd2f25c], buffer sp+0x4, msgType 24
      +0x000 u32  = 0                                    @0x13c2a8
      +0x004 u32  = 24                                   @0x13c2a8
      +0x090 u32  <- arg r1                              @0x13c290
 
 == CReceiverThread::wsltEventDescRcvd(SaplData)
-   send 0x13ed1c, buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x13ed1c -> queue [*0xd2f25c], buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x00d u8   = 0                                    @0x13ec34 0x13ecec
      +0x00d u8   = 1                                    @0x13ec98
      +0x00e 10   <- memcpy("COMPLETED")                 @0x13ecd8
 
 == CReceiverThread::wsltEventDescRcvd(SaplData)
-   send 0x13ed60, buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x13ed60 -> queue [*0xd2f25c], buffer [arg r0+0x14], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x00d u8   = 0                                    @0x13ec34 0x13ecec
      +0x00d u8   = 1                                    @0x13ec98
      +0x00e 10   <- memcpy("COMPLETED")                 @0x13ecd8
 
 == CReceiverThread::wsltHandleRawDataFromPanel()
-   send 0x13daf4, buffer sp+0x0, msgType 20
+   send 0x13daf4 -> queue [*0xd2f25c], buffer sp+0x0, msgType 20
      +0x000 u32  = 0                                    @0x13da30
      +0x004 u32  = 20                                   @0x13da2c
      +0x00e str  <- strcat(apl_getEcpConsoleModeData(out)) @0x13dad0
      +0x00e str  <- strcpy(apl_getEcpConsoleModeData(out)) @0x13dac4
 
 == CVoiceTuxThread::processGlobalSet(VOICE_TUX)
-   send 0x3fcb48, buffer sp+0x0, msgType 999
+   send 0x3fcb48 -> queue [*0xd2f25c], buffer sp+0x0, msgType 999
    NOTE function is 0x11b0 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  <- indirect()                          @0x3fcb38
@@ -677,7 +677,7 @@
      +0x00d u8   <- indirect()                          @0x3fcb2c
 
 == CZwaveSceneEdit::ApplySettings(bool)
-   send 0x2ed190, buffer sp+0x4, msgType 150
+   send 0x2ed190 -> queue [*0xd2f25c], buffer sp+0x4, msgType 150
    NOTE function is 0x89c bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  = 0                                    @0x2ed178
@@ -685,25 +685,25 @@
      +0x008 u32  = 1                                    @0x2ed18c
 
 == DoorBellAction(unsigned int)
-   send 0x41b20, buffer sp+0x4, msgType 600
+   send 0x41b20 -> queue [*0xd2f25c], buffer sp+0x4, msgType 600
      +0x000 u32  = 0                                    @0x41b1c
      +0x004 u32  = 600                                  @0x41b14
      +0x00d u8   = 0                                    @0x41b18
 
 == StartVoiceRecogApp()
-   send 0x45ab4, buffer sp+0x4, msgType 801
+   send 0x45ab4 -> queue [*0xd2f25c], buffer sp+0x4, msgType 801
      +0x000 u32  <- [*0xd0ee0c]                         @0x45aa8
      +0x004 u32  = 801                                  @0x45aac
      +0x008 u32  = 1                                    @0x45ab0
 
 == StopVoiceRecogApp()
-   send 0x45c24, buffer sp+0x4, msgType 801
+   send 0x45c24 -> queue [*0xd2f25c], buffer sp+0x4, msgType 801
      +0x000 u32  = 0                                    @0x45c20
      +0x004 u32  = 801                                  @0x45c18
      +0x008 u32  = 0                                    @0x45c1c
 
 == ZWaveSendHomeId()
-   send 0x231758, buffer sp+0x4, msgType 9999
+   send 0x231758 -> queue [*0xd2f25c], buffer sp+0x4, msgType 9999
      +0x000 u32  = 0                                    @0x231750
      +0x004 u32  = 9999                                 @0x231750
      +0x220 u32  <- r0                                  @0x23172c
@@ -712,7 +712,7 @@
      +0x228 u32  = 0                                    @0x231754
 
 == createZDevJSON(void*)
-   send 0x43a6b4, buffer sp+0x1c, msgType 153
+   send 0x43a6b4 -> queue [*0xd2f25c], buffer sp+0x1c, msgType 153
    NOTE function is 0x528 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  = 0                                    @0x43a69c
@@ -720,97 +720,97 @@
      +0x008 u32  = 1                                    @0x43a6b0
 
 == send_msg_to_web(unsigned int)
-   send 0x41a40, buffer sp+0x4, msgType from arg r0
+   send 0x41a40 -> queue [*0xd2f25c], buffer sp+0x4, msgType from arg r0
      +0x004 u32  <- arg r0                              @0x41a24
 
 == writeCRCJSONFile()
-   send 0x444bf0, buffer sp+0xa4, msgType 154
+   send 0x444bf0 -> queue [*0xd2f25c], buffer sp+0xa4, msgType 154
    NOTE function is 0x7b0 bytes over several cases; they share
         this frame, so check a field's address before using it.
      +0x000 u32  = 0                                    @0x444be8
      +0x004 u32  = 154                                  @0x444bec
 
 == zil_BinaryLightStatusGet_Callback(unsigned char)
-   send 0x232ef8, buffer *0xd8c3b8, msgType 109
+   send 0x232ef8 -> queue [*0xd2f25c], buffer *0xd8c3b8, msgType 109
      +0x004 u32  = 109                                  @0x232ef0
      +0x090 u16  <- arg r0                              @0x232eec
      +0x092 u8   <- [sp+0x7]                            @0x232ef4
 
 == zil_DimmerLightStatusGet_Callback(unsigned char)
-   send 0x232cdc, buffer *0xd8c3b8, msgType 111
+   send 0x232cdc -> queue [*0xd2f25c], buffer *0xd8c3b8, msgType 111
      +0x004 u32  = 111                                  @0x232cd4
      +0x090 u16  <- arg r0                              @0x232cd0
      +0x092 u8   <- [sp+0x7]                            @0x232cd8
 
 == zil_DoorLockStatusGet_Callback(unsigned char)
-   send 0x23309c, buffer *0xd8c3b8, msgType 112
+   send 0x23309c -> queue [*0xd2f25c], buffer *0xd8c3b8, msgType 112
      +0x004 u32  = 112                                  @0x233094
      +0x090 u16  <- arg r0                              @0x233090
      +0x092 u8   <- [sp+0x7]                            @0x233098
 
 == zil_DoorLockStatusUnlockByCode_Callback(unsigned char)
-   send 0x233174, buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x233174 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x090 u16  <- arg r0                              @0x233164
      +0x092 u8   <- [sp+0x7]                            @0x233160
 
 == zil_GarageDoorStatus_Callback(unsigned char, unsigned char, unsigned char)
-   send 0x232db4, buffer *0xd8c3b8, msgType 147
+   send 0x232db4 -> queue [*0xd2f25c], buffer *0xd8c3b8, msgType 147
      +0x004 u32  = 147                                  @0x232dac
      +0x090 u16  <- arg r0                              @0x232db0
      +0x092 u8   <- arg r1                              @0x232da8
 
 == zil_ThermostatBasicSaveEnergyModeGet_Callback(unsigned char)
-   send 0x233c90, buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x233c90 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x090 u16  <- arg r0                              @0x233c70
      +0x093 u8   <- [sp+0x7]                            @0x233c6c
 
 == zil_ThermostatCurrentTempGet_Callback(unsigned char)
-   send 0x2339d0, buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x2339d0 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x090 u16  <- arg r0                              @0x2339ac
 
 == zil_ThermostatFanModeGet_Callback(unsigned char)
-   send 0x2332c4, buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x2332c4 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x090 u16  <- arg r0                              @0x2332a4
      +0x094 u8   <- [sp+0x7]                            @0x2332a0
 
 == zil_ThermostatModeGet_Callback(unsigned char)
-   send 0x233b50, buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x233b50 -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x090 u16  <- arg r0                              @0x233b30
      +0x093 u8   <- [sp+0x7]                            @0x233b2c
 
 == zil_ThermostatSetPointTempGet_Callback(unsigned char, unsigned char)
-   send 0x23357c, buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
+   send 0x23357c -> queue [*0xd2f25c], buffer [*0xd2f2e8], msgType NOT WRITTEN HERE; the buffer arrives pre-filled
      +0x090 u16  <- arg r0                              @0x233570
 
 == zil_ZWaveAbortAddDelete(unsigned char, void (*)())
-   send 0x231ba8, buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
+   send 0x231ba8 -> queue [*0xd2f25c], buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
      +0x000 u32  = 0                                    @0x231ba4
      +0x004 u32  = 101                                  @0x231b98
      +0x090 u16  = 0                                    @0x231b9c
      +0x0b4 u32  = 3                                    @0x231ba0
 
 == zil_ZwaveRemoveFailedDevice(unsigned char)
-   send 0x231d2c, buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
+   send 0x231d2c -> queue [*0xd2f25c], buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
      +0x000 u32  = 0                                    @0x231d28
      +0x004 u32  = 101                                  @0x231d1c
      +0x090 u16  = 0                                    @0x231d20
      +0x0b4 u32  = 6                                    @0x231d24
 
 == zil_ZwaveRemoveFailedDevice_Callback()
-   send 0x2341e8, buffer *0xd8c3b8, memset 0x22c confirms, msgType 103
+   send 0x2341e8 -> queue [*0xd2f25c], buffer *0xd8c3b8, memset 0x22c confirms, msgType 103
      +0x000 u32  = 0                                    @0x2341e0
      +0x004 u32  = 103                                  @0x2341d8
      +0x0b0 u32  = 3                                    @0x2341e4
 
 == zil_ZwaveStartScanToAddNewDevice()
-   send 0x231f04, buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
+   send 0x231f04 -> queue [*0xd2f25c], buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
      +0x000 u32  = 0                                    @0x231f00
      +0x004 u32  = 101                                  @0x231ef4
      +0x090 u16  = 0                                    @0x231ef8
      +0x0b4 u32  = 4                                    @0x231efc
 
 == zil_ZwaveStartScanToAddNewDevice_Callback()
-   send 0x2326a0, buffer *0xd8c3b8, memset 0x22c confirms, msgType 103
+   send 0x2326a0 -> queue [*0xd2f25c], buffer *0xd8c3b8, memset 0x22c confirms, msgType 103
      +0x000 u32  = 0                                    @0x232688
      +0x004 u32  = 103                                  @0x232670
      +0x090 u16  <- ZWaveSwitchAllSet(out)              @0x232684
@@ -819,18 +819,121 @@
      +0x0b9 str  <- strcpy(?)                           @0x23268c
 
 == zil_ZwaveStartScanToRemoveDevice()
-   send 0x231e14, buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
+   send 0x231e14 -> queue [*0xd2f25c], buffer *0xd8c3b8, memset 0x22c confirms, msgType 101
      +0x000 u32  = 0                                    @0x231e10
      +0x004 u32  = 101                                  @0x231e04
      +0x090 u16  = 0                                    @0x231e08
      +0x0b4 u32  = 5                                    @0x231e0c
 
 == zil_ZwaveStartScanToRemoveDevice_Callback()
-   send 0x2342f8, buffer *0xd8c3b8, memset 0x22c confirms, msgType 103
+   send 0x2342f8 -> queue [*0xd2f25c], buffer *0xd8c3b8, memset 0x22c confirms, msgType 103
      +0x000 u32  = 0                                    @0x2342ec
      +0x004 u32  = 103                                  @0x2342e0
      +0x090 u16  <- validateDevicesPresenceInVoiceGroups(out) @0x2342f0
      +0x0b0 u32  = 2                                    @0x2342f4
+
+
+=== WHICH QUEUE EACH REPLY GOES TO ===
+
+A 556-byte reply is not automatically bound for the web.
+Barracuda's dispatch comparing no constant for a msgType
+means it drops that type ONLY if the type is sent to the
+queue Barracuda reads; otherwise it was never addressed
+to Barracuda at all.
+
+-- queue [*0xd2f25c]: 92 send site(s)
+     CAccountsSetup::sendHTTPSupdateToWeb() @0x32611c
+     CAccountsSetup::sendLocalLoginupdateToWeb() @0x3260c8
+     CAccountsSetup::sendUpdateCommandToWeb() @0x326074
+     CChannelDBInterface::SendChannelDataRefreshtoVideoApp() @0x4336b4
+     CConfigureMailIds::slthandleOKpress() @0x381050
+     CHomeScreen::sltHandleDoorBtnPress() @0x41acc
+     CInitialAccountsSetup::sendHTTPSupdateToWeb() @0x4ede0c
+     CInitialAccountsSetup::sendLocalAuthenticationupdateToWeb() @0x4eddb8
+     CInitialAccountsSetup::sendUpdateCommandToWeb() @0x4edd64
+     CReceiverThread::getAllZoneListFunc() @0x13fb40
+     CReceiverThread::getPartitionDetails(char*) @0x140584
+     CReceiverThread::refreshUploadZoneList(int, int const*) @0x145bc8
+     CReceiverThread::refreshUploadZoneList(int, int const*) @0x1460e0
+     CReceiverThread::refreshUploadZoneList(int, int const*) @0x1461e4
+     CReceiverThread::registerclient() @0x13c3ac
+     CReceiverThread::run() @0x147548
+     CReceiverThread::setEventIndex() @0x13e878
+     CReceiverThread::sltCameraDatabaseModified() @0x13c25c
+     CReceiverThread::sltCameraDiscoverystatus(int) @0x13c208
+     CReceiverThread::sltGetCameraCredentials(web_request*) @0x142da4
+     CReceiverThread::sltGoAuthLevelReceived(SaplData) @0x13ddc0
+     CReceiverThread::sltGoAuthLevelReceived(SaplData) @0x13de74
+     CReceiverThread::sltGoAuthLevelReceived(SaplData) @0x13dee8
+     CReceiverThread::sltGoAuthLevelReceived(SaplData) @0x13dff4
+     CReceiverThread::sltGoAuthLevelReceived(SaplData) @0x13e06c
+     CReceiverThread::sltPartitionDetailReqTimeout() @0x140364
+     CReceiverThread::sltQuickArmStateChangeMsg() @0x13c4fc
+     CReceiverThread::sltRequestAllHADeviceStatus(web_request*) @0x13c640
+     CReceiverThread::sltRequestAllHADeviceStatus(web_request*) @0x13c67c
+     CReceiverThread::sltRequestBypassAllZones(web_request*) @0x144e90
+     CReceiverThread::sltRequestBypassAllZones(web_request*) @0x14508c
+     CReceiverThread::sltRequestGetHomePartDetails(web_request*) @0x140630
+     CReceiverThread::sltRequestSetHomePart(web_request*) @0x14706c
+     CReceiverThread::sltRequestToBypassZones(web_request*) @0x1454f4
+     CReceiverThread::sltRequestToBypassZones(web_request*) @0x145630
+     CReceiverThread::sltRequestToBypassZones(web_request*) @0x145818
+     CReceiverThread::sltRequestZwaveDeviceAbort(web_request*) @0x13d6c4
+     CReceiverThread::sltRequestZwaveDeviceAdd(web_request*) @0x13d990
+     CReceiverThread::sltRequestZwaveDeviceDel(web_request*) @0x13d89c
+     CReceiverThread::sltRequestZwaveDeviceFrmv(web_request*) @0x13d7ac
+     CReceiverThread::sltRequestZwaveDimmerStatSet(web_request*) @0x13c738
+     CReceiverThread::sltRequestZwaveDoorStatSet(web_request*) @0x13d334
+     CReceiverThread::sltRequestZwaveGarageDoorStatSet(web_request*) @0x13d264
+     CReceiverThread::sltRequestZwaveLightStatSet(web_request*) @0x13d4f4
+     CReceiverThread::sltRequestZwaveTermFanModeSet(web_request*) @0x13cba4
+     CReceiverThread::sltRequestZwaveTermSaveEnergyModeSet(web_request*) @0x13ca54
+     CReceiverThread::sltRequestZwaveTermTarTempSet(web_request*) @0x13ccf8
+     CReceiverThread::sltRequestZwaveThermoStatAllInfoSet(web_request*) @0x13ce64
+     CReceiverThread::sltRequestZwaveThermostatModeSet(web_request*) @0x13c92c
+     CReceiverThread::sltRequestZwaveThermostatModeSet(web_request*) @0x13c970
+     CReceiverThread::sltSendChangedPartitionStatus(int) @0x144aa0
+     CReceiverThread::sltSendNewPartitionDetails() @0x13e11c
+     CReceiverThread::sltSendPartitionDetailsToWebClient(int) @0x146b60
+     CReceiverThread::sltSendUserCodeAcceptedMsg() @0x13c474
+     CReceiverThread::sltSendUserCodeDeclinedMsg() @0x13dc28
+     CReceiverThread::sltSendUserCodeDeclinedWithReasonMsg(QString) @0x141fd8
+     CReceiverThread::sltSendUserRequiredMsg(int) @0x141364
+     CReceiverThread::sltSetEventIndex() @0x13ee9c
+     CReceiverThread::sltTotalNoOfEventsReceived(int) @0x13eb50
+     CReceiverThread::sltTotalNoOfEventsReceived(int) @0x13eb90
+     CReceiverThread::sltUploadCameraDB(web_request*) @0x143a94
+     CReceiverThread::sltUploadCameraDB(web_request*) @0x143d94
+     CReceiverThread::wdelaytimerstart(int) @0x13c2ac
+     CReceiverThread::wsltEventDescRcvd(SaplData) @0x13ed1c
+     CReceiverThread::wsltEventDescRcvd(SaplData) @0x13ed60
+     CReceiverThread::wsltHandleRawDataFromPanel() @0x13daf4
+     CVoiceTuxThread::processGlobalSet(VOICE_TUX) @0x3fcb48
+     CZwaveSceneEdit::ApplySettings(bool) @0x2ed190
+     DoorBellAction(unsigned int) @0x41b20
+     StartVoiceRecogApp() @0x45ab4
+     StopVoiceRecogApp() @0x45c24
+     ZWaveSendHomeId() @0x231758
+     createZDevJSON(void*) @0x43a6b4
+     send_msg_to_web(unsigned int) @0x41a40
+     writeCRCJSONFile() @0x444bf0
+     zil_BinaryLightStatusGet_Callback(unsigned char) @0x232ef8
+     zil_DimmerLightStatusGet_Callback(unsigned char) @0x232cdc
+     zil_DoorLockStatusGet_Callback(unsigned char) @0x23309c
+     zil_DoorLockStatusUnlockByCode_Callback(unsigned char) @0x233174
+     zil_GarageDoorStatus_Callback(unsigned char, unsigned char, unsigned char) @0x232db4
+     zil_ThermostatBasicSaveEnergyModeGet_Callback(unsigned char) @0x233c90
+     zil_ThermostatCurrentTempGet_Callback(unsigned char) @0x2339d0
+     zil_ThermostatFanModeGet_Callback(unsigned char) @0x2332c4
+     zil_ThermostatModeGet_Callback(unsigned char) @0x233b50
+     zil_ThermostatSetPointTempGet_Callback(unsigned char, unsigned char) @0x23357c
+     zil_ZWaveAbortAddDelete(unsigned char, void (*)()) @0x231ba8
+     zil_ZwaveRemoveFailedDevice(unsigned char) @0x231d2c
+     zil_ZwaveRemoveFailedDevice_Callback() @0x2341e8
+     zil_ZwaveStartScanToAddNewDevice() @0x231f04
+     zil_ZwaveStartScanToAddNewDevice_Callback() @0x2326a0
+     zil_ZwaveStartScanToRemoveDevice() @0x231e14
+     zil_ZwaveStartScanToRemoveDevice_Callback() @0x2342f8
 
 
 === WHO SETS msgType FOR A BUFFER THAT ARRIVES FILLED ===

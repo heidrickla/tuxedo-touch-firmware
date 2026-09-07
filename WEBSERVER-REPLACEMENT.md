@@ -3206,19 +3206,36 @@ offset 0 because `mem.index` was ignored.
 
 ### 5.11 Loose ends recorded, not planned around
 
-- **Which reply msgTypes Barracuda relays versus drops is NOT decoded.**
-  `TRAPS.md` records that msgType 20 has no case and is dropped, which is what
-  makes console mode unreachable. The obvious next question — what happens to
-  the other 25 — was attempted by pointing `dispatch_tree.py` at
-  `gettuxedoIPCCommFunc` with the msgType slot at `sp+0x278`, and the result is
-  **not trustworthy and is deliberately not recorded here**: it prints
-  overlapping intervals (`28-50 accepted and dropped` alongside `29 bprintf`),
-  which cannot all be true, and it claims a handler for msgType 20, which
-  contradicts the console-mode finding. That function has no jump table, so
-  the cause is not the one just fixed in `reply-layouts.py`; the constraint
-  walk simply does not fit this function's shape. Either the walk is wrong or
-  the TRAPS entry is, and until one of them is read against the code nothing
-  should be built on either. Left open rather than published.
+- **Which reply msgTypes Barracuda relays versus drops — ANSWERED, and it
+  confirms the console-mode finding.** `dispatch_tree.py` gives
+  self-inconsistent output on `gettuxedoIPCCommFunc` (overlapping intervals,
+  and a handler for msgType 20 that contradicts `TRAPS.md`), so it was not
+  used. Instead the reply map's own interpretation was run over Barracuda to
+  find every `cmp` whose operand IS the msgType — the word at `sp+0x278`,
+  the received buffer being at `sp+0x274`. **The walk was wrong and TRAPS was
+  right: 43 constants are compared and 20 is not among them.**
+
+  The comparison is only meaningful because all **92 send sites write the same
+  queue**. `0xd2f25c` is the fd, and `CReceiverThread::CReceiverThread` fills
+  it from `osal_MqCreate("/Q_ServCmdTrsmtr", …, 0x22c, …)` — checked rather
+  than assumed, because `SendChannelDataRefreshtoVideoApp` looks by its name
+  like it targets something else and does not.
+
+  | | msgTypes |
+  |---|---|
+  | **relayed** (sent and compared) | 18, 21, 22, 51, 59, 61, 62, 103, 109, 111, 112, 147, 154, 504, 801, 999, 9999 |
+  | **sent but never compared — dropped** | **20**, 24, 60, 101, 150, 151, 152, 153, 600 |
+  | compared with no 556-byte builder | 1-9, 19, 25-27, 29, 55, 56, 104, 105, 125, 130, 132, 133, 160-162, 716 |
+
+  The relayed row is what a replacement must handle to be behaviour-compatible.
+  The dropped row is what the vendor throws away — msgType 20 is the keypad
+  display, which is why console mode is unreachable, and 600 is the doorbell.
+  The third row is not dead code by construction: those cases exist for
+  senders that are not 556-byte `osal_MqSend` builders, so absence from the
+  map is not evidence they are unreachable.
+
+  A `cmp` proves the code distinguishes a value; it does not prove the case
+  does anything useful. Read the arm before relying on a type being relayed.
 
 - 13 of 95 `ui_sendMsgToUi` call sites did not resolve to a literal mtype, so the
   mtype→emitter map is 82/95, not complete. Intra-tuxedo; does not affect us.
