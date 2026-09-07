@@ -27,9 +27,19 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "       every one pass against an empty list. Run from a clone." >&2
     exit 2
 fi
-TRACKED=$(git ls-files | wc -l)
+# Enumerate tracked files AND new ones that are not ignored.
+#
+# Plain `git ls-files` shows only what is already in the index, so a file
+# created and not yet staged is invisible to every check here. That is how a
+# broken script passed a full local run and was caught only by the pre-push
+# hook, once `git add` had made it visible -- a clean result that meant less
+# than it looked. --others --exclude-standard closes the window without
+# dragging in anything .gitignore already excludes.
+ls_files() { git ls-files --cached --others --exclude-standard "$@"; }
+
+TRACKED=$(ls_files | wc -l)
 if [ "$TRACKED" -lt 20 ]; then
-    echo "ABORT: git ls-files returned $TRACKED files, too few for this repo." >&2
+    echo "ABORT: ls_files returned $TRACKED files, too few for this repo." >&2
     echo "       The checks would pass by enumerating nothing." >&2
     exit 2
 fi
@@ -37,7 +47,7 @@ fi
 # 1. Python syntax.
 check_python() {
     local bad=""
-    for f in $(git ls-files '*.py'); do
+    for f in $(ls_files '*.py'); do
         python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$f" 2>/dev/null \
             || bad="$bad $f"
     done
@@ -47,7 +57,7 @@ check_python() {
 # 2. Shell syntax. Panel scripts must parse under the panel's shell.
 check_shell() {
     local bad=""
-    for f in $(git ls-files '*.sh'); do
+    for f in $(ls_files '*.sh'); do
         sh -n "$f" 2>/dev/null || bad="$bad $f"
     done
     [ -z "$bad" ] && pass "shell syntax" || fail "shell syntax" "$bad"
@@ -57,7 +67,7 @@ check_shell() {
 #    executes breaks it in ways that are hard to see.
 check_crlf() {
     local bad=""
-    for f in $(git ls-files '*.sh' '*.conf' '*.example' 'upload-handler/*' 'image/*'); do
+    for f in $(ls_files '*.sh' '*.conf' '*.example' 'upload-handler/*' 'image/*'); do
         [ -f "$f" ] || continue
         grep -qU $'\r' "$f" && bad="$bad $f"
     done
@@ -96,12 +106,12 @@ check_attribution() {
 #    files carry the payload.
 check_secrets() {
     local bad=""
-    for f in $(git ls-files); do
+    for f in $(ls_files); do
         [ -f "$f" ] || continue
         grep -qE -- '-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----' "$f" 2>/dev/null || continue
         grep -qE '^[A-Za-z0-9+/]{40,}={0,2}$' "$f" 2>/dev/null && bad="$bad $f"
     done
-    for f in $(git ls-files '*_ed25519' '*_rsa' 'id_*' '*.pem' '*.key'                             '*.crt' '*.der' '*.p12' '*.pfx' '*.jks' '*.keystore'); do
+    for f in $(ls_files '*_ed25519' '*_rsa' 'id_*' '*.pem' '*.key'                             '*.crt' '*.der' '*.p12' '*.pfx' '*.jks' '*.keystore'); do
         case "$f" in *.pub) ;; *) bad="$bad $f";; esac
     done
     [ -z "$bad" ] && pass "no private keys committed" || fail "no private keys committed" "$bad"
@@ -113,7 +123,7 @@ check_secrets() {
 #     accidental commit easy now that the recipe is written down.
 check_vendor_blobs() {
     local bad=""
-    for f in $(git ls-files); do
+    for f in $(ls_files); do
         # Our own captures of the wire, not vendor content: recorded frames of
         # the push protocol, no vendor code and no vendor markup. The tests
         # include them with include_bytes!, so excluding them means a clean
@@ -130,7 +140,7 @@ check_vendor_blobs() {
         esac
     done
     # jquery and the vendor's own scripts are a strong signal of extracted content
-    for f in $(git ls-files '*.js'); do
+    for f in $(ls_files '*.js'); do
         case "$f" in *jquery*|*consoleRequest*|*tuxapi*) bad="$bad $f";; esac
     done
     [ -z "$bad" ] && pass "no vendor blobs committed" || fail "no vendor blobs committed" "$bad"
@@ -163,7 +173,7 @@ check_patch_table() {
 check_redirect_gate() {
     local f=upload-handler/tuxedo-upload.sh
     local bad=""
-    for f in $(git ls-files '*.sh' 'upload-handler/*' 'ci/*'); do
+    for f in $(ls_files '*.sh' 'upload-handler/*' 'ci/*'); do
         [ -f "$f" ] || continue
         if grep -qE '^[^#]*\$\{?[A-Z_]+\}? *2?>&?>?[>&]* *\$[A-Z_]+' "$f" 2>/dev/null; then
             grep -q ': >> \$' "$f" || bad="$bad $f"
@@ -176,7 +186,7 @@ check_redirect_gate() {
 #    line meant to report success always report success.
 check_status_after_or_true() {
     local bad=""
-    for f in $(git ls-files '*.sh' 'upload-handler/*'); do
+    for f in $(ls_files '*.sh' 'upload-handler/*'); do
         [ -f "$f" ] || continue
         awk '/\|\| *true *$/ {prev=NR} /\$\?/ {if (NR==prev+1) print FILENAME": "NR}' "$f" | grep -q . && bad="$bad $f"
     done
@@ -190,7 +200,7 @@ check_dropbear_flags() {
     local bad=""
     # Only files that would be deployed. Documentation quotes the bad flags
     # while explaining why they are wrong.
-    for f in $(git ls-files '*.sh' '*.conf' '*.conf.example' 'upload-handler/*'); do
+    for f in $(ls_files '*.sh' '*.conf' '*.conf.example' 'upload-handler/*'); do
         [ -f "$f" ] || continue
         case "$f" in *.md) continue;; esac
         grep -qE 'DROPBEAR_ARGS=.*-[sgw]([ "]|$)' "$f" 2>/dev/null && bad="$bad $f"
@@ -226,7 +236,7 @@ check_binary_glibc() {
     local rd bad="" f v
     rd=$(command -v arm-linux-gnueabi-readelf || command -v readelf) || true
     [ -z "$rd" ] && { skip "shipped binary glibc version" "no readelf"; return; }
-    for f in $(git ls-files 'ssh/bin/*' 'bin/*' 2>/dev/null); do
+    for f in $(ls_files 'ssh/bin/*' 'bin/*' 2>/dev/null); do
         [ -f "$f" ] || continue
         head -c4 "$f" | grep -q ELF || continue
         v=$("$rd" -V "$f" 2>/dev/null | grep -o 'GLIBC_2\.[0-9]*' | sort -uV | tail -1)
@@ -253,7 +263,7 @@ check_no_time64_recipe() {
 #     14 MB of build-host binary and must never reach an image.
 check_no_harness_leak() {
     local bad=""
-    for f in $(git ls-files); do
+    for f in $(ls_files); do
         case "$f" in
             *qemu-arm-static*|*qemu-arm*) bad="$bad $f" ;;
         esac

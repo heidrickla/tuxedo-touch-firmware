@@ -148,6 +148,16 @@ and left sitting there saying the opposite of the truth.
   own command line contains `X`. It kills the session, the real target survives,
   and the next test runs against a stale process. Match `readlink
   /proc/<pid>/exe` against the binary path instead, and skip `$$`.
+- **...but `exe` is wrong the moment you REPLACE the file.** A running process
+  whose image has been renamed or overwritten reports
+  `/opt/webserver/Barracuda (deleted)`, so a `*/Barracuda` pattern stops
+  matching and the scan finds nothing. That turned a stage-5 test into a
+  confident "supervis did not accept it" while the untouched vendor process was
+  still serving. When the test swaps a binary, match on **`comm`** — field 2 of
+  `/proc/<pid>/stat`, the text inside the parentheses.
+- **Waiting for a port to open proves nothing if the old process still holds
+  it.** The predecessor keeps all four listeners until it dies, so the wait
+  returns instantly. Wait for a **different pid**.
 - No `awk` and no `wget` even with PATH set. `netstat`, `grep`, `tr`, `readlink`,
   `sed` are there.
 - **`/bin/busybox` is already on the panel since v13** (1328384 bytes, the one

@@ -77,8 +77,71 @@ fn tls_from_env() -> Option<Arc<ServerConfig>> {
     }
 }
 
+/// Stage 5: stand where Barracuda stands and do nothing but hand over.
+///
+/// `supervis` relaunches whatever lives at `/opt/webserver/Barracuda`, and
+/// whether it accepts a different binary there is the riskiest unknown in the
+/// whole replacement plan. This isolates that question from every other one:
+/// the vendor moves to `vendor/Barracuda`, `tuxweb` takes its place, and all
+/// `tuxweb` does is `execve` the vendor with the original argv. The vendor
+/// still does 100% of the work, so if `supervis` objects we learn it while
+/// nothing depends on us.
+///
+/// `execve` and not fork: the pid must not change, because `supervis` is
+/// watching it. §5.4 measured that `comm` follows the new basename, and the
+/// basename is still `Barracuda`, so the check it does still matches.
+///
+/// The target is verified before the exec. A missing target here would exit,
+/// `supervis` would relaunch, and a relaunch loop reboots the panel via the
+/// watchdog (threat model §8) -- so the failure has to be loud and it has to
+/// happen before anything is disturbed, not after.
+fn passthrough(argv0: &str, forward: &[String]) -> ! {
+    use std::os::unix::process::CommandExt;
+
+    let target = std::env::var("TUXWEB_EXEC")
+        .unwrap_or_else(|_| "/opt/webserver/vendor/Barracuda".to_string());
+
+    match std::fs::metadata(&target) {
+        Ok(m) => {
+            if !m.is_file() {
+                eprintln!("tuxweb passthrough: {target} is not a file; REFUSING to exec");
+                std::process::exit(2);
+            }
+        }
+        Err(e) => {
+            eprintln!("tuxweb passthrough: {target}: {e}");
+            eprintln!("tuxweb passthrough: the vendor binary is not where it was \
+                       expected. Put it back at /opt/webserver/Barracuda.");
+            std::process::exit(2);
+        }
+    }
+
+    eprintln!("tuxweb passthrough: exec {target} (pid {} kept)", std::process::id());
+    let err = std::process::Command::new(&target)
+        .args(forward)
+        .arg0(argv0)             // keep the basename supervis matches on
+        .exec();
+    eprintln!("tuxweb passthrough: exec {target} failed: {err}");
+    std::process::exit(2);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    // Invoked under the vendor's own name, or told to explicitly: hand over.
+    // Checked before anything else so no other argument parsing can shadow it.
+    let called_as = std::path::Path::new(&args[0])
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if called_as == "Barracuda" {
+        passthrough(&args[0], &args[1..]);
+    }
+    if args.get(1).map(String::as_str) == Some("--passthrough") {
+        // explicit form, for testing off the panel: the name to exec under is
+        // still the vendor's, because that is what supervis matches
+        passthrough("Barracuda", &args[2..]);
+    }
 
     // stage 3 shim: re-serve the vendor push stream byte for byte.
     //   tuxweb --shim <upstream host:port> <cookie> <bind-addr>

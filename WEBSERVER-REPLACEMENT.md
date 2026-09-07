@@ -1991,6 +1991,55 @@ does not relaunch; the fd ceiling is not near.
 **Revert:** move the vendor binary back to `/opt/webserver/Barracuda`, restart.
 Two commands.
 
+#### Stage 5 PASSED on the panel, 2026-09-06
+
+`supervis` accepts it. Measured on the live unit with `emu/stage5-panel.sh`,
+which reverts unconditionally from a `trap` and was run under `setsid` so a
+dropped ssh session could not leave `tuxweb` in the boot path:
+
+```
+before   pid 1096  comm Barracuda  cmdline /opt/webserver/Barracuda  4/4
+install  tuxweb at the vendor path, vendor moved to vendor/Barracuda
+kill     pid 1096 -> 2806 in 2s          <- supervis relaunched it
+after    pid 2806  comm Barracuda        <- the string supervis strcmp's
+                   cmdline /opt/webserver/Barracuda
+                   exe     /opt/webserver/vendor/Barracuda
+                   14 fds, 4/4 listeners
+t+5/10/15s  pid 2806 stable, 4/4         <- supervis did not fight it
+revert   vendor restored, 4/4, verify-panel.sh clean, panel disarmed
+```
+
+`exe` pointing at `vendor/Barracuda` while `cmdline` still reads
+`/opt/webserver/Barracuda` is the whole stage in one line: the exec happened,
+and everything `supervis` looks at is unchanged.
+
+**Why it was safe to try.** `supervis`'s check was read first, not assumed:
+`processdir(dirent const*, char*)` builds `/proc/%s/stat`, scans to the `)` at
+`0xbe28`, and `strcmp`s the extracted text — that is `comm`, and `comm` follows
+the exec'd basename, which is still `Barracuda`. `launchBarracuda()` shells out
+`"/opt/webserver/Barracuda &"`. Neither looks at the inode or the path of the
+image. The exec chain, pid retention and the loud-failure path were rehearsed
+under emulation first (`emu/stage5-test.sh`).
+
+**Two relaunches of the 24-relaunch watchdog budget were spent.**
+
+#### The first run of this test was a false negative, and the shape is worth keeping
+
+It reported `NOTHING is serving -- supervis did not accept it`. Nothing of the
+sort had happened: the original vendor process was still running and had never
+even been signalled.
+
+`pid_on_80` matched `readlink /proc/<pid>/exe` against `*/Barracuda`. The moment
+the file at that path is replaced, a running process's `exe` reads
+`/opt/webserver/Barracuda (deleted)` — the pattern stops matching, the function
+returns nothing, `kill` killed nothing, and the wait loop returned in 0 s
+because the old process still held all four ports. Every subsequent line
+described a process that had never been replaced.
+
+Two fixes, both of which make the test ask the real question: find the process
+by **`comm`**, which is the predicate `supervis` itself uses, and wait for a
+**different pid**, not for a port that never closed.
+
 ### Stage 6 — The IPC cutover, read-only, bounded window
 
 **This is the irreversible-feeling one. It is the only stage requiring a booked
