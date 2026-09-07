@@ -25,6 +25,20 @@
 #    the handler with no test. No pattern over instruction pairs can see that.
 # Anything that claims fewer than 84 has lost some.
 #
+# CONFIRMED BY AN INDEPENDENT METHOD, 2026-09-07. The interval walk was
+# checked against a different question: every `cmp` in run() whose operand IS
+# the received code, found by the reply map's abstract interpretation rather
+# than by pattern-matching instructions. 69 constants are compared. Every one
+# is either in this table or a provable exclusive bound -- `cmp ip,#0x130`
+# (304) gates the 300-303 block and `cmp ip,#0x1f8` (504) sends everything
+# above it to the default, so neither is a case. The 17 table entries that are
+# NOT compared anywhere are exactly the range-covered and no-test cases listed
+# above. Two methods that fail differently agreeing is the strongest evidence
+# this table has.
+#
+# NOTE 504 is a command bound here and a REPLY msgType elsewhere
+# (registerclient). Same number, opposite direction, unrelated.
+#
 # Not every case does work. 100 and 116 print their own vendor name and
 # return. 102 and 123-124 branch straight back to the receive loop: accepted
 # and silently discarded. Anything with no case reaches the default arm at
