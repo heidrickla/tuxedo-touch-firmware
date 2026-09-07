@@ -17,6 +17,23 @@ if [ "${1:-}" = "--list" ]; then
     exit 0
 fi
 
+# Most checks enumerate files with `git ls-files`. Outside a working tree that
+# returns nothing, every loop body is skipped, and each check prints "ok"
+# against an empty list -- a vacuous pass, indistinguishable from a real one.
+# Caught by running these against a `git archive` export: fourteen checks
+# reported ok while "fatal: not a git repository" scrolled past between them.
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "ABORT: not a git working tree. The file-enumerating checks would" >&2
+    echo "       every one pass against an empty list. Run from a clone." >&2
+    exit 2
+fi
+TRACKED=$(git ls-files | wc -l)
+if [ "$TRACKED" -lt 20 ]; then
+    echo "ABORT: git ls-files returned $TRACKED files, too few for this repo." >&2
+    echo "       The checks would pass by enumerating nothing." >&2
+    exit 2
+fi
+
 # 1. Python syntax.
 check_python() {
     local bad=""
