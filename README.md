@@ -18,8 +18,18 @@ structurally cannot answer `"Not available"`.
 GET /SimpleDebugger.interface/G.
 ```
 
-The slash before `G.` is the whole trick. Session cookie only, no token, no
-signed body. Verified live through arm and disarm.
+The slash before `G.` is the whole trick. Verified live through arm and disarm.
+
+**On stock firmware that endpoint needs no credential at all** — no cookie, no
+login — on ports 80, 443, 6280 and 9443. It carries live armed/disarmed state,
+the exit-delay countdown ticking down, and a scan of other devices on the LAN.
+Anyone deciding whether a house is empty would find it the single most useful
+signal on the network. Measured, not inferred; `tls/THREAT-MODEL.md` §3 has the
+numbers.
+
+**Patch P13 closes it**, and shipped here as v13: the path then requires a
+logged-in session and answers `401` without one, on all four listeners, while an
+authenticated client still receives every frame.
 
 ## Scope and status
 
@@ -37,7 +47,43 @@ conclusion was later retracted, the retraction is left in place rather than
 edited out.
 
 Conventions for working in this repo, including the writing style and the
-pre-push checks, are in `CONTRIBUTING.md`.
+pre-push checks, are in `CONTRIBUTING.md`. **`TRAPS.md` is the one to read
+first** — it is short, and every entry in it is something that produced a
+confident wrong answer here.
+
+## Building and flashing
+
+The firmware is rebuilt from the stock image plus a recorded patch set, and the
+whole thing is reproducible:
+
+| File | Does |
+|---|---|
+| `patches.tsv` | The authoritative patch set. Applying all 13 rows to the genuine stock binaries reproduces the shipped build byte for byte — executed, not asserted |
+| `apply-patches.py` | Applies or checks the table against a staged root filesystem |
+| `build-image.sh` | Stock payload + `patches.tsv` -> a flashable `app2.hdr`, with a round-trip check that distinguishes a broken toolchain from a broken patch |
+| `push-image.sh` | Puts an image on the panel's SD card over the network, md5-verified on the panel |
+| `verify-panel.sh` | Checks the running panel against `patches.tsv`, plus listeners, services, NAND and hosts |
+| `commands.tsv` | The IPC command dictionary: 55 codes with the vendor's own slot names |
+| `emu/` | Runs the panel's ARM binaries under `qemu-user`, so a request-path patch is proven before it is flashed |
+
+`emu/` is why v13 went in without surprises: the patch was exercised against the
+real binary, with the panel's own configuration, before anything was written to
+the device.
+
+## The replacement web server
+
+`tuxweb/` is a static ARM binary that will eventually replace the vendor's
+`Barracuda`. What works today:
+
+- the legacy push stream re-served **byte for byte**, including the vendor's
+  RFC 2046 violation of closing every multipart part
+- one upstream subscription fanned out to many clients, which matters because
+  every registration makes the panel flush its reply queue
+- a token gate, so the relay does not undo P13
+- modern TLS with an owner-run CA (`tls/`), against a panel whose shipped
+  certificate is expired and whose private key is compiled into the binary
+
+`WEBSERVER-REPLACEMENT.md` is the plan and the running record.
 
 ## The documents
 
@@ -83,7 +129,7 @@ also the panel user code**, so a tool that can log in can arm and disarm.
 
 ## The web login lockout
 
-Worth stating plainly, because it governs how any client should behave:
+This governs how any client should behave:
 
 - **Stock firmware disables every web account after three failed logins.** No
   timeout, no self-clear. Recovery is only at the touchscreen (account setup,
