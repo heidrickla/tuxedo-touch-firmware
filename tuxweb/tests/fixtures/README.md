@@ -1,8 +1,10 @@
 # Why these two captures are here
 
-There is a standing question about whether captures belong in this repository
-at all. `evidence/` and the two `tuxedo-*.jsonl` files are under review for
-removal on exactly that basis.
+Raw capture and scan output does not belong in this repository (Lewis,
+2026-09-07). Six files were removed from history on that basis: the four in
+`evidence/`, `tuxedo-decay.jsonl` and `tuxedo-probe-run2.jsonl`. What they
+showed is written up in the documents that cited them; a summary or a redacted
+extract is the accepted substitute.
 
 **These two are different, and if you are sweeping for captures again this file
 is the answer.** They are not evidence kept for the record. They are test
