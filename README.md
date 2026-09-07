@@ -135,8 +135,8 @@ also the panel user code**, so a tool that can log in can arm and disarm.
 ### Data
 
 `tuxedo_zone_tables.json` (zone types and descriptor words, machine-readable),
-`tuxedo_audit_bugs.json`, `tuxedo_refutations.json`, and two measurement runs,
-`tuxedo-decay.jsonl` and `tuxedo-probe-run2.jsonl`.
+`tuxedo_audit_bugs.json` and `tuxedo_refutations.json`. Two measurement runs
+backed the decay and probe findings; their raw output is not kept in the repo.
 
 ## The web login lockout
 
