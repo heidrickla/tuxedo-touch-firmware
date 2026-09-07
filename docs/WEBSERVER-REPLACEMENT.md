@@ -3336,17 +3336,38 @@ offset 0 because `mem.index` was ignored.
   absent from this repo. Run from this repo's own copy against three binaries on
   the build VM:
 
+  **Three exit states, and the third one matters.** "Could not evaluate" is not
+  "the claim is false" — handing the checker the wrong binary must not read as a
+  refutation any more than it may read as a pass:
+
+      rc=0   evaluated, the claim holds
+      rc=1   evaluated, the claim is FALSE
+      rc=2   could not evaluate: not supervis, not an ELF, no such path
+
   | binary | exit | result |
   |---|---|---|
   | stock `supervis` | 0 | 7 assertions hold, thread present and harmless |
   | live v13 `supervis` | 0 | 6 hold, "no thread at all (P9 removes it)" |
-  | `Barracuda` (control) | 1 | **3 FAIL** — queue read from two threads, `SupervisTimeout` unresolvable, `time()` in 30 unexpected callers |
+  | **synthetic control** | **1** | **exactly 2 FAIL**, the other 5 still pass |
+  | `Barracuda`, `tuxedo` | 2 | "has no `SupervisTimeout` — this is not supervis" |
+  | not an ELF, missing path | 2 | refused, nothing checked |
 
-  **The control carries more weight than the passes.** Seven assertions holding
-  on two binaries shows the checker is quiet; three failing on a binary where
-  the claim is false shows it can discriminate. Anything it cannot evaluate
-  exits non-zero, because "could not check" must not render as "checked and
-  fine".
+  **THE CONTROL HAD TO BE BUILT, and the reason is a trap in itself.** Barracuda
+  was the original control — it failed three assertions, which was the only
+  evidence the checker could discriminate at all. Correctly reclassifying it to
+  `rc=2` was right *and it silently deleted the only failing case*, leaving a
+  checker that had never been observed to fail anything. **A tightening that is
+  correct can destroy your negative control; check afterwards that you can still
+  make it go red.**
+
+  So `probe/mkcontrol.py` builds one: it copies stock `supervis` and redirects
+  one `bl` inside `SupervisTimeout` to `osal_MqRecv`, producing a binary where
+  the 600 s housekeeping genuinely does read the supervision queue. The checker
+  then fails **exactly the two assertions that should fail** — "queue read only
+  by main" and "SupervisTimeout never reads the queue" — while the other five
+  still pass. Targeted rather than blanket is what separates a control from a
+  broken checker. It writes a copy and leaves the original untouched, verified
+  by hash.
 
   Found by the firmware session, which could not commit it while this repository
   was held for the publication rewrite. Re-confirm before stage 6 is booked if

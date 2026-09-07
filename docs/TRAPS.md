@@ -369,11 +369,23 @@ and left sitting there saying the opposite of the truth.
   stream counted down correctly. Use the stream for state.
 - `supervis` allows **24 relaunches then a hardware reset**, and the counter is
   never zeroed. Check the budget before flashing a request-path change.
-  **Seen directly at `0xc684` rather than quoted**, while tracing the P9 branch
-  for the §5.11 supervision question: load the counter, `add r3,r3,#1`,
-  `cmp r3,#0x18`, store it back, branch when it exceeds. **The store happens
-  after the compare and there is no reset path**, which is the mechanism behind
-  "never zeroed".
+  **A block at `0xc684` looks like it confirms this and DOES NOT — do not cite
+  it.** It reads a counter, `add r3,r3,#1`, `cmp r3,#0x18`, stores it back and
+  branches when it exceeds, which is exactly the shape expected. But `0xc680`
+  is an unconditional `b #0xc4f0`, and a full-coverage scan of `.text` (3323 of
+  3334 words decoded, 99.7%) finds **zero branches targeting `0xc680-0xc6b0`**.
+  Nothing reaches it. An earlier edit of this entry cited it as the mechanism,
+  "seen directly rather than quoted"; that was wrong, and the shape of the block
+  is what made it convincing. **Code that says what you expect is not evidence
+  until something reaches it.** The 24-limit itself stands on its original
+  source, not on this block.
+- **DO NOT read the relaunch budget out of the running `supervis`.** The counter
+  is at `0x16be0` in `.bss` and the process is non-PIE with that page mapped
+  `rw`, so it is at a real fixed address and looks readable. Reading it on
+  2.6.31 needs `ptrace` — and `supervis` holds `/dev/watchdog` on fd 4 and kicks
+  it at 1 Hz. **Attaching stops the process, the kicks stop, and the watchdog
+  resets the panel in hardware.** Track the budget by hand in the runbook. The
+  address being reachable is not the same as it being safe to reach.
 - **A flash wipes anything added over SSH.** `/opt/tuxedo/configuration`
   (mtdblock17) survives.
 - **Prove request-path patches under `emu/` before flashing.** That is what

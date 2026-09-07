@@ -53,9 +53,29 @@ def main(path: str) -> int:
         print("supervis_heartbeat: %s not found" % path)
         print("  Supply the vendor binary; it is deliberately not in this repo.")
         return 2
-    e = Elf(path)
+    try:
+        e = Elf(path)
+    except (ValueError, KeyError, struct.error) as ex:
+        print("supervis_heartbeat: %s is not a readable ARM ELF (%s)" % (path, ex))
+        return 2
     md = Cs(CS_ARCH_ARM, CS_MODE_ARM)
     md.detail = True
+
+    # ⛔ WRONG BINARY IS NOT A FAILED CLAIM, and the distinction is the whole
+    # point of this script. Handed some other ELF, the first version raised out
+    # of tuxelf and exited 1 -- which reads as "the assertions failed", i.e.
+    # "supervis CAN detect silence". It cannot mean that: nothing was examined.
+    # rc=2 is "could not evaluate", rc=1 is "evaluated and the claim is false".
+    # Collapsing them is the same conflation this whole section documents,
+    # pointing the other way.
+    for required in ("main", "SupervisTimeout(sigval)"):
+        try:
+            e.addr(required)
+        except KeyError:
+            print("supervis_heartbeat: %s has no %r -- this is not supervis."
+                  % (path, required))
+            print("  Nothing was checked. This is NOT evidence about the claim.")
+            return 2
 
     # 1. The queue has exactly one reader, and it is main.
     try:
