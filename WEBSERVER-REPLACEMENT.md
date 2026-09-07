@@ -1741,11 +1741,40 @@ reaches Barracuda from the consumer's own address carrying a session bound to
 loopback, which the panel will reject. Mixing the two paths breaks the session
 in a way that looks like a random logout.
 
-So a consumer cannot be pointed at the shim until the shim serves the REST
-namespace itself — either by terminating TLS for the consumer, or by forwarding
-that namespace to `127.0.0.1:443` over TLS internally so the consumer can stay
-on one plain-HTTP endpoint. The second is less work and keeps the consumer's
-configuration to a single host and port.
+**And the shim cannot serve that namespace itself.** Measured, all four
+listeners, one authenticated `GetSecurityStatus`:
+
+| listener | result |
+|---|---|
+| `http :80` | `302 -> https://…:443` |
+| `http :6280` | `302 -> https://…:443` |
+| `https :443` | `200`, real result |
+| `https :9443` | `200`, real result |
+
+So it is the scheme, not the credential — the redirect happens with full
+authentication, and neither plaintext listener is a way round it. Proxying REST
+therefore requires the shim to speak TLS *to Barracuda*, and that is the part
+that does not work: **Ubuntu's OpenSSL 3 cannot complete a handshake with the
+panel even at `SECLEVEL=0`** (cipher `0000`, no connection), and rustls is
+stricter than OpenSSL, not laxer. Talking to this TLS needs an old stack, which
+is the opposite of the project's direction.
+
+**So the wholesale swap is off, and a split configuration is the answer:**
+
+| traffic | endpoint | state |
+|---|---|---|
+| login + REST commands | panel `:443` directly, as today | unchanged |
+| push stream | the shim, gated by a token | working now |
+
+Each side keeps a session bound to the address that created it, so nothing
+breaks: the consumer's own session for REST, the shim's loopback session for the
+stream. The shim's session-validation path stays useful for clients that *do*
+reach it through the proxy, but the token is what a split consumer will use.
+
+**What this needs is a consumer-side change, not more shim.**
+`ha-tuxedo-touch` would have to accept a separate push endpoint and token rather
+than deriving the stream URL from the panel host. That is a change in that
+repository and Lewis's call.
 
 **No TLS termination in this mode** yet; the TLS listener is the binary's other
 mode. Fan-out matters beyond convenience — each upstream registration makes the
