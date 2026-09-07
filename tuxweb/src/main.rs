@@ -176,6 +176,20 @@ fn main() {
                 if u.is_sealed() { "yes" } else { "NO" },
             );
         }
+        // The vendor keeps a byte-identical mirror. Nothing on the read paths
+        // opens it, so a divergence is silent -- which is exactly why it is
+        // worth reporting: it means something wrote one file and not the other.
+        if store_path == accounts::STORE_PATH {
+            match std::fs::read(accounts::MIRROR_PATH) {
+                Ok(m) if m == blob => println!("mirror matches"),
+                Ok(m) => println!(
+                    "mirror DIFFERS ({} bytes vs {}) -- something wrote one file and not the other",
+                    m.len(),
+                    blob.len()
+                ),
+                Err(e) => println!("mirror unreadable: {e}"),
+            }
+        }
         match store.validate() {
             Ok(()) => println!("store is consistent"),
             Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }

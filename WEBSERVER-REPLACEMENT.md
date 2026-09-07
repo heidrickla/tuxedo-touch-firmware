@@ -425,9 +425,56 @@ inconsistency as a requirement.
 33 tests pass; the ARM cross-build is 985064 bytes, against a
 `BARRACUDA_MEMORY` ceiling of ~31 MB (§5.2).
 
+Run on the panel itself against the live store, reading the key out of the live
+`/tuxedo`:
+
+```
+/opt/tuxedo/configuration/webuseraccountsenc.json: 1053 bytes, 5 slots
+  slot 1..5  status=1 locked=0 sealed=yes
+mirror matches
+store is consistent
+```
+
+#### Authentication against the store
+
+`Store::authenticate(name, code)` is what makes decision (a) mean something: the
+list the keypad edits is the list the web authenticates against, with no second
+copy to drift. It honours the vendor's own `status` and `accountLocked` fields,
+compares the code in constant time, and matches usernames case-insensitively
+because the digest that binds name to code is computed over the lowercased name
+— the vendor already treats them that way.
+
+Failures are typed (`NoSuchUser`, `WrongPassword`, `Disabled`, `Locked`,
+`Tampered`) for the operator and **must not be distinguished to a client**:
+telling "no such user" from "wrong code" apart is a user-enumeration oracle, and
+on a four-digit secret that matters more than usual.
+
+`Tampered` exists because the alternative is guessing. If the stored digest does
+not match the stored name and code, someone edited the file by hand or wrote it
+with a different rule; picking which field to believe would be inventing an
+answer.
+
+**The four-digit code is the real constraint, and this does not fix it.** Ten
+thousand possibilities means the only thing between an attacker and an account
+is how fast they may guess, so anything exposing this to a network has to
+throttle. P1 removed the permanent on-disk lockout deliberately and this must
+not quietly reintroduce one — the vendor's `accLockedCount`/`accountLocked` are
+honoured, not extended.
+
+#### Writing
+
+`accounts::save` validates first, encodes once, and writes **by rename** to both
+paths, mirror first and the main file last. Both readers — `/tuxedo`'s
+`readWebUserAccSetupJSONFile` and Barracuda's `readUserNamePasswordFromJSON` —
+open the main file directly and parse whatever is there, so a partially written
+file at that path is a panel that cannot authenticate anyone. Rename makes the
+swap atomic; mirror-first means an interruption never leaves the mirror behind
+the file it mirrors.
+
 **Not yet done, and deliberately:** nothing has written to the live account
-store. The read and round-trip paths are proven; replacing the panel's real file
-is a separate, owner-approved step.
+store. The read, authenticate, round-trip and save paths are all proven — save
+against temporary paths, the rest against the panel's real file — but replacing
+the panel's actual account file is a separate, owner-approved step.
 
 ### 1.7 The blockers the IPC mapping found, and which one reshapes the plan
 

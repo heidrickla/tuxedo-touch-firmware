@@ -168,6 +168,106 @@ impl Store {
     }
 }
 
+/// Write the store to the vendor's two paths.
+///
+/// Order and mechanism both matter and neither is arbitrary:
+///
+/// * **Rename, never write in place.** Both `/tuxedo`'s
+///   `readWebUserAccSetupJSONFile` and Barracuda's
+///   `readUserNamePasswordFromJSON` open the main file directly and parse
+///   whatever is there. A partially written file at that path is a panel that
+///   cannot authenticate anyone, so the new bytes land under a temporary name
+///   and are moved into place in one step.
+/// * **Mirror first, main file last.** The main file is the one both readers
+///   open; `_sec` is a mirror neither of them touches on these paths. Writing
+///   the mirror first means an interruption leaves the authoritative file
+///   either wholly old or wholly new, and never leaves the mirror behind the
+///   file it mirrors.
+///
+/// The store is validated before anything is written. Refusing to serialise an
+/// inconsistent store is the point: this function is the last place that can
+/// tell the difference between a deliberate change and a mistake.
+pub fn save(env: &Envelope, store: &Store, main: &str, mirror: &str) -> Result<usize, String> {
+    store.validate()?;
+    let bytes = store.encode(env)?;
+    for path in [mirror, main] {
+        let tmp = format!("{path}.tuxweb-new");
+        std::fs::write(&tmp, &bytes).map_err(|e| format!("{tmp}: {e}"))?;
+        std::fs::rename(&tmp, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("{path}: {e}")
+        })?;
+    }
+    Ok(bytes.len())
+}
+
+/// Why an account was refused. Callers get this; a client gets none of it.
+///
+/// The distinction is kept because the operator needs to know *why* a login
+/// failed and the network must not: "no such user" and "wrong code" told apart
+/// is a user enumeration oracle, and on a four-digit secret that matters more
+/// than usual.
+#[derive(Debug, PartialEq)]
+pub enum Denied {
+    NoSuchUser,
+    WrongPassword,
+    Disabled,
+    Locked,
+    /// The stored digest does not match the stored name and password. Someone
+    /// edited the file by hand or wrote it with a different rule; refuse rather
+    /// than guess which field is the truth.
+    Tampered,
+}
+
+/// Constant-time compare, so a wrong code cannot be found a digit at a time.
+fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
+impl Store {
+    /// Check a username and code against the store.
+    ///
+    /// **This is not a substitute for rate limiting.** The secret is four
+    /// decimal digits — ten thousand possibilities — so the only thing standing
+    /// between an attacker and an account is how fast they may guess. The
+    /// vendor's own answer is `accLockedCount` and `accountLocked`, which are
+    /// honoured here; a caller exposing this to a network MUST also throttle.
+    /// P1 removed the permanent on-disk lockout for good reasons, and this must
+    /// not quietly reintroduce one.
+    ///
+    /// Every candidate is examined rather than returning at the first match, so
+    /// the work done does not depend on where in the file the user sits.
+    pub fn authenticate(&self, user_name: &str, password: &str) -> Result<&User, Denied> {
+        let mut found: Option<&User> = None;
+        for u in &self.users {
+            // usernames are matched case-insensitively because the digest that
+            // binds name to password is computed over the lowercased name, so
+            // the vendor already treats them that way
+            if u.user_name.to_lowercase() == user_name.to_lowercase() {
+                found = Some(u);
+            }
+        }
+        let u = found.ok_or(Denied::NoSuchUser)?;
+        if !u.is_sealed() {
+            return Err(Denied::Tampered);
+        }
+        if u.status != 1 {
+            return Err(Denied::Disabled);
+        }
+        if u.account_locked != 0 {
+            return Err(Denied::Locked);
+        }
+        if !ct_eq(&u.password, password) {
+            return Err(Denied::WrongPassword);
+        }
+        Ok(u)
+    }
+}
+
 /// Read the AES key and IV out of `/tuxedo`.
 ///
 /// Deliberately not embedded in this binary: the constants are the vendor's,
@@ -328,6 +428,93 @@ mod tests {
         assert!(Store::decode(&other, &blob).is_err(), "wrong key must not parse");
         assert!(Store::decode(&env, &blob[..20]).is_err(), "truncation must not parse");
         assert!(Store::decode(&env, &[]).is_err(), "empty must not parse");
+    }
+
+    #[test]
+    fn authenticate_accepts_the_right_code_and_nothing_else() {
+        let s = store();
+        assert_eq!(s.authenticate("User3", "1234").unwrap().user_id, 3);
+        // the digest binds the LOWERCASED name, so the vendor already treats
+        // names case-insensitively and so must this
+        assert_eq!(s.authenticate("user3", "1234").unwrap().user_id, 3);
+        assert_eq!(s.authenticate("USER3", "1234").unwrap().user_id, 3);
+
+        assert_eq!(s.authenticate("User3", "1235"), Err(Denied::WrongPassword));
+        assert_eq!(s.authenticate("nobody", "1234"), Err(Denied::NoSuchUser));
+        // a prefix must not pass: ct_eq compares lengths first
+        assert_eq!(s.authenticate("User3", "123"), Err(Denied::WrongPassword));
+        assert_eq!(s.authenticate("User3", "12345"), Err(Denied::WrongPassword));
+        assert_eq!(s.authenticate("User3", ""), Err(Denied::WrongPassword));
+    }
+
+    #[test]
+    fn authenticate_honours_the_vendors_status_and_lock_fields() {
+        let mut s = store();
+        s.users[0].status = 0;
+        assert_eq!(s.authenticate("User1", "1234"), Err(Denied::Disabled));
+
+        s.users[1].account_locked = 1;
+        assert_eq!(s.authenticate("User2", "1234"), Err(Denied::Locked));
+
+        // and a locked account must not be openable by the right code either
+        s.users[1].account_locked = 1;
+        assert!(s.authenticate("User2", "1234").is_err());
+    }
+
+    #[test]
+    fn a_tampered_entry_is_refused_rather_than_guessed_at() {
+        let mut s = store();
+        // password changed without resealing: the file now disagrees with
+        // itself, and picking a winner would be inventing an answer
+        s.users[3].password = "0000".into();
+        assert_eq!(s.authenticate("User4", "0000"), Err(Denied::Tampered));
+        assert_eq!(s.authenticate("User4", "1234"), Err(Denied::Tampered));
+        s.users[3].reseal();
+        assert_eq!(s.authenticate("User4", "0000").unwrap().user_id, 4);
+    }
+
+    #[test]
+    fn save_writes_both_paths_identically_and_leaves_no_temp_files() {
+        let env = test_env();
+        let dir = std::env::temp_dir().join(format!("tuxweb-acct-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("webuseraccountsenc.json");
+        let mirror = dir.join("webuseraccountsenc_sec.json");
+        let (m, s) = (main.to_str().unwrap(), mirror.to_str().unwrap());
+
+        let n = save(&env, &store(), m, s).unwrap();
+        let a = std::fs::read(&main).unwrap();
+        let b = std::fs::read(&mirror).unwrap();
+        assert_eq!(a.len(), n);
+        // the panel's own two files had identical md5s; ours must too
+        assert_eq!(a, b, "the mirror must be byte-identical to the main file");
+        assert_eq!(Store::decode(&env, &a).unwrap(), store());
+
+        for f in std::fs::read_dir(&dir).unwrap() {
+            let p = f.unwrap().path();
+            assert!(
+                !p.to_string_lossy().contains("tuxweb-new"),
+                "a temporary file was left behind: {p:?}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_refuses_an_inconsistent_store_before_touching_anything() {
+        let env = test_env();
+        let dir = std::env::temp_dir().join(format!("tuxweb-acct-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("main.json");
+        let mirror = dir.join("mirror.json");
+
+        let mut s = store();
+        s.users[0].password = "9999".into(); // changed without resealing
+        let e = save(&env, &s, main.to_str().unwrap(), mirror.to_str().unwrap()).unwrap_err();
+        assert!(e.contains("EncNamePass"), "{e}");
+        assert!(!main.exists(), "nothing may be written when validation fails");
+        assert!(!mirror.exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
