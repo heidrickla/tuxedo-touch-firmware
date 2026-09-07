@@ -81,6 +81,54 @@ impl Reply {
     pub fn state_byte(&self) -> Option<u8> {
         self.text.first().copied()
     }
+
+    /// A msgType 504 read at the offsets a 504 actually uses.
+    ///
+    /// `parse` is the status-path view and is wrong here in a way that is easy
+    /// to miss: it takes `arg` from `+0x08` and the text from `+0x0E`, and
+    /// `registerclient` writes NEITHER. Its payload is the current partition
+    /// at `+0x90` and the partition description `strcpy`d to `+0x91`
+    /// (`reply-layouts.txt`), and Barracuda's builder at `0xf638` reads
+    /// exactly those — `ldrb [sp,#0x304]` and `add r6,r6,#0x91` against a
+    /// buffer based at `sp+0x274`. Using `parse` for a 504 puts uninitialised
+    /// stack in the frame's third field.
+    pub fn parse_504(buf: &[u8]) -> Option<Reply> {
+        if buf.len() < REPLY_LEN {
+            return None;
+        }
+        let w = |o: usize| {
+            u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]])
+        };
+        let tail = &buf[0x91..];
+        let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+        Some(Reply {
+            session: w(0x00),
+            msg_type: w(0x04),
+            arg: buf[0x90] as u32,
+            text: tail[..end].to_vec(),
+        })
+    }
+
+    /// The four trailing values of a 504 frame, in the order the builder
+    /// pushes them: `+0xaf` panel CAL implementation, `+0xb1` operation mode,
+    /// `+0xb2` total partitions, `+0xb4` Z-Wave controller status.
+    ///
+    /// All four come from the reply. **None is Barracuda-private state**, so a
+    /// replacement can emit this frame from the queue message alone — which is
+    /// what `WEBSERVER-REPLACEMENT.md` §5.11 had recorded as unknown.
+    /// `+0xb0` and `+0xb8` are written by `registerclient` but the frame
+    /// builder does not read them.
+    pub fn registration_extra(buf: &[u8]) -> Option<[u32; 4]> {
+        if buf.len() < REPLY_LEN {
+            return None;
+        }
+        Some([
+            buf[0xAF] as u32,
+            buf[0xB1] as u32,
+            buf[0xB2] as u32,
+            u32::from_le_bytes([buf[0xB4], buf[0xB5], buf[0xB6], buf[0xB7]]),
+        ])
+    }
 }
 
 /// A command to `/tuxedo`. `code` is `+0x04`; `p1` and `p2` are `+0x08` and
@@ -167,9 +215,18 @@ pub fn frame_typed(r: &Reply, trailing: u32) -> Vec<u8> {
 /// conversions, eight fields with seven `':'` between them.
 ///
 /// This is the registration reply, produced by `/tuxedo`'s `registerclient`
-/// after it flushes the reply queue. `extra` are the five trailing values it
-/// gathers: `GetZWControllerStatus`, panel cal, operation mode, total
-/// partitions and current partition, in the order the handler reads them.
+/// after it flushes the reply queue.
+///
+/// `r.arg` here is the CURRENT PARTITION, from the reply's `+0x90` — not
+/// `+0x08`, which a 504 never writes. Build the argument with
+/// [`Reply::parse_504`], not [`Reply::parse`].
+///
+/// `extra` is four values, not five, and their order is the order the builder
+/// at `0xf638` pushes them: `+0xaf` panel CAL implementation, `+0xb1`
+/// operation mode, `+0xb2` total partitions, `+0xb4` Z-Wave controller status.
+/// Use [`Reply::registration_extra`]. The previous wording named five values
+/// including the current partition and put the Z-Wave status first; the array
+/// has always been four long, and the current partition is the `arg` field.
 pub fn frame_registration(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
     let mut o = Vec::new();
     push_u32(&mut o, r.session);
@@ -250,6 +307,43 @@ mod tests {
         want.extend_from_slice(&text);
         want.extend_from_slice(b":2");
         assert_eq!(frame_status(&r, 2), want);
+    }
+
+    /// A real 556-byte 504, laid out as `reply-layouts.txt` says
+    /// `registerclient` writes it, must produce the frame the panel sent.
+    ///
+    /// The corpus test cannot catch a wrong offset here: it rebuilds a `Reply`
+    /// out of the frame's own text, so it would reproduce the frame whatever
+    /// offsets the fields really came from. This starts from the buffer.
+    #[test]
+    fn a_504_buffer_reproduces_the_captured_registration_frame() {
+        let mut buf = vec![0u8; REPLY_LEN];
+        buf[0x00..0x04].copy_from_slice(&0u32.to_le_bytes()); // session
+        buf[0x04..0x08].copy_from_slice(&504u32.to_le_bytes());
+        buf[0x08..0x0C].copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+        buf[0x0E] = b'X'; // the status path's text offset: not used by a 504
+        buf[0x90] = 1; // GetCurrentPartition
+        buf[0x91..0x96].copy_from_slice(b"P1  H"); // GetPartitionDescription
+        buf[0xAF] = 1; // GetPanelCalImplementation
+        buf[0xB0] = 9; // GetArmingModes() & 8 -- written, but not in the frame
+        buf[0xB1] = 0; // GetOperationMode
+        buf[0xB2] = 3; // GetTotalPartitions
+        buf[0xB4..0xB8].copy_from_slice(&3u32.to_le_bytes()); // ZW controller
+        buf[0xB8] = 9; // isRisSupported -- written, but not in the frame
+
+        let r = Reply::parse_504(&buf).expect("504 parses");
+        let extra = Reply::registration_extra(&buf).expect("extras read");
+        assert_eq!(frame_registration(&r, extra), b"0:504:1:P1  H:1:0:3:3");
+
+        // and the -1 repeat that follows it in the same capture
+        assert_eq!(frame_registration_filler(&r, extra),
+                   b"0:-1:1:P1  H:1:0:3:3");
+
+        // Reply::parse would put +0x08 in the third field and read text from
+        // +0x0E; both are wrong here, which is the whole point of parse_504.
+        let wrong = Reply::parse(&buf).expect("parses");
+        assert_ne!(wrong.arg, r.arg);
+        assert_ne!(wrong.text, r.text);
     }
 
     #[test]

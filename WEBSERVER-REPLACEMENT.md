@@ -2351,7 +2351,7 @@ it is **one**, and which one matters:
 | `frame_filler(r)` | — | yes |
 | `frame_typed(r, trailing)` | **`r.arg`** | **yes** |
 | `frame_status(r, quick_arm)` | `getQuickArmStatus()` | **no** |
-| `frame_registration(r, extra)` | not yet resolved | unknown |
+| `frame_registration(r, extra)` | `+0xaf`, `+0xb1`, `+0xb2`, `+0xb4` | **yes** |
 
 The frames are built by `bprintf` with `":"` passed as an argument — the string
 at `0x84f5c` — which is why the format strings look like `%d%s%d%s...`. The
@@ -2367,6 +2367,30 @@ reply sits at `sp+0x274` in that function, so `sp+0x274` is `session`,
 - **Typed**, `'%d%s%d%s%s%s%d'` at `0xda1c`. The final `%d` is
   `ldr r3,[sp,#0x27c]` — **the reply's `arg`**. `frame_typed`'s `trailing`
   parameter and `Reply::arg` are the same value.
+- **Registration**, at `0xf638` — **resolved 2026-09-07, and every field comes
+  from the reply.** A displacement scan finds nothing at `+0xaf..+0xb8` because
+  the builder reads through a base pointing into the buffer; running the reply
+  map's own interpretation over Barracuda instead gives the offsets directly.
+  Against the buffer at `sp+0x274` it reads `ldrb [sp,#0x304]` = `+0x90`, takes
+  the description with `add r6,r6,#0x91`, then `+0xaf`, `+0xb1`, `+0xb2` and
+  `+0xb4`, pushing `r4` — the `":"` literal — between each. So the wire frame
+  `0:504:1:P1  H:1:0:3:3` is
+  `session : 504 : +0x90 : +0x91 : +0xaf : +0xb1 : +0xb2 : +0xb4`, i.e. current
+  partition, partition description, panel CAL implementation, operation mode,
+  total partitions, Z-Wave controller status. **`frame_registration` needs no
+  Barracuda state**, so a replacement can emit a 504 from the queue message
+  alone.
+
+  Two things this corrected in `ipc.rs`. Its doc named *five* trailing values
+  for a `[u32; 4]` and put the Z-Wave status first; and `frame_registration`
+  took the third field from `r.arg`, which `Reply::parse` reads at `+0x08` —
+  an offset `registerclient` **never writes**, so the frame carried
+  uninitialised stack. `Reply::parse_504` and `Reply::registration_extra` read
+  the right offsets, and a test now builds a real 556-byte 504 and asserts it
+  reproduces the captured frame. The corpus test could not have caught this
+  either: it rebuilds the `Reply` from the frame's own text, so it reproduces
+  the frame whatever offsets the fields actually came from. `+0xb0` and `+0xb8`
+  are written by `registerclient` but never read by the builder.
 
 The corpus test could not have caught that: for the 4-field shape it builds
 `Reply { arg: 0, .. }` and passes the trailing field separately, so it proves
