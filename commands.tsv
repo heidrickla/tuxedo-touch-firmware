@@ -3,74 +3,116 @@
 # The 404-byte command is built in a global buffer at Barracuda 0x55d8d0 and
 # sent with mq_send(mqd from the global at 0x55ae68, buf, 404, prio=1). The code
 # lives at buf+0x04; +0x08 and +0x0C are command-specific parameters, NOT fixed
-# fields (for the touch-simulate command they are x/y coordinates).
+# fields (for command 6285 they are the x/y of a simulated touch).
 #
-# Recovered from CReceiverThread::run @0x147158 in /tuxedo, which receives into
-# sp+0x2f4 and dispatches on [sp,#0x2f8] = buf+0x04. Slot names come from the
-# binary's own Qt symbols, so the semantics are the vendor's, not a guess.
+# Regenerate with:  python dispatch_tree.py <rootfs>/tuxedo
 #
-# HOW THIS WAS WRONG TWICE, because it will be tempting to trust it wholesale:
-#  * following only `cmp/beq` gave 40 codes and missed every `cmp/bne skip`
-#    case, including 500 and 19. Both forms are followed now.
-#  * `cmp/bhs` and friends are binary-search PIVOTS, not cases. Code 300 was
-#    published from one before being rejected. Pivots are excluded here.
-# Individually verified so far: 1, 2, 3 (driven live via D:/temp/tux-arm.py),
-# 19 (requestconsolemode), 500 (registerclient). The rest are from the sweep
-# and should be confirmed by reading the handler before being relied on.
+# It walks CReceiverThread::run @0x147158 carrying an interval and an exclusion
+# set for the received code, narrowing both on every conditional branch, and
+# reads each handler as belonging to whatever the constraints still permit.
+# 774 words, 0 undecodable, no path left unresolved. Handler names are the
+# binary's own Qt symbols, so the semantics are the vendor's.
 #
-# code<TAB>handler_va<TAB>branch_form<TAB>slot
-1	0x147bb8	beq	CReceiverThread::sltRequestArmAway
-2	0x147a14	beq	CReceiverThread::sltRequestArmStay
-3	0x147bf4	beq	CReceiverThread::sltRequestDisarm
-4	0x1478d8	bne	CReceiverThread::sltRequestArmNight
-5	0x147684	beq	CReceiverThread::sltRequestPartitionStatus
-7	0x1479b8	beq	CReceiverThread::sltRequestMultiPartitionArmStay
-8	0x147c90	beq	CReceiverThread::sltRequestMultiPartitionArmNight
-9	0x147648	bne	CReceiverThread::sltRequestMultiPartitionDisarm
-10	0x14746c	beq	CTimer2::stop
-12	0x147a60	beq	CReceiverThread::sltRequestAllZoneCurrStatus
-13	0x147c80	beq	CReceiverThread::sltRequestBypassAllZones
-14	0x14745c	bne	CReceiverThread::sltRequestBypassClearAllZones
-15	0x1476c8	beq	CReceiverThread::sltRequestToBypassZones
-17	0x147a48	beq	CReceiverThread::sltRequestEventLogUpload
-18	0x147c30	beq	CReceiverThread::sltRequestGetHomePartDetails
-19	0x14760c	bne	CReceiverThread::requestconsolemode
-25	0x147364	beq	CReceiverThread::sltRequestMultiPartitionArmAwaySelectedPartition
-27	0x147a78	beq	CReceiverThread::sltRequestMultiPartitionArmNightSelectedPartition
-29	0x147b7c	beq	CReceiverThread::sltRequestMultiPartitionDisarmSelectedPartition
-52	0x147354	bne	CReceiverThread::sltAddCamera
-53	0x1476b8	beq	CReceiverThread::sltUpdateCamera
-55	0x1479ec	beq	CReceiverThread::sltUploadCameraDB
-56	0x147c60	beq	CReceiverThread::sltGetCameraCredentials
-57	0x1475e0	bne	CReceiverThread::sigStartCameraDiscovery
-58	0x1474ac	beq	CReceiverThread::sltDeleteAllCameras
-100	0x147428	bne	puts@@GLIBC_2.4
-102	0x1471c4	beq	osal_MqRecv
-104	0x147c70	beq	CReceiverThread::sltRequestZwaveDeviceAdd
-105	0x147998	bne	CReceiverThread::sltRequestZwaveDeviceDel
-106	0x1476d8	beq	CReceiverThread::sltRequestZwaveDeviceFrmv
-107	0x147c50	beq	CReceiverThread::sltRequestZwaveDeviceAbort
-108	0x1475b4	bne	CReceiverThread::sltRequestZwaveLightStatGet
-109	0x147a04	beq	CReceiverThread::sltRequestZwaveLightStatSet
-110	0x147c40	beq	CReceiverThread::sltRequestZwaveDimmerStatGet
-111	0x14786c	bne	CReceiverThread::sltRequestZwaveDimmerStatSet
-114	0x147adc	beq	CReceiverThread::sltRequestZwaveThermoStatAllInfoGet
-115	0x147ccc	beq	CReceiverThread::sltRequestZwaveThermoStatAllInfoSet
-116	0x1472a4	bne	puts@@GLIBC_2.4
-117	0x14775c	beq	CReceiverThread::sltRequestZwaveThermostatModeSet
-119	0x147b0c	beq	CReceiverThread::sltRequestZwaveTermTarTempGet
-120	0x147cdc	beq	CReceiverThread::sltRequestZwaveTermTarTempSet
-121	0x147704	bne	CReceiverThread::sltRequestZwaveTermFanModeGet
-122	0x1474e4	beq	CReceiverThread::sltRequestZwaveTermFanModeSet
-125	0x147aec	beq	CReceiverThread::sltRequestAllHADeviceStatus
-127	0x14774c	beq	CReceiverThread::sltRequestZwaveTermSaveEnergyModeGet
-129	0x147afc	beq	CReceiverThread::sltRequestZwaveAllLightsOFF
-147	0x147cec	beq	CReceiverThread::sltRequestZwaveGarageDoorStatSet
-154	0x147730	bne	readCRCJSONFile
-500	0x1472f0	bne	Increase_LocalWeb_usage_num
-508	0x147590	beq	Increase_RemoteWeb_usage_num
-604	0x147400	beq	SetSessionState
-608	0x1473d8	bne	ZWsendMsgToZSDOutThread
-700	0x147584	beq	EmitSignalOfAPIRequest
-800	0x147b44	beq	apl_hAsceneInitialize
-888	0x14784c	beq	CReceiverThread::sltSceneExecuteOnId
+# FOUR EARLIER ATTEMPTS AT THIS TABLE WERE WRONG, each looking complete:
+#  * cmp + beq gave 40 codes and missed every cmp/bne form.
+#  * cmp + the branch at cmp+4 gave 56 and missed 112, whose beq sits five
+#    words after its cmp with unrelated stores in between.
+#  * treating cmp/bhs as a search pivot rather than a case gave 55 and lost
+#    300-303, which really do share one handler. 300 was published from a
+#    pivot, withdrawn as a false positive, and is back -- as a range.
+#  * 126 and 128 have no comparison of their own at all: after cmp #127 and
+#    cmp #125 the only value that can still fall through is 126, so gcc emits
+#    the handler with no test. No pattern over instruction pairs can see that.
+# Anything that claims fewer than 84 has lost some.
+#
+# Not every case does work. 100 and 116 print their own vendor name and
+# return. 102 and 123-124 branch straight back to the receive loop: accepted
+# and silently discarded. Anything with no case reaches the default arm at
+# 0x14723c, which prints "Web:ERR:Wrong Command from Web" and drains the next
+# message.
+#
+# The sender column is what Barracuda is known to send (sender_args.py). A "-"
+# does not mean unreachable: setarmwithcode, setdisarmwithcode,
+# setOccupancyMode and setPartitionArmed take the code as an argument and
+# those call sites are not resolved yet.
+#
+# code<TAB>handler_va<TAB>handler<TAB>barracuda_sender
+1	0x147bb8	CReceiverThread::sltRequestArmAway(web_request*)	-
+2	0x147a14	CReceiverThread::sltRequestArmStay(web_request*)	-
+3	0x147bf4	CReceiverThread::sltRequestDisarm(web_request*)	-
+4	0x1478d8	CReceiverThread::sltRequestArmNight(web_request*)	-
+5	0x147684	CReceiverThread::sltRequestPartitionStatus(web_request*)	-
+6	0x14794c	CReceiverThread::sltRequestMultiPartitionArmAway(web_request*)	-
+7	0x1479b8	CReceiverThread::sltRequestMultiPartitionArmStay(web_request*)	-
+8	0x147c90	CReceiverThread::sltRequestMultiPartitionArmNight(web_request*)	-
+9	0x147648	CReceiverThread::sltRequestMultiPartitionDisarm(web_request*)	-
+10	0x14746c	CTimer2::stop()	-
+11	0x147914	CTimer2::stop()	-
+12	0x147a60	CReceiverThread::sltRequestAllZoneCurrStatus(web_request*)	-
+13	0x147c80	CReceiverThread::sltRequestBypassAllZones(web_request*)	-
+14	0x14745c	CReceiverThread::sltRequestBypassClearAllZones(web_request*)	-
+15	0x1476c8	CReceiverThread::sltRequestToBypassZones(web_request*)	-
+16	0x1478b8	CReceiverThread::sltRequestToBypassClearZones(web_request*)	-
+17	0x147a48	CReceiverThread::sltRequestEventLogUpload(web_request*)	-
+18	0x147c30	CReceiverThread::sltRequestGetHomePartDetails(web_request*)	-
+19	0x14760c	CReceiverThread::requestconsolemode(web_request*)	-
+25	0x147364	CReceiverThread::sltRequestMultiPartitionArmAwaySelectedPartition(web_request*)	-
+26	0x14787c	CReceiverThread::sltRequestMultiPartitionArmStaySelectedPartition(web_request*)	-
+27	0x147a78	CReceiverThread::sltRequestMultiPartitionArmNightSelectedPartition(web_request*)	-
+29	0x147b7c	CReceiverThread::sltRequestMultiPartitionDisarmSelectedPartition(web_request*)	-
+52	0x147354	CReceiverThread::sltAddCamera(web_request*)	-
+53	0x1476b8	CReceiverThread::sltUpdateCamera(web_request*)	-
+54	0x1479a8	CReceiverThread::sltDeleteCamera(web_request*)	-
+55	0x1479ec	CReceiverThread::sltUploadCameraDB(web_request*)	setClientRegister
+56	0x147c60	CReceiverThread::sltGetCameraCredentials(web_request*)	-
+57	0x1475e0	CReceiverThread::sigStartCameraDiscovery(web_request*)	getDiscoverCameras
+58	0x1474ac	CReceiverThread::sltDeleteAllCameras(web_request*)	deleteAllCameras
+100	0x147428	prints "Web:SERV_ZW_GET_CNTRL_STATUS" and returns	-
+102	0x1471c4	accepted and dropped	-
+104	0x147c70	CReceiverThread::sltRequestZwaveDeviceAdd(web_request*)	-
+105	0x147998	CReceiverThread::sltRequestZwaveDeviceDel(web_request*)	-
+106	0x1476d8	CReceiverThread::sltRequestZwaveDeviceFrmv(web_request*)	-
+107	0x147c50	CReceiverThread::sltRequestZwaveDeviceAbort(web_request*)	-
+108	0x1475b4	CReceiverThread::sltRequestZwaveLightStatGet(web_request*)	-
+109	0x147a04	CReceiverThread::sltRequestZwaveLightStatSet(web_request*)	setLights
+110	0x147c40	CReceiverThread::sltRequestZwaveDimmerStatGet(web_request*)	-
+111	0x14786c	CReceiverThread::sltRequestZwaveDimmerStatSet(web_request*)	setLights
+112	0x1472b0	CReceiverThread::sltRequestZwaveDoorStatGet(web_request*)	-
+113	0x147acc	CReceiverThread::sltRequestZwaveDoorStatSet(web_request*)	-
+114	0x147adc	CReceiverThread::sltRequestZwaveThermoStatAllInfoGet(web_request*)	-
+115	0x147ccc	CReceiverThread::sltRequestZwaveThermoStatAllInfoSet(web_request*)	-
+116	0x1472a4	prints "Web:SERV_ZW_THERMOSTAT_MODE_GET" and returns	-
+117	0x14775c	CReceiverThread::sltRequestZwaveThermostatModeSet(web_request*)	setMode
+118	0x147aac	CReceiverThread::sltRequestZwaveTermRoomTempGet(web_request*)	-
+119	0x147b0c	CReceiverThread::sltRequestZwaveTermTarTempGet(web_request*)	-
+120	0x147cdc	CReceiverThread::sltRequestZwaveTermTarTempSet(web_request*)	setThermostatSetPoint
+121	0x147704	CReceiverThread::sltRequestZwaveTermFanModeGet(web_request*)	-
+122	0x1474e4	CReceiverThread::sltRequestZwaveTermFanModeSet(web_request*)	-
+123-124	0x1471c4	accepted and dropped	-
+125	0x147aec	CReceiverThread::sltRequestAllHADeviceStatus(web_request*)	setDoorlockStatus/setthermo*
+126	0x1474d4	CReceiverThread::sltRequestZwaveTermSaveEnergyModeSet(web_request*)	setThermostatEnergyMode
+127	0x14774c	CReceiverThread::sltRequestZwaveTermSaveEnergyModeGet(web_request*)	-
+128	0x147abc	CReceiverThread::sltRequestZwaveAllLightsON(web_request*)	-
+129	0x147afc	CReceiverThread::sltRequestZwaveAllLightsOFF(web_request*)	-
+147	0x147cec	CReceiverThread::sltRequestZwaveGarageDoorStatSet(web_request*)	-
+154	0x147730	readCRCJSONFile()	-
+300-303	0x147398	CReceiverThread::sltSceneExecute(web_request*)	-
+500	0x1472f0	Increase_LocalWeb_usage_num()	-
+501	0x147824	CReceiverThread::unregisterclient()	-
+502-503	0x147774	CReceiverThread::home_back_press()	-
+508	0x147590	Increase_RemoteWeb_usage_num()	-
+509	0x14757c	Increase_LocalWeb_usage_num()	-
+601	0x14783c	ZWsendMsgToZSDOutThread(unsigned char, unsigned char, unsigned char)	-
+602	0x147b30	ZWsendMsgToZSDOutThread(unsigned char, unsigned char, unsigned char)	-
+603	0x1477b8	SetSessionState(char)	-
+604	0x147400	SetSessionState(char)	-
+605	0x1477c8	CReceiverThread::sigUpdateServerTestResults(unsigned int)	-
+606	0x1477d8	AddAUIEvent(char*)	-
+607	0x147b1c	ZWsendMsgToZSDOutThread(unsigned char, unsigned char, unsigned char)	-
+608	0x1473d8	ZWsendMsgToZSDOutThread(unsigned char, unsigned char, unsigned char)	-
+700	0x147584	EmitSignalOfAPIRequest(unsigned char)	setDoorBell
+800	0x147b44	apl_hAsceneInitialize(bool)	-
+801	0x147514	osal_MqSend(int, char*, int)	-
+888	0x14784c	CReceiverThread::sltSceneExecuteOnId(web_request*)	setEScenes
+6285	0x147b58	CReceiverThread::sigsimulateTouchPoints(QPoint)	-
+9999	0x147798	ZWaveSendHomeId()	-

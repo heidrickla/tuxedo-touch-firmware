@@ -85,6 +85,17 @@ and left sitting there saying the opposite of the truth.
   `cmp #imm` scan cannot see them. Check the literal pool.
 - ELF sections with `sh_addr == 0` are not loaded. Mapping offsets inside
   `.symtab`/`.strtab`/`.comment` yields phantom VAs and fake data references.
+- **`mnemonic.startswith("bl")` also matches `blo`, `bls`, `blt`, `ble`.** Four
+  conditional branches read as calls; whole subtrees go unexplored and the
+  result still looks tidy. Test `m in ("bl", "blx")`.
+- **Not every case in a switch has a comparison.** After `cmp #127` and
+  `cmp #125`, gcc knows 126 is the only value left and emits the handler with
+  no test at all; a contiguous run like 300-303 shares one block behind a
+  range check. Four successive attempts to read `CReceiverThread::run` by
+  matching instruction patterns each looked complete and each was short --
+  40, 55, 56, then 78 codes. Carry the constraint (an interval plus an
+  exclusion set, narrowed on both edges of every conditional branch) and the
+  question "which pattern" stops existing. `dispatch_tree.py` does this.
 
 ## 3. Windows / bash / python plumbing
 

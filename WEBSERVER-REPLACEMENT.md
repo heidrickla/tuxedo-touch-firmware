@@ -144,13 +144,19 @@ Reply struct: `+0x00 u32 sessionId` (0 = broadcast), `+0x04 u32 msgType`,
 `+0x08 u32 arg`, NUL-terminated display text at `+0x0E`. 43 msgTypes dispatched.
 **READ**, reproduced independently by the review.
 
-Dispatch completeness, **corrected**: the mapping pass said 62 command codes;
-the review's independent simulator says **82**, and the mapping's own
-enumeration expands to 81 (it omits 102). The set is
+Dispatch completeness, settled at **84**: `dispatch_tree.py` walks
+`CReceiverThread::run` carrying an interval and an exclusion set for the
+received code and reports every block the constraints can still reach, with no
+path left unresolved. The set is
 `1-19, 25-27, 29, 52-58, 100, 102, 104-129, 147, 154, 300-303, 500-503, 508,
-509, 601-608, 700, 800, 801, 888`. Not every one has a slot: 102, 123 and 124
-branch straight back to the receive loop and print nothing; 100 and 116 only
-`puts()`. Use 82 and the corrected set.
+509, 601-608, 700, 800, 801, 888, 6285, 9999`. Not every one does work: 102 and
+123-124 branch straight back to the receive loop, so the panel accepts them and
+discards them; 100 and 116 only `puts()` their own vendor name.
+
+The two the earlier count of 82 was missing are `6285`
+(`sigsimulateTouchPoints(QPoint)`) and `9999` (`ZWaveSendHomeId`), both compared
+register-to-register against a literal-pool word rather than an immediate. The
+authoritative form is `commands.tsv`, regenerated from the binary.
 
 Two facts prove the boundary is speakable by a third party:
 
@@ -549,7 +555,7 @@ Startup contract:
                                |
    +===========================|===============================+
    |  /tuxedo   Qt, glibc 2.5, UNCHANGED                       |
-   |   CReceiverThread::run  ->  82 command codes              |
+   |   CReceiverThread::run  ->  84 command codes              |
    |   CAL / ECP  <------------------------------> VISTA-21iP  |
    |   /mqUI_Input_Queue -> CUiReceiverThread (intra-tuxedo)   |
    +===========================================================+
@@ -1179,14 +1185,18 @@ written into TRAPS. Codes the corrected pass adds: **4** `ArmNight`, **9**
 **121** `ZwaveTermFanModeGet`, **154** `readCRCJSONFile`, **500** register,
 **608** `ZWsendMsgToZSDOutThread`.
 
-**The table now lives in `commands.tsv`**, not only in this prose — 55 rows of
-`code / handler_va / branch_form / slot`, alongside `patches.tsv` as a
-machine-readable source of truth, with its provenance and both failure modes in
-the header. Pivots are excluded from it.
+**The table now lives in `commands.tsv`**, not only in this prose — 79 rows of
+`code / handler_va / handler / barracuda_sender` covering 84 codes, alongside
+`patches.tsv` as a machine-readable source of truth, regenerated from the binary
+by `dispatch_tree.py`.
 
-**Not every value the pass emits is a case.** `300` was rejected on inspection:
-`cmp ip,#0x12c` is followed by `bhs`, a **binary-search pivot**, not a case
-branch. Values from this enumeration need the same individual check.
+**`300` is a case after all.** It was published from a `cmp ip,#0x12c / bhs`,
+then withdrawn as a binary-search pivot. Both readings were wrong: that `bhs`
+is the lower bound of a range, and 300-303 all reach
+`CReceiverThread::sltSceneExecute`. A comparison is not a case and not a pivot
+on its own — it is one constraint, and only the whole path says which codes
+reach a block. That is why the table is now derived from the constraints
+instead of from instruction shapes; see `TRAPS.md` §2.
 
 #### Console mode, end to end
 
