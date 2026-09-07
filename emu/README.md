@@ -28,6 +28,31 @@ it — the whole authenticated path can then be exercised from a workstation:
 python test-stream-auth.py --host <vm> --creds <file> --compare before.json
 ```
 
+### `renewal-test.sh` — the one test that needs a server you can break
+
+`tuxweb`'s session-renewal path fires only on an upstream `401`, and on the live
+panel there is no way to produce one on demand: logging in from another host does
+not void an existing session, and the only alternative is restarting Barracuda on
+a running alarm panel. Here a restart is free, and P13's gate runs in
+`EhDir_service` before any IPC, so the emulated server rejects a stale cookie
+exactly as the panel does.
+
+```bash
+# once, on the build VM
+cargo build --release && cp target/release/tuxweb /tmp/tuxweb-host   # host x86, NOT ARM
+cp emu/probe.py /tmp/probe.py
+cp emu/serve.sh /work/emu-serve.sh
+printf '%s' "$PANEL_PASSWORD" > /tmp/pw && chmod 600 /tmp/pw
+
+sudo bash /work/renewal-test.sh
+```
+
+It starts the P13 tree, proves a client is served, restarts Barracuda under it,
+and asserts the shim reconnects with its spaced backoff and logs in again.
+Result recorded in `WEBSERVER-REPLACEMENT.md`. Two things it does **not** prove:
+a session the panel expired by itself, and frames after renewal — there is no
+`/tuxedo` here, so the stream carries no alarm state either way.
+
 ## The panel configuration is required
 
 Barracuda starts without it but its init fails and it serves nothing — the

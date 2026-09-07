@@ -1701,19 +1701,37 @@ panel's. §4.10 already anticipates a token-gated stream; this is that.
 Running with no token set is still possible and prints a loud warning naming the
 bind address, because an open alarm feed should never be quiet about it.
 
-**Session renewal: implemented, NOT verified on hardware.** The shim keeps the
+**Session renewal: VERIFIED under emulation, 2026-09-06.** The shim keeps the
 credentials, and on an upstream `401` it logs in again once and retries; on an
 upstream drop it reconnects with a bounded, spaced backoff (6 attempts,
 1/2/5/10/20/30 s) because **every reopen re-registers and registering flushes
 the panel's reply queue**, so a tight retry loop would be actively harmful. With
 a bare cookie and no credentials it fails honestly instead of pretending.
 
-That path has **not been exercised against the panel**. An attempt to force it
-by logging in from another host did not invalidate the shim's session — no
-`401`, no re-login line in its log — so the earlier guess that a new login voids
-prior sessions is unsupported. Verifying it needs either a session left to
-expire on its own or a way to revoke one; until then this is code that compiles
-and is unit-tested, not a demonstrated recovery.
+Forcing a `401` was the problem. Logging in from another host does not
+invalidate the shim's session, so the earlier guess that a new login voids prior
+ones is unsupported and stays that way. What does invalidate it is restarting
+Barracuda — free under emulation, and P13's gate runs in `EhDir_service` before
+any IPC, so an emulated server rejects a stale cookie exactly as the panel does.
+`emu/renewal-test.sh` does it end to end:
+
+```
+client before                     200 OK, 414 B, 1 frame
+barracuda restarted               the shim's cookie is now worthless
+shim: upstream ended (closed)
+shim: upstream open failed (Connection refused); retry 1/6 in 1s
+shim: upstream open failed (Connection refused); retry 2/6 in 2s
+shim: upstream open failed (Connection refused); retry 3/6 in 5s
+shim: upstream 401 -- session expired, logging in again
+client after                      200 OK
+re-login failures                 0
+```
+
+So the backoff is real (three spaced retries while the server was down, not a
+tight loop) and the renewal is real. The remaining gap is narrow and worth
+stating: this is a *restarted server*, not a session the panel timed out on its
+own, and under emulation there is no `/tuxedo`, so "0 frames" after renewal
+means the rig has no alarm state to carry, not that renewal served nothing.
 
 **Fan-out: DONE and verified on the panel.** One upstream subscription is now
 shared by every subscriber, which matters to the panel and not just to
