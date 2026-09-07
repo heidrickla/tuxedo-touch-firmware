@@ -222,8 +222,60 @@ wrote. Consequences, stated plainly:
   encrypted and opt-in. Either way the two secrets stop being the same secret.
 - Z-Wave / scene / group / thermostat DBs stop being edited from the web. Those
   features are not in v1 anyway.
-- **Unknown, and it must be checked before stage 6:** whether `/tuxedo` itself
-  reads `webuseraccountsenc.json`. §5.6.
+- ~~**Unknown, and it must be checked before stage 6:** whether `/tuxedo` itself
+  reads `webuseraccountsenc.json`.~~ **CHECKED, 2026-09-06 (§5.6): it reads it
+  and writes it.** This is now a decision rather than an unknown, and the
+  decision is below.
+
+#### What `/tuxedo` uses the account store for — and so what abandoning it costs
+
+Every consumer, by caller (tail calls counted):
+
+| consumer | what it is |
+|---|---|
+| `CAccountsSetup::readFromAccSettingsFile()` / `ApplySettings(bool)` | the **touchscreen's own account-setup screen** |
+| `CInitialAccountsSetup::*` | the **first-boot account wizard** |
+| `migrateAccSetupFile()`, `migrateAccSetupFileInit()` | one-time migration from the plain file to the `_enc` form |
+| `get_systemdata_message` | reads the file and **counts configured accounts** — 5 slots, stride `0x64`, non-empty first byte — as a system-data field |
+
+Nothing on the arming or ECP path touches it. So the cost of abandoning it is
+exactly two things, and the first is the one that matters:
+
+1. **The touchscreen account screens survive, because `/tuxedo` survives.** This
+   is the asymmetry §1.6 glossed over: the vendor *web* UI dies with Barracuda,
+   but the *on-screen* editor does not. An owner who edits accounts on the
+   keypad writes a store `tuxweb` never reads. Two account databases, diverging
+   silently, with no error anywhere.
+2. `get_systemdata_message`'s account count goes stale.
+
+**The format, since it decides the cost of keeping it in sync.**
+`createWebUserAccSetupJSONFile` builds a JSON document with the bundled
+`json_*` helpers, `json_write`s it, then `aes_init` + **`AES_ofb`** and
+`fwrite`s the ciphertext. It writes `/tmp/webuseraccountsenc.json` and the
+configuration copy. There is **no CRC sidecar on this path** —
+`validateCRCFileOnFileWrite`'s seven callers are the login-failure and
+scene/group writers, not these — so §1.6's reason for not inheriting vendor
+files (an unknown CRC scheme) does not apply to this particular file.
+
+Worth noting while we are here: the key comes from `aes_init` inside the
+binary, so the `enc` in the filename is obfuscation, not protection, against
+anyone holding the firmware.
+
+**The choice, which is an owner decision and not a technical one:**
+
+- **(a) Maintain the vendor file.** `tuxweb` writes the vendor's JSON through
+  the same AES-OFB envelope. Keypad and web stay one account list, the system
+  data count stays right. Cost: reproduce a schema and an envelope we would
+  otherwise never touch, and keep matching them.
+- **(b) Own our store and accept the split.** Cheapest, and it is what §1.6
+  currently says. Requires documenting plainly that the keypad's account screen
+  edits a list the web no longer uses.
+- **(c) Own our store, mirror a minimal vendor file.** Write just enough for the
+  touchscreen and the count to stay coherent, without treating the vendor file
+  as the source of truth.
+
+Until this is decided, **§1.6 is not settled and stage 6 should not assume it
+is.**
 
 ### 1.7 The blockers the IPC mapping found, and which one reshapes the plan
 
