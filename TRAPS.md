@@ -29,6 +29,16 @@ and left sitting there saying the opposite of the truth.
 - **A check that can pass for the wrong reason is not a check.**
   `len(body) > 0` is true of a 401 error body, so it reported a gated panel as
   "delivers frames with no credential".
+- **Revert the feature and watch the test go red, or you have not tested it.**
+  I wrote `test_the_entry_loads_and_streams_from_the_relay` for the HA push
+  source and it passes with the feature REVERTED — the fake panel serves the
+  relay URL too, same host and port, so the assertion cannot tell the two
+  apart. Two more in the same batch could not fail either: a Cookie check
+  neutralised by its own `or` clause, and a form test that only asserted a form
+  appeared. Found by the ha-management session on review, 2026-09-07, which
+  ran each new test against reverted code before keeping it. **The failing run
+  is the evidence, not the passing one** — and note this entry sits directly
+  below a rule I had already written and still did not apply to my own tests.
 - **Never call something vendor behaviour from a binary you patched.** md5 it
   against genuine stock (`324209e1…`) first. I documented our own P1 stub as a
   vendor discovery.
@@ -278,6 +288,16 @@ and left sitting there saying the opposite of the truth.
 - **qemu-user forwards syscalls to the HOST kernel.** Nothing 2.6.31-specific
   is modelled. Emulation passed dropbear five times on a bug that only appears
   on the panel.
+- **Linting the working tree is not linting the repo.** A gate run in
+  `/work/ha-tuxedo` failed with 70 ruff errors, every one of them from an
+  untracked `.claude/hooks/keep-working.py` — gitignored, not a tracked file,
+  invisible to real CI. The failure was entirely an artifact of checking a
+  DIRECTORY instead of a REPOSITORY, and the same confusion hides the reverse:
+  a tracked file CI would fail on, buried in untracked noise. Check what is
+  actually committed:
+  `git ls-files | tar -cf - -T - | (cd /work/verify && tar -xf -)`.
+  `tar` needs **`--force-local`** on these paths or it reads `C:/...` as a
+  remote host. Found by the ha-management session, 2026-09-07.
 - Build on the VM (`claude@203.0.113.40`, `~/.ssh/fwbuild_ed25519`), **not WSL**.
 
 ## 6. Panel safety
