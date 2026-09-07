@@ -2853,8 +2853,32 @@ minimum the stage needs.
   `/g_mqSupervisionThreadIn`. Not decoded. §1.7 B8 argues we do not need to
   heartbeat, from Barracuda's single `sigHandler` caller; if stage 5 shows
   otherwise, adding a heartbeat is trivial.
-- Long-run stability. The longest any test binary has run on this panel is ~50
+- Long-run stability. The longest any test binary had run on this panel was ~50
   seconds. No soak, no memory-growth-over-hours measurement, no concurrency
   beyond a handful of connections, all on a single-core box. Every RSS figure in
   the runtime survey is early-life. Stage 3 should run for a week before stage 6
   is booked.
+
+  **Started 2026-09-06.** The stage-3 shim is running on `:8443` with TLS, and
+  `emu/soak-sampler.sh` appends a row every 5 minutes to `/tmp/soak.tsv`:
+  shim RSS, fd count, thread count, whether `:8443` is still listening,
+  Barracuda's RSS and system `MemFree`. Started early on purpose — it costs a
+  week of wall-clock and nothing else, so starting it late is the thing that
+  would delay stage 6.
+
+  Baseline row, first sample:
+
+  ```
+  pid 3027  rss 544 kB  fds 6  threads 2  :8443 up  barracuda 7148 kB  memfree 67332 kB
+  ```
+
+  544 kB against the ~31 MB `BARRACUDA_MEMORY` ceiling (§5.2). What the week has
+  to show is that this number does not climb and the fd count does not drift;
+  those are the two failure modes a 50-second test cannot see. Read it with
+  `ssh root@panel 'cat /tmp/soak.tsv'`.
+
+  The sampler finds the shim by its `exe` symlink rather than its cmdline,
+  because the cmdline carries the token and matching on it is how a `pkill` once
+  killed its own ssh session (`TRAPS.md` §4). Note `/tmp` is tmpfs: a panel
+  reboot loses the log, which is acceptable — a reboot voids the soak anyway,
+  and losing the log is how we would find out.
