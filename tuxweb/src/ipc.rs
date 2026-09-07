@@ -199,6 +199,18 @@ pub fn frame_status(r: &Reply, quick_arm: u32) -> Vec<u8> {
 ///
 /// 18 and 22 share this format, so a decoder keyed on format shape alone would
 /// conflate them.
+///
+/// **`trailing` is the reply's `+0x08`, and for msgType 18 nothing initialises
+/// it.** `sltSendNewPartitionDetails` @`0x13e0c4` does `sub sp,sp,#0x250`, then
+/// `stmib sp,{r2,r3}` — session and msgType only — and `sprintf`s the text to
+/// `+0x0E`. There is no `memset`, and `+0x08` is never written, yet Barracuda
+/// prints it (`ldr r3,[sp,#0x27c]` against a buffer at `sp+0x274`). The `2`
+/// that appears in all 12 captured `0:18:` frames is stale stack that happens
+/// to be stable, not a value the panel computed.
+///
+/// So **pass this field through verbatim; never synthesise or interpret it.**
+/// A consumer reading meaning into the trailing field of a typed frame is
+/// reading uninitialised memory.
 pub fn frame_typed(r: &Reply, trailing: u32) -> Vec<u8> {
     let mut o = Vec::new();
     push_u32(&mut o, r.session);

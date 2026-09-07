@@ -3057,9 +3057,9 @@ the same object when their roots match, so the buffer is whatever `r1` holds at
 the send and a field is any store, or any `strcpy`/`memcpy`/`sprintf`, whose
 destination shares that root.
 
-**78 builders, 92 send sites, all 92 resolved. 25 msgTypes** — 18, 20, 21, 24,
-51, 59, 60, 61, 62, 101, 103, 109, 111, 112, 147, 150, 151, 152, 153, 154, 504,
-600, 801, 999, 9999 — against the 7 this section originally listed. **105 text
+**78 builders, 92 send sites, all 92 resolved. 26 msgTypes** — 18, 20, 21, 22,
+24, 51, 59, 60, 61, 62, 101, 103, 109, 111, 112, 147, 150, 151, 152, 153, 154,
+504, 600, 801, 999, 9999 — against the 7 this section originally listed. **105 text
 fields** that a store-only method cannot see. The map is committed as
 `reply-layouts.txt`.
 
@@ -3085,6 +3085,19 @@ the vendor serialised them can expose that.
 
 What it says:
 
+- **msgType 22 exists and shares a builder with 21.**
+  `sltSendChangedPartitionStatus` stores 21 or 22 at `+0x04` on predicated
+  paths, and `+0x08` is either `GetOnlineStatus()` or `-1` the same way. It was
+  missed by a first count because the map prints `msgType 21 or 22` on one line
+  and the regex reading that count took only the first number — the map was
+  right and the summary of it was not.
+- **The trailing field of a typed frame is uninitialised memory.**
+  `sltSendNewPartitionDetails` does `sub sp,sp,#0x250`, `stmib sp,{r2,r3}` —
+  session and msgType only — and `sprintf`s the text to `+0x0E`. There is no
+  `memset` and `+0x08` is never written, yet Barracuda prints it as the last
+  field. The `2` in all 12 captured `0:18:` frames is stale stack that happens
+  to be stable. A replacement must pass it through verbatim and must never
+  interpret it; `ipc.rs` says so at `frame_typed`.
 - **msgType 18 is `sltSendNewPartitionDetails`.** `TRAPS.md` §1 records
   `0:18:` frames arriving 32.98 s apart and mistaken for a button's effect; the
   heartbeat now has a name.

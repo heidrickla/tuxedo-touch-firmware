@@ -78,6 +78,12 @@ and left sitting there saying the opposite of the truth.
   which kept only the last row per offset and so reported a field the tool had
   actually recovered. A control that lives only in your head is not run again
   after the change that breaks it.
+- **Do not re-derive a count by grepping your own tool's prose.** The reply map
+  prints `msgType 21 or 22` for a builder that stores either, and a
+  `msgType (\d+)` regex over that output took only the first number — so a
+  summary said 25 types when the map held 26, and msgType 22 would have been
+  published as not existing. The map was right; the count of it was not. Have
+  the tool emit the number, or parse the structure rather than the sentence.
 - **A search that never ran must not report "not found".** The cross-reference
   for "who filled this buffer" printed `no writer of +0x004 found in the
   searched set` for a shape whose candidate selection matched no branch, so
