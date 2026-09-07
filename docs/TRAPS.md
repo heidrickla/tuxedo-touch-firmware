@@ -383,11 +383,24 @@ and left sitting there saying the opposite of the truth.
       0xc918  bl DisArmSWTimer  on that handle
       0xc91c  b  0xc4f0                    and carry on
 
-  **The counter is not the only route to a reset.** Cases 3, 4, 5 and 9 jump to
-  `0xc910` directly, four bytes past the log call, so they disarm the watchdog
-  timer without incrementing or consulting the counter and without writing a
-  supervision log line. What those four case values mean is not decoded; what
-  is decoded is that a panel reset does not require the budget to be spent.
+  **The counter is not the only route to a reset**, and the split is by app:
+
+  | main case | enum value | event | path |
+  |---|---|---|---|
+  | 3, 4, 5 | 4, 5, 6 | `TUXEDO_RECV_SIGABRT`, `_SIGSEGV`, `_MSGQ_OVERFLOW` | **direct disarm, no budget** |
+  | 9 | 10 | `POWER_MANAGEMENT_EVENTS` | **direct disarm, no budget** |
+  | 6, 7, 8 | 7, 8, 9 | `BARRACUDA_RECV_SIGABRT`, `_SIGSEGV`, `_MSGQ_OVERFLOW` | counter, then reset past 24 |
+
+  **`/tuxedo` failures reset the panel immediately; Barracuda failures spend the
+  relaunch budget first.** That is coherent rather than arbitrary — there is
+  nothing to relaunch when the core app is gone — and it decides where a
+  replacement web server sits. **A stage-6 cutover binary is a Barracuda
+  replacement, so its crashes and queue events land on the COUNTER path**, which
+  is the budgeted one. The `MSGQ_OVERFLOW` in the no-budget set is `/tuxedo`'s,
+  not the web server's.
+
+  Regenerate with `probe/supervis_events.py <rootfs>/supervis` rather than
+  trusting this table; it resolves the labels from control flow every run.
 
   `0x16c14` is the **watchdog kick timer** — the only functions holding it are
   `wdg_init`, `wdg_deinit`, `main` and `SupervisTimeout`, and the binary carries
