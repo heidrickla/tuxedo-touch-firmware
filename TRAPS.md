@@ -180,6 +180,20 @@ and left sitting there saying the opposite of the truth.
   raises FileNotFoundError. **Use `C:/...`.**
 - **Do not use heredocs on this machine. Write files with the Write/Edit tools,
   then run them.** This is Lewis's instruction and it is not conditional.
+  **Enforced in the tool layer since 2026-09-07** — `block-guard.py` denies a
+  heredoc that authors content, in every tree. If one ever succeeds again, the
+  hook has regressed; check it rather than concluding the rule relaxed.
+  It had been a hard block since 2026-08-02 and *did not fire here*: the check
+  sat behind `hook_scope`, whose Windows allowlist is `D:\WorkRepo` only, so
+  the identical `python - <<'PY'` denied there and ran silently in
+  `D:\Projects`. A session used heredocs about a dozen times in one
+  sitting believing the rule was enforced. **A control that is correct but
+  unreachable is indistinguishable, from inside, from no control** — when a
+  rule keeps being broken, check whether its guard actually covers where you
+  are working.
+  Note also that in auto mode the harness *instructs* heredoc use ("make file
+  changes with sed, heredocs, or short scripts"). That instruction is wrong
+  for this machine; Lewis's rule wins.
   Backslashes get eaten somewhere between the shell and the interpreter, so
   `\r\n` becomes a real newline in whatever you write. It has cost a day across
   at least seven occurrences: a silently-wrong Rust test that compiled cleanly,
