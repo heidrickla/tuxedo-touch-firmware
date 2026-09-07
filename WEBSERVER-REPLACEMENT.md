@@ -374,6 +374,61 @@ reading should look like.
 Nothing about the account store is unknown any more, and option (a) is
 implementable.
 
+#### Implemented, and verified against the vendor's own file
+
+`tuxweb/src/accounts.rs`. The key and IV are **read out of `/tuxedo` at runtime**
+(`key_from_binary`, resolving the virtual addresses through the ELF program
+headers rather than assuming a fixed skew) and are not embedded in the binary or
+this repository. AES-OFB is written out in four lines rather than pulled from a
+mode crate; the dependency would have been larger than the code.
+
+Two commands, deliberately narrow:
+
+```
+tuxweb --accounts <tuxedo-binary> [store]          # slots, names, sealed yes/no
+tuxweb --accounts-rewrite <tuxedo> <in> <out>      # decode, re-encode, to a NEW path
+```
+
+`--accounts` prints no passwords and no digests. It is a consistency check, not
+a credential dumper — anyone with the firmware could write the dumper, but that
+is not a reason for this repository to ship one. `--accounts-rewrite` refuses to
+overwrite an existing file and never touches the live store: proving the writer
+works and replacing an alarm panel's account file are separate acts, and running
+them together is how a verification step locks everyone out of the web UI.
+
+**Verified against the panel's real store**, which is the test the unit tests
+cannot be:
+
+```
+/tmp/acct.enc: 1053 bytes, 5 slots
+  slot 1..5   status=1 locked=0 sealed=yes   (all five)
+store is consistent
+```
+
+Every stored digest was reproduced by an independent implementation in a
+different language — that is what `sealed=yes` means, and it is the strongest
+confirmation available that `md5(lower(name) + pass)` is the rule.
+
+Round-tripping the real file through our own writer:
+
+```
+in 1053 bytes -> out 1053 bytes, decrypts to valid JSON
+5 slots -> 5 slots, every field of every account preserved
+```
+
+**Not byte-identical, and correctly so.** The files diverge at byte 126, inside
+entry 0 — exactly where the vendor's own field ordering differs from its other
+four entries. Identical length, identical content, different key order. Anyone
+who "fixes" this by asserting byte-identity will be encoding the vendor's
+inconsistency as a requirement.
+
+33 tests pass; the ARM cross-build is 985064 bytes, against a
+`BARRACUDA_MEMORY` ceiling of ~31 MB (§5.2).
+
+**Not yet done, and deliberately:** nothing has written to the live account
+store. The read and round-trip paths are proven; replacing the panel's real file
+is a separate, owner-approved step.
+
 ### 1.7 The blockers the IPC mapping found, and which one reshapes the plan
 
 None of these is fatal. One of them changes the shape of the migration, and it

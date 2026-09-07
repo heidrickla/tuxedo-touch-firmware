@@ -8,6 +8,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pemfile = "2"
 # already in the tree via rustls; named directly so login.rs can use HMAC-SHA512
 ring = "0.17"
+# The vendor account store (accounts.rs, WEBSERVER-REPLACEMENT.md 1.6 decision
+# (a)). All pure Rust, so the ARM cross-build needs no extra C toolchain the
+# way ring does.
+aes = "0.8"
+md-5 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [profile.release]
 opt-level = "z"

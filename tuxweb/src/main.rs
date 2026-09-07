@@ -13,6 +13,7 @@
 // so a thread pool sized by CPU count would be one thread pretending to be many.
 // Connections are handled in sequence with a short read timeout.
 
+mod accounts;
 mod frame;
 mod ipc;
 mod login;
@@ -141,6 +142,82 @@ fn main() {
         // explicit form, for testing off the panel: the name to exec under is
         // still the vendor's, because that is what supervis matches
         passthrough("Barracuda", &args[2..]);
+    }
+
+    // The vendor account store, §1.6 decision (a).
+    //   tuxweb --accounts <tuxedo-binary> [store-path]
+    // Reports the slots and whether each is internally consistent. It does NOT
+    // print passwords or digests: this is a tool for checking that the file we
+    // maintain is still coherent, not a credential dumper, and the difference
+    // is worth keeping even though anyone holding the firmware could write the
+    // dumper in ten minutes.
+    if args.len() >= 3 && args[1] == "--accounts" {
+        let store_path = args.get(3).map(String::as_str).unwrap_or(accounts::STORE_PATH);
+        let env = match accounts::key_from_binary(&args[2]) {
+            Ok(e) => e,
+            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        };
+        let blob = match std::fs::read(store_path) {
+            Ok(b) => b,
+            Err(e) => { eprintln!("tuxweb: {store_path}: {e}"); std::process::exit(1); }
+        };
+        let store = match accounts::Store::decode(&env, &blob) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        };
+        println!("{store_path}: {} bytes, {} slots", blob.len(), store.users.len());
+        for u in &store.users {
+            println!(
+                "  slot {} {:<16} status={} locked={} sealed={}",
+                u.user_id,
+                u.user_name,
+                u.status,
+                u.account_locked,
+                if u.is_sealed() { "yes" } else { "NO" },
+            );
+        }
+        match store.validate() {
+            Ok(()) => println!("store is consistent"),
+            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        }
+        return;
+    }
+
+    // Decode and re-encode the store with our own writer, to a NEW path.
+    //   tuxweb --accounts-rewrite <tuxedo-binary> <in> <out>
+    // Never writes over its input and never touches the live store: proving
+    // the writer produces something the vendor can read is a separate act from
+    // replacing an alarm panel's account file, and conflating them is how a
+    // verification step locks everyone out of the web UI.
+    if args.len() == 5 && args[1] == "--accounts-rewrite" {
+        let env = match accounts::key_from_binary(&args[2]) {
+            Ok(e) => e,
+            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        };
+        let blob = match std::fs::read(&args[3]) {
+            Ok(b) => b,
+            Err(e) => { eprintln!("tuxweb: {}: {e}", args[3]); std::process::exit(1); }
+        };
+        let store = match accounts::Store::decode(&env, &blob) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        };
+        if let Err(e) = store.validate() {
+            eprintln!("tuxweb: refusing to rewrite an inconsistent store: {e}");
+            std::process::exit(1);
+        }
+        if std::path::Path::new(&args[4]).exists() {
+            eprintln!("tuxweb: {} exists; refusing to overwrite", args[4]);
+            std::process::exit(1);
+        }
+        match store.encode(&env).and_then(|out| {
+            std::fs::write(&args[4], &out).map_err(|e| format!("{}: {e}", args[4]))?;
+            Ok(out.len())
+        }) {
+            Ok(n) => println!("wrote {} ({n} bytes, in was {} bytes)", args[4], blob.len()),
+            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        }
+        return;
     }
 
     // stage 3 shim: re-serve the vendor push stream byte for byte.
