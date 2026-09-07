@@ -18,6 +18,7 @@ mod deadman;
 mod frame;
 mod ipc;
 mod login;
+mod mq;
 mod proxy;
 mod shim;
 
