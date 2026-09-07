@@ -46,10 +46,21 @@ against the live panel, the document says so and gives the numbers. Where a
 conclusion was later retracted, the retraction is left in place rather than
 edited out.
 
-Conventions for working in this repo, including the writing style and the
-pre-push checks, are in `CONTRIBUTING.md`. **`TRAPS.md` is the one to read
-first** — it is short, and every entry in it is something that produced a
-confident wrong answer here.
+The prose documents live in `docs/`; the tools, the patch table and the build
+scripts stay at the root beside the things they operate on.
+
+**`docs/TRAPS.md` is the one to read first** — it is short, and every entry in
+it is something that produced a confident wrong answer here. Two rules from it
+are worth naming up front, because both were learned by breaking something:
+anything that has to work at boot on the panel is executed under `qemu-user` in
+a chroot of the extracted rootfs with `/dev` exactly as shipped, and a claim is
+marked `[CONFIRMED]` only after every branch into and out of the mechanism has
+been traced, not after reading the instructions at the site.
+
+Run the regression checks before pushing, or install them as a hook once:
+
+    ci/checks.sh
+    ci/install-hooks.sh
 
 ## Building and flashing
 
@@ -83,24 +94,24 @@ the device.
 - modern TLS with an owner-run CA (`tls/`), against a panel whose shipped
   certificate is expired and whose private key is compiled into the binary
 
-`WEBSERVER-REPLACEMENT.md` is the plan and the running record.
+`docs/WEBSERVER-REPLACEMENT.md` is the plan and the running record.
 
 ## The documents
 
 | File | What it answers |
 |---|---|
-| `TUXEDO-README.md` | The original start-here, kept for its "things I got wrong" record |
-| `TUXEDO-FINDINGS.md` | Why the status went unknown, measured and then confirmed in the binaries |
-| `TUXEDO-HA-ENRICHMENT.md` | What data is really reachable from the panel, with live test results |
-| `TUXEDO-FIRMWARE.md` | Firmware internals: image format, flasher, kernel, OTA, the safe-write rule |
-| `TUXEDO-BUILD.md` | Taking the stock image apart, changing the root filesystem, and proving the rebuild is correct |
-| `TUXEDO-VERIFIED.md` | Ten high-severity findings put to skeptics told to refute them |
-| `TUXEDO-AUDIT-BUGS.md` | 40 findings from the subsystem audit |
-| `TUXEDO-LOCKOUT-PATCH.md` | Byte-level patch for the 3-strike web lockout, with review and recovery |
-| `TUXEDO-FIX-STATUS.md` | Which bugs are actually fixed and where: mostly client-side, one in firmware |
-| `TUXEDO-VIRTUAL-CONSOLE-BUGS.md` | Why the virtual console is unreliable |
-| `TUXEDO-ZONE-PROGRAMMING.md` | Zone types and the descriptor vocabulary |
-| `TUXEDO-NTP-PROPOSAL.md` | Setting the clock from NTP: the vendor already built it and left it switched off |
+| `docs/TUXEDO-README.md` | The original start-here, kept for its "things I got wrong" record |
+| `docs/TUXEDO-FINDINGS.md` | Why the status went unknown, measured and then confirmed in the binaries |
+| `docs/TUXEDO-HA-ENRICHMENT.md` | What data is really reachable from the panel, with live test results |
+| `docs/TUXEDO-FIRMWARE.md` | Firmware internals: image format, flasher, kernel, OTA, the safe-write rule |
+| `docs/TUXEDO-BUILD.md` | Taking the stock image apart, changing the root filesystem, and proving the rebuild is correct |
+| `docs/TUXEDO-VERIFIED.md` | Ten high-severity findings put to skeptics told to refute them |
+| `docs/TUXEDO-AUDIT-BUGS.md` | 40 findings from the subsystem audit |
+| `docs/TUXEDO-LOCKOUT-PATCH.md` | Byte-level patch for the 3-strike web lockout, with review and recovery |
+| `docs/TUXEDO-FIX-STATUS.md` | Which bugs are actually fixed and where: mostly client-side, one in firmware |
+| `docs/TUXEDO-VIRTUAL-CONSOLE-BUGS.md` | Why the virtual console is unreliable |
+| `docs/TUXEDO-ZONE-PROGRAMMING.md` | Zone types and the descriptor vocabulary |
+| `docs/TUXEDO-NTP-PROPOSAL.md` | Setting the clock from NTP: the vendor already built it and left it switched off |
 
 ## The tools
 
@@ -141,7 +152,7 @@ This governs how any client should behave:
 There is **no version, model or firmware endpoint on the panel**, so a client
 cannot detect which of the two it is talking to and must be safe on the
 stricter one. In practice that means never retrying a rejected credential
-automatically. `TUXEDO-LOCKOUT-PATCH.md` has the byte-level detail and the
+automatically. `docs/TUXEDO-LOCKOUT-PATCH.md` has the byte-level detail and the
 recovery procedure.
 
 **A client can, however, tell the two situations apart after the fact.** Every
@@ -157,7 +168,7 @@ redirecting, so the status code distinguishes nothing. The body does:
 The rule is correct on both builds without detecting which is running, because
 the patched lock lives in memory and never writes the account file. The login
 page itself is served normally in every case, so a locked-out panel looks
-reachable rather than down. Traced in the appendix to `TUXEDO-AUDIT-BUGS.md`.
+reachable rather than down. Traced in the appendix to `docs/TUXEDO-AUDIT-BUGS.md`.
 
 An oddity found while tracing it: the panel contains a message that names the
 cause exactly, "deactivated due to maximum number of failed logins attempted",

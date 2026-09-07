@@ -33,7 +33,7 @@ WHAT IS AND IS NOT KNOWN
 
 The manifest field names, the two request shapes and the panel's self-identifi-
 cation were recovered from the application binary and are recorded in
-`TUXEDO-BUILD.md` §11. **The redirector handshake has not been observed**, so
+`docs/TUXEDO-BUILD.md` §11. **The redirector handshake has not been observed**, so
 `/redirect` below is a guess at the shape and is logged rather than trusted.
 Run with `--observe` and point the panel at it to capture what it actually
 sends before relying on any of this.

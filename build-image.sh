@@ -11,7 +11,7 @@
 # The build needs mkfs.jffs2, sumtool and root, so it runs on the build VM
 # rather than locally. WSL also works but has more traps (MSYS path rewriting,
 # /tmp meaning two different things, and a mount that cannot hold modes,
-# symlinks or device nodes) -- see TUXEDO-BUILD.md.
+# symlinks or device nodes) -- see docs/TUXEDO-BUILD.md.
 #
 # Every stage is verified and the script stops on the first failure. The
 # round-trip check in particular is not optional: it is what distinguishes a

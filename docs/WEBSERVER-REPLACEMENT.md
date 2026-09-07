@@ -644,7 +644,7 @@ the panel has VFP. The choice is not load-bearing for a static binary that does
 almost no floating-point work. Note `armv6-unknown-linux-musleabihf` is **not** a
 rustc target — that name is a build-failure trap.
 
-Per `CONTRIBUTING.md`: anything that must work at boot gets executed under
+Per `TRAPS.md` section 6: anything that must work at boot gets executed under
 `qemu-user` in a chroot of the extracted rootfs, with `/dev` exactly as the image
 ships it, before it goes into an image.
 
@@ -1240,7 +1240,7 @@ image/etc/cron/certcheck
    bad-password path by construction because the repo targets stock panels too
    (`TUXEDO-LOCKOUT-PATCH.md`).
 7. Anything that must work at boot runs under `qemu-user` in a chroot of the
-   extracted rootfs first, `/dev` as shipped (`CONTRIBUTING.md`).
+   extracted rootfs first, `/dev` as shipped (`TRAPS.md` section 6).
 
 ### Stage 0 — Baseline and revert kit
 

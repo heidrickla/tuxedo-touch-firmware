@@ -27,7 +27,7 @@ change is one small binary and two text files.
 
 The `inetd` binary must match the panel's ABI: **ARM EABI, soft-float
 (`armel`), statically linked**. `armhf` will not run. Full detail in
-`TUXEDO-NTP-PROPOSAL.md`, which needs a binary under the same constraints.
+`docs/TUXEDO-NTP-PROPOSAL.md`, which needs a binary under the same constraints.
 
 ## Use
 
@@ -41,7 +41,7 @@ That separation is the point, and it should stay.
 
 ## Before installing it, read this
 
-This puts a writable network service on an alarm panel. `TUXEDO-AUDIT-BUGS.md`
+This puts a writable network service on an alarm panel. `docs/TUXEDO-AUDIT-BUGS.md`
 section (b) lists nine findings on the interface that already exists; this is a
 tenth surface, added on purpose.
 

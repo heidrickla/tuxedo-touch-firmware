@@ -87,7 +87,7 @@ There is likewise only one EhDir object, at `0x55b59c`. So authenticating the
 push stream is a single change at the directory, not a per-port exercise, and a
 fix that appeared to work on port 80 alone would be a sign something was wrong.
 
-**Status 2026-09-06: CLOSED on this panel.** P13 (`PUSH-STREAM-AUTH.md`) gates
+**Status 2026-09-06: CLOSED on this panel.** P13 (`docs/PUSH-STREAM-AUTH.md`) gates
 the endpoint on the session and shipped in v13, which is the running firmware.
 An anonymous client now gets `HTTP/1.1 401` on all four listeners and an
 authenticated one still receives frames; `/` and `/home.html` are unchanged and

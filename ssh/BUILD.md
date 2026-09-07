@@ -675,9 +675,9 @@ boot log is written there, so it could be fetched without SSH or pulling the
 card.
 
 **They do not serve, and this was already documented.**
-`TUXEDO-HA-ENRICHMENT.md` recorded `/Config/` returning 404 on every casing and
+`docs/TUXEDO-HA-ENRICHMENT.md` recorded `/Config/` returning 404 on every casing and
 file before this section was written; it was re-derived from scratch rather than
-looked up. `TUXEDO-VERIFIED.md` finding 1 has been corrected accordingly: it
+looked up. `docs/TUXEDO-VERIFIED.md` finding 1 has been corrected accordingly: it
 presented the same path as a confirmed unauthenticated disclosure of the
 installer code, which the live result refutes.
 
@@ -875,7 +875,7 @@ be checked on hardware. `ssh host 'cmd'` and `scp` need no pty either way.
 
 ## What emulation cannot catch
 
-The rule in `CONTRIBUTING.md` says to run boot-critical code under `qemu-user`
+The rule in `docs/TRAPS.md` section 6 says to run boot-critical code under `qemu-user`
 with `/dev` exactly as the image ships it. That rule was followed and the bug
 still shipped five times, because `qemu-user` substitutes the build host's
 kernel. Anything that depends on the **kernel version** - syscall availability

@@ -169,4 +169,4 @@ Modes are asserted after writing, not assumed: `server.key` 0600, `chain.pem`
 ## Still to build
 
 `tuxedo-tls` (the on-panel helper), the ACME/DNS-01 hook, and the recovery path.
-See §3 of `WEBSERVER-REPLACEMENT.md`.
+See §3 of `docs/WEBSERVER-REPLACEMENT.md`.

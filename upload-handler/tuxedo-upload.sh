@@ -7,7 +7,7 @@
 # a PUT and write the body to the panel's SD card.
 #
 # INSTALL
-#   /usr/sbin/inetd              static armel binary (see TUXEDO-BUILD.md)
+#   /usr/sbin/inetd              static armel binary (see docs/TUXEDO-BUILD.md)
 #   /usr/sbin/tuxedo-upload.sh   this file, chmod 755
 #   /etc/inetd.conf              add the line in inetd.conf.example
 #

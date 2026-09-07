@@ -220,7 +220,7 @@ check_hdr_checksum() {
 # 10. Documented addresses stay consistent with the tools.
 check_docs_agree() {
     local bad=""
-    grep -q '0x80003864' ssh/BUILD.md TUXEDO-BUILD.md 2>/dev/null || bad="checksum routine address missing from docs"
+    grep -q '0x80003864' ssh/BUILD.md docs/TUXEDO-BUILD.md 2>/dev/null || bad="checksum routine address missing from docs"
     grep -q 'cfg_services' ssh/BUILD.md 2>/dev/null || bad="$bad; cfg_services finding missing"
     [ -z "$bad" ] && pass "docs record the key addresses" || fail "docs record the key addresses" "$bad"
 }

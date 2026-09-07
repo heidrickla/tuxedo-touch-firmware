@@ -16,3 +16,14 @@ venv/
 # scanner that carries the literal it hunts for has already disclosed it.
 # ci/pubscan.local.example documents the format and IS tracked.
 ci/pubscan.local
+
+# Agent orientation docs stay out of the published repo (Lewis, 2026-09-07):
+# a file telling the next model how to behave in here is self-attribution
+# wearing a process document's clothes. Keep them locally if they help; they
+# do not ship. The engineering rules CONTRIBUTING.md carried - the qemu-user
+# boot rule and the [CONFIRMED] discipline - moved into docs/TRAPS.md, which
+# is where they belonged anyway.
+CLAUDE.md
+CONTRIBUTING.md
+AGENTS.md
+.cursorrules

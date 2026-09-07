@@ -327,3 +327,12 @@ and left sitting there saying the opposite of the truth.
   (mtdblock17) survives.
 - **Prove request-path patches under `emu/` before flashing.** That is what
   turned P13 from "cannot be known before it runs" into a boring flash.
+- **Anything that must work at boot gets executed under `qemu-user` in a chroot
+  of the extracted rootfs, with `/dev` left exactly as the image ships it.**
+  Preparing the test environment to make the subject work conceals the
+  dependency that fails. `WEBSERVER-REPLACEMENT.md`, `emu/README.md` and
+  `ssh/BUILD.md` all lean on this rule.
+- **Mark a statement `[CONFIRMED]` only after tracing every branch into and out
+  of the thing**, not merely reading the instructions at the site. Both flash
+  failures in this repo came from reading a mechanism partly and then describing
+  it in the register the resolved parts had earned.

@@ -1,12 +1,12 @@
 # Running Barracuda under emulation
 
-`CONTRIBUTING.md` requires anything boot-critical to be executed under
+`docs/TRAPS.md` section 6 requires anything boot-critical to be executed under
 `qemu-user` before it is flashed. `ssh/BUILD.md` documents that recipe for
 `dropbear`. Barracuda needs three things dropbear does not, and each one fails
 in a way that looks like something else.
 
 This rig was built to answer two questions about the P13 push-stream patch that
-`PUSH-STREAM-AUTH.md` had recorded as unanswerable before a flash. It answered
+`docs/PUSH-STREAM-AUTH.md` had recorded as unanswerable before a flash. It answered
 both, and it did so without spending any of the panel's 24-relaunch watchdog
 budget.
 
@@ -49,7 +49,7 @@ sudo bash /work/renewal-test.sh
 
 It starts the P13 tree, proves a client is served, restarts Barracuda under it,
 and asserts the shim reconnects with its spaced backoff and logs in again.
-Result recorded in `WEBSERVER-REPLACEMENT.md`. Two things it does **not** prove:
+Result recorded in `docs/WEBSERVER-REPLACEMENT.md`. Two things it does **not** prove:
 a session the panel expired by itself, and frames after renewal — there is no
 `/tuxedo` here, so the stream carries no alarm state either way.
 
