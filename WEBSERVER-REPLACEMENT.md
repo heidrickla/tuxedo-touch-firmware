@@ -1631,11 +1631,42 @@ It logs in from wherever it runs, which is required rather than tidy — see the
 source-IP binding above. The password is read from a file so it never reaches
 `ps`; the binary never takes it on the command line.
 
-**Not yet done for this stage:** it serves one client at a time and does not
-terminate TLS (the TLS listener is the other mode of the same binary, proven
-separately). Fan-out to multiple clients is the next piece, and it matters
-because registering costs the panel a reply-queue flush — one upstream
-registration shared by many clients is strictly better than one each.
+#### Running ON THE PANEL, 2026-09-06
+
+Cross-compiled `arm-unknown-linux-musleabi` (866 KB, static, EABI5), copied to
+`/tmp/tuxweb`, and run as
+`--shim-login 127.0.0.1:80 lewis /tmp/pw 0.0.0.0:8081`. It logged in over
+loopback — so the source-IP binding is a non-issue where the shim actually
+lives — and served a client on the LAN:
+
+```
+HTTP/1.1 200 OK   Server: empty   Connection: Close   boundary="EH912ZZ"
+12 opening / 12 close delimiters
+12 status frames, 8 carrying live alarm state
+  0:21:1:fe:<0xFE>1Ready To Arm:2   0:18:1 P1  H:2   0:-1:... x3
+```
+
+Barracuda untouched, nothing written outside `/tmp`, panel at 0 restarts
+throughout, revert was `pkill`.
+
+#### AND IT IS A SECURITY REGRESSION AS BUILT — the shim is UNAUTHENTICATED
+
+The test client presented **no credential** and received live alarm state. P13
+gated Barracuda's push path this morning precisely to stop that; the shim holds
+one authenticated upstream session and re-serves it to anyone who can reach its
+port. On a spare port for a timed test that is contained — the process was
+stopped and `:8081` confirmed closed immediately after — but it must not ship
+this way, and it would be an easy thing to leave running by accident.
+
+**Before this runs anywhere but a test:** it needs the same gate P13 applies,
+i.e. require a session on the shim's own listener and validate it against the
+panel. §2.5 already commits the replacement to authenticating this stream; that
+obligation starts now, not at cutover.
+
+**Also not yet done:** one client at a time, and no TLS termination in this
+mode. Fan-out matters beyond convenience — each upstream registration makes the
+panel flush its reply queue, so one shared subscription is strictly better than
+one per client.
 
 ### Stage 3 — `tuxweb` as a TLS reverse proxy, spare port
 
