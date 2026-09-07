@@ -322,9 +322,57 @@ orders the last five fields differently from entries `[1]`–`[4]`. The vendor i
 inconsistent with itself, which is useful: it proves `/tuxedo` reads these by
 name, so a writer does not have to reproduce an ordering.
 
-**Still to establish before writing entries:** how `passWord` and `EncNamePass`
-are derived. Reading and rewriting the file is fully specified; *creating a
-credential the keypad will accept* is not, and that is the next piece of work.
+#### The credential fields — SOLVED, 2026-09-06
+
+Shapes first, measured across all five accounts in the live file:
+
+| field | shape |
+|---|---|
+| `userName` | printable string |
+| `passWord` | **4 hex characters** |
+| `EncNamePass` | **32 hex characters** = 16 bytes |
+
+`passWord` being four digits is the panel user code itself, stored in the clear
+inside the AES envelope. That is the concrete form of `README.md`'s point that
+the web password *is* the arming code — there is no second secret, and
+`readUserNamePasswordFromJSON` in Barracuda `strcpy`s the field straight out to
+authenticate with, which is why no password hashing is possible without breaking
+the wire protocol (`KERNEL-VERDICT.md`).
+
+`EncNamePass` is an MD5. `/tuxedo` calls `MD5String` from exactly the four
+account paths — `CAccountsSetup::ApplySettings`,
+`CInitialAccountsSetup::ApplySettings`, `migrateAccSetupFile`,
+`migrateAccSetupFileInit` — and testing constructions against the real file
+settles which one:
+
+```
+EncNamePass = md5_hex( userName.lower() + passWord )
+```
+
+**5 of 5 accounts, with all eight other candidates at 0 of 5** — including
+`name+pass` without the case fold, `pass+name`, and the comma, colon and space
+separated forms. Tested as a boolean per candidate; no names, codes or digests
+were printed or recorded.
+
+It cross-checks against something already known: the web login computes
+`HMAC-SHA512(challenge, username.lower() + password)`. The same
+`lower(name) + pass` construction appears on both sides, which is what a correct
+reading should look like.
+
+**So writing a valid entry is now fully specified:**
+
+| field | value |
+|---|---|
+| `u8UserId` | 1–5, the slot |
+| `userName` | as entered |
+| `passWord` | the 4-digit code |
+| `EncNamePass` | `md5_hex(lower(userName) + passWord)` |
+| `status` | 1 for an active account |
+| `accountLocked`, `accLockedTime`, `accLockedCount` | 0 |
+| `userCreatedDate`, `userUpdatedDate` | integer timestamps |
+
+Nothing about the account store is unknown any more, and option (a) is
+implementable.
 
 ### 1.7 The blockers the IPC mapping found, and which one reshapes the plan
 
