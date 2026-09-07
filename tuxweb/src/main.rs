@@ -328,9 +328,21 @@ fn main() {
     }
 
     if args.len() != 4 {
-        eprintln!("usage: {} <bind-addr> <chain.pem> <server.key>", args[0]);
-        eprintln!("       {} --shim <host:port> <cookie> <bind-addr>", args[0]);
-        eprintln!("       {} --shim-login <host:port> <user> <pwfile> <bind-addr>", args[0]);
+        // Every mode, including the ones reached by argv[0] or a marker file.
+        // The list used to stop after --shim-login, so a reader could not tell
+        // from the binary that --cutover existed at all -- and that is the one
+        // someone looks up during a booked window.
+        eprintln!("usage: {0} <bind-addr> <chain.pem> <server.key>", args[0]);
+        eprintln!("       {0} --shim <host:port> <cookie> <bind-addr>", args[0]);
+        eprintln!("       {0} --shim-login <host:port> <user> <pwfile> <bind-addr>", args[0]);
+        eprintln!("       {0} --accounts <tuxedo-binary> [store-path]", args[0]);
+        eprintln!("       {0} --accounts-rewrite <tuxedo-binary> <in> <out>", args[0]);
+        eprintln!("       {0} --cutover <vendor-path> [window-secs] [log]", args[0]);
+        eprintln!("       {0} --passthrough <args...>", args[0]);
+        eprintln!();
+        eprintln!("Installed as .../Barracuda it execs the vendor (passthrough),");
+        eprintln!("except for ONE relaunch after {} exists,", cutover::ARM_MARKER);
+        eprintln!("which it consumes and runs the cutover instead.");
         std::process::exit(2);
     }
     let (addr, chain_path, key_path) = (&args[1], &args[2], &args[3]);

@@ -2340,8 +2340,19 @@ reply raw, and serves the legacy shim from them.
 
 Mandatory safety features, all in the binary before this stage runs:
 
-- **Deadman exec.** A timer armed at startup, default 15 minutes, resettable by
-  an authenticated call. On expiry the binary closes its sockets and queues and
+- **Deadman exec.** A timer armed at startup, **hard 15 minutes, and in the
+  cutover path it is NOT resettable** — corrected 2026-09-07 from a compiler
+  warning: `Deadman::reset`, `trip` and `disarm` are implemented and unit
+  tested but never called, and `cutover::run` only ever reads `has_fired()`
+  and `remaining()`. This section used to say "resettable by an authenticated
+  call", describing a capability the type has and nothing wires up. **The code
+  is right and the sentence was wrong:** the cutover binds no port, so there is
+  no authenticated channel to reset it from, and a window that cannot be
+  extended does the deadman's actual job — hand the panel back if nobody is
+  watching — strictly better. `TUXWEB_CUTOVER_SECS` is read from the
+  environment *supervis* passes, which a shell cannot set, so plan on 900 s
+  absolute from the moment the cutover starts. On expiry the binary closes its
+  sockets and queues and
   `execve`s `/opt/webserver/vendor/Barracuda`. If anything goes wrong and nobody
   is watching, the panel returns to the vendor stack by itself. This is what
   prevents the 24-relaunch watchdog reset described in §1.2.

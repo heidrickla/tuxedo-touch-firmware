@@ -33,6 +33,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:$PATH
 W=/opt/webserver
 MARKER=/opt/tuxedo/configuration/tuxweb-cutover.arm
 STAGED=/tmp/tuxweb-stage6
+STAGED_MD5=ca450c37c0948eae3296a9ebad5b907e
 LOG=/tmp/cutover.tsv
 BB=/bin/busybox
 VENDORMD5=/tmp/stage6-vendor.md5
@@ -111,7 +112,14 @@ phase0() {
 
     [ -x "$BB" ] || { echo "  busybox MISSING at $BB"; rc=1; }
     [ -f "$STAGED" ] || { echo "  staged binary MISSING at $STAGED"; rc=1; }
-    [ -f "$STAGED" ] && echo "  staged  md5 $($BB md5sum $STAGED | cut -d' ' -f1) $($BB stat -c %s $STAGED 2>/dev/null) bytes"
+    if [ -f "$STAGED" ]; then
+        sm=$($BB md5sum $STAGED | cut -d' ' -f1)
+        echo "  staged  md5 $sm ($($BB stat -c %s $STAGED 2>/dev/null) bytes)"
+        if [ "$sm" != "$STAGED_MD5" ]; then
+            echo "  STAGED BINARY IS NOT THE EXPECTED BUILD ($STAGED_MD5)"
+            rc=1
+        fi
+    fi
 
     # Do NOT compare against the stock md5: this panel runs patched v13, so
     # "not stock" is the correct state and flagging it trains you to ignore the
@@ -191,6 +199,16 @@ phase2() {
     [ -f "$W/vendor/Barracuda" ] || fail "phase 1 has not run: no $W/vendor/Barracuda"
     [ -e "$MARKER" ] && fail "marker already present"
     rm -f "$LOG"
+
+    # The deadman is a HARD 900s and cannot be extended: Deadman::reset exists
+    # but the cutover never calls it, and TUXWEB_CUTOVER_SECS is read from the
+    # environment supervis passes, which a shell cannot set. The clock is
+    # absolute from the moment the cutover starts, so leave headroom for the
+    # revert rather than pressing keys until it fires.
+    if [ "$KEYPRESS_SECS" -gt 600 ]; then
+        fail "KEYPRESS_SECS=$KEYPRESS_SECS leaves no headroom in a hard 900s window"
+    fi
+    echo "  window is a hard 900s; pressing keys for ${KEYPRESS_SECS}s of it"
 
     say "arming"
     : > "$MARKER" || fail "cannot write $MARKER"
