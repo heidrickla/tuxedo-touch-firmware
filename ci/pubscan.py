@@ -129,10 +129,15 @@ def _local_identifiers() -> list[tuple[str, "re.Pattern[str]"]]:
 #: list can be published without disclosing what it defends. Anything that
 #: WOULD name one goes in ci/pubscan.local -- see _local_identifiers.
 YOURS = [
-    # The host octet may be digits OR a mask. Requiring digits is how
-    # `203.0.113.x` survived three separate sweeps of this repo: a masked octet
-    # LOOKS scrubbed, and the /24 left beside it is the part that identifies
-    # the network. Mask the host and you have hidden the least useful field.
+    # The host octet may be digits OR a mask. Requiring digits let a masked
+    # address survive three separate sweeps of this repo: a masked host octet
+    # LOOKS scrubbed, while the /24 left beside it is the part that identifies
+    # the network. Masking the host hides the least useful field.
+    #
+    # Writing the example out in full here is how the same string then survived
+    # a FOURTH pass, in the comment explaining why it should not be present.
+    # The self-check at the end of main() caught that. Do not put a real
+    # address in this file, not even as an illustration.
     ("private addresses, 10.10.x",
      re.compile(r"\b10\.10\.\d{1,3}\.(?:\d{1,3}|[xXn*])\b")),
     ("real MAC addresses", real_macs),
