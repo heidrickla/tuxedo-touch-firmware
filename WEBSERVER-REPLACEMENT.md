@@ -294,6 +294,29 @@ mirror, **not a CRC sidecar** — which means §1.6's stated reason for not
 inheriting vendor files, an unknown CRC scheme, genuinely does not apply to this
 one. Writing the file means writing the same bytes twice.
 
+**ROUND-TRIPPED AGAINST THE LIVE PANEL, 2026-09-07, without disturbing the
+soak.** `tuxweb --accounts-rewrite` is a one-shot that reads the live store,
+decodes it, re-encodes with our own writer to a NEW path, and refuses to
+overwrite anything. Result: 1053 bytes in, 1053 out; the output decodes back to
+the same five slots, all sealed, `store is consistent`; and the decrypted JSON
+compares **equal as a data structure**.
+
+**The bytes are not identical, and cannot be.** They diverge at plaintext
+offset 125 because the vendor's own file is internally inconsistent in key
+order — entry 0 ends `userCreatedDate, userUpdatedDate, accLockedCount,
+accLockedTime, accountLocked` while entries 1-4 end `accountLocked,
+accLockedTime, userCreatedDate, userUpdatedDate, accLockedCount`. Slot 0 was
+written by a different code path from the rest. serde emits one declaration
+order for every element, so no single field order can reproduce all five;
+`accounts.rs` matches entries 1-4, which is 4 of 5 and the most achievable.
+That the vendor tolerates both orders in one file is itself the proof
+`/tuxedo` reads these by name.
+
+**So a live write must be verified by decoding, never by `cmp`.** A byte
+difference here is expected and is not a failure. Recorded because the obvious
+next move on seeing that diff is to "fix" the field order, which would take the
+match from 4 of 5 to 1 of 5.
+
 **Schema**, recovered from `createWebUserAccSetupJSONFile` and confirmed by
 decrypting the live file:
 

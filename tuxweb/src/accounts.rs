@@ -50,6 +50,17 @@ pub struct Envelope {
 /// Order is reproduced for tidiness, not necessity: in the live file entry 0
 /// orders its last five fields differently from entries 1-4, which proves
 /// `/tuxedo` reads them by name.
+///
+/// **Verified against the live panel 2026-09-07, and do not "fix" it.** A
+/// round trip through `--accounts-rewrite` is 1053 bytes in, 1053 out, decodes
+/// back to the same five sealed slots, and the decrypted JSON compares equal
+/// as a data structure — but the bytes differ from plaintext offset 125,
+/// because entry 0 ends `userCreatedDate, userUpdatedDate, accLockedCount,
+/// accLockedTime, accountLocked` and entries 1-4 end `accountLocked,
+/// accLockedTime, userCreatedDate, userUpdatedDate, accLockedCount`. serde
+/// emits one declaration order for every element, so no single order
+/// reproduces all five. This order matches entries 1-4: **4 of 5, which is the
+/// maximum.** Reordering to match entry 0 would make it 1 of 5.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
     #[serde(rename = "u8UserId")]
