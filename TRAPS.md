@@ -99,6 +99,13 @@ and left sitting there saying the opposite of the truth.
   files with escapes, and when a heredoc is unavoidable, check the result with
   `sed -n '/marker/,/end/p' file | cat -A` before trusting it.
 - Foreground `sleep` is blocked. Use an `until` loop or `run_in_background`.
+- **Windows `curl` is schannel, not OpenSSL.** `--cacert <private-ca>` fails with
+  `schannel: the revocation status is unknown` because a private CA publishes no
+  CRL or OCSP. Add `--ssl-revoke-best-effort`. Not a server fault; do not go
+  debugging the listener.
+- Line endings are per file. Check with python (`data.count(b"\r\n")`), not
+  `grep -c $'\r'` - if the shell does not expand `$'\r'` the pattern is empty and
+  matches every line, which reads as "the whole file is CRLF".
 
 ## 4. SSH to the panel
 
@@ -114,6 +121,13 @@ and left sitting there saying the opposite of the truth.
 - **busybox dispatches on `argv[0]`** — a renamed copy exits "applet not found".
 - **`/proc/<pid>/comm` does not exist** on 2.6.31. Use field 2 of
   `/proc/<pid>/stat`.
+- **Never kill by command-line pattern over ssh.** `pkill -f X`, or a `/proc`
+  scan matching `cmdline`, matches the shell running the command, because its
+  own command line contains `X`. It kills the session, the real target survives,
+  and the next test runs against a stale process. Match `readlink
+  /proc/<pid>/exe` against the binary path instead, and skip `$$`.
+- No `awk` and no `wget` even with PATH set. `netstat`, `grep`, `tr`, `readlink`,
+  `sed` are there.
 
 ## 5. The build VM and emulation
 

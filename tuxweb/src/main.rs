@@ -47,6 +47,26 @@ fn load_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
         .ok_or_else(|| format!("{path}: no private key found"))
 }
 
+/// Build a TLS config from TUXWEB_CHAIN and TUXWEB_KEY, or None for plaintext.
+/// Exits rather than silently serving in the clear if one is set and unusable:
+/// a listener that was meant to be encrypted and is not should not start.
+fn tls_from_env() -> Option<Arc<ServerConfig>> {
+    let (chain_p, key_p) = (std::env::var("TUXWEB_CHAIN").ok()?, std::env::var("TUXWEB_KEY").ok()?);
+    let build = || -> Result<Arc<ServerConfig>, String> {
+        let chain = load_chain(&chain_p)?;
+        let key = load_key(&key_p)?;
+        ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(chain, key)
+            .map(Arc::new)
+            .map_err(|e| format!("bad certificate/key pair: {e}"))
+    };
+    match build() {
+        Ok(c) => { println!("tuxweb: serving TLS from {chain_p}"); Some(c) }
+        Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -75,6 +95,11 @@ fn main() {
             token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
             // keep the credentials so the session can be renewed when it expires
             creds: Some(shim::Creds { user: args[3].clone(), password: pw }),
+            // TUXWEB_CHAIN + TUXWEB_KEY turn the listener into a TLS one. The
+            // upstream hop stays plaintext on loopback: the vendor certificate
+            // is expired and its key is public, so this end is where TLS is
+            // worth terminating.
+            tls: tls_from_env(),
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");
@@ -91,6 +116,7 @@ fn main() {
             token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
             // a bare cookie cannot be renewed; expiry is fatal and says so
             creds: None,
+            tls: tls_from_env(),
         };
         if let Err(e) = s.run() {
             eprintln!("tuxweb: {e}");

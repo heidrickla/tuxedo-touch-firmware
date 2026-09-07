@@ -57,6 +57,11 @@ pub struct Shim {
     /// `None` means a bare cookie was supplied and cannot be renewed; the shim
     /// then fails honestly on expiry rather than pretending.
     pub creds: Option<Creds>,
+    /// Serve subscribers over TLS. The UPSTREAM hop is unaffected and stays
+    /// plaintext on loopback: the vendor's own certificate is expired and its
+    /// key is compiled into the binary, so terminating TLS here is what makes
+    /// the stream defensible on the wire.
+    pub tls: Option<std::sync::Arc<rustls::ServerConfig>>,
     /// Required of every client. The shim holds ONE authenticated upstream
     /// session and re-serves it, so without this it would hand live alarm
     /// state to anything that can reach the port — undoing P13, which exists
@@ -98,6 +103,69 @@ fn presents_token(req_head: &str, want: &str) -> bool {
         }
     }
     false
+}
+
+/// A subscribed client, plaintext or TLS.
+///
+/// The shim only ever writes to a subscriber, so this carries just enough to
+/// write and flush. The TLS case is boxed: a rustls connection is far larger
+/// than a socket, and an unboxed variant would make every plaintext subscriber
+/// pay for it.
+pub enum Sink {
+    Plain(TcpStream),
+    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>),
+}
+
+impl std::io::Read for Sink {
+    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Sink::Plain(s) => s.read(b),
+            Sink::Tls(s) => s.read(b),
+        }
+    }
+}
+
+impl Write for Sink {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Sink::Plain(s) => s.write(b),
+            Sink::Tls(s) => s.write(b),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Sink::Plain(s) => s.flush(),
+            Sink::Tls(s) => s.flush(),
+        }
+    }
+}
+
+impl Sink {
+    /// Wrap an accepted socket, doing the TLS handshake lazily on first use as
+    /// rustls does. The read timeout is set on the socket underneath either
+    /// way, so a client that connects and says nothing cannot hold a slot.
+    fn accept(
+        c: TcpStream,
+        tls: Option<&std::sync::Arc<rustls::ServerConfig>>,
+    ) -> Result<Sink, String> {
+        let _ = c.set_read_timeout(Some(Duration::from_secs(10)));
+        match tls {
+            None => Ok(Sink::Plain(c)),
+            Some(cfg) => {
+                let conn = rustls::ServerConnection::new(std::sync::Arc::clone(cfg))
+                    .map_err(|e| format!("tls: {e}"))?;
+                Ok(Sink::Tls(Box::new(rustls::StreamOwned::new(conn, c))))
+            }
+        }
+    }
+
+    fn set_write_timeout(&self, d: Duration) {
+        let s = match self {
+            Sink::Plain(s) => s,
+            Sink::Tls(t) => t.get_ref(),
+        };
+        let _ = s.set_write_timeout(Some(d));
+    }
 }
 
 impl Shim {
@@ -213,20 +281,25 @@ impl Shim {
             ),
         }
 
-        let clients: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
+        let clients: Arc<Mutex<Vec<Sink>>> = Arc::new(Mutex::new(Vec::new()));
 
         // Accept, authenticate, and enrol. Done off the relay thread so a
         // client that connects and says nothing cannot stall the stream.
         let accept_clients = Arc::clone(&clients);
         let token = self.token.clone();
+        let tls = self.tls.clone();
         let upstream = self.upstream.clone();
         std::thread::spawn(move || {
             for s in l.incoming() {
-                let mut c = match s {
+                let raw = match s {
                     Ok(c) => c,
                     Err(e) => { eprintln!("accept: {e}"); continue; }
                 };
-                let peer = c.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+                let peer = raw.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+                let mut c = match Sink::accept(raw, tls.as_ref()) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("shim: {peer}: {e}"); continue; }
+                };
                 let (head, body) = match crate::proxy::read_head(&mut c, 16 * 1024) {
                     Ok(h) => h,
                     Err(e) => { eprintln!("shim: {peer}: {e}"); continue; }
@@ -260,9 +333,9 @@ impl Shim {
                     continue;
                 }
                 let _ = c.flush();
-                let _ = c.set_write_timeout(Some(Duration::from_secs(5)));
                 println!("shim: {peer} subscribed ({})",
                          if by_token { "token" } else { "session" });
+                c.set_write_timeout(Duration::from_secs(5));
                 accept_clients.lock().unwrap().push(c);
             }
         });
@@ -302,7 +375,7 @@ impl Shim {
     fn broadcast(
         &self,
         up: &mut TcpStream,
-        clients: &std::sync::Arc<std::sync::Mutex<Vec<TcpStream>>>,
+        clients: &std::sync::Arc<std::sync::Mutex<Vec<Sink>>>,
     ) -> Result<(), String> {
         let mut acc: Vec<u8> = Vec::new();
         let mut buf = [0u8; 4096];

@@ -21,7 +21,7 @@ use std::time::Duration;
 
 /// Read a full HTTP message head, returning it plus any body bytes that
 /// arrived with it.
-pub fn read_head(s: &mut TcpStream, limit: usize) -> Result<(String, Vec<u8>), String> {
+pub fn read_head<R: Read>(s: &mut R, limit: usize) -> Result<(String, Vec<u8>), String> {
     let mut acc = Vec::new();
     let mut b = [0u8; 4096];
     loop {
@@ -60,11 +60,11 @@ pub fn path(head: &str) -> &str {
 /// `Connection: close` is forced upstream so the end of the body is
 /// unambiguous — the alternative is trusting `Content-Length` and chunked
 /// encoding from a server whose own headers already violate one RFC.
-pub fn forward(
+pub fn forward<C: Read + Write>(
     upstream: &str,
     head: &str,
     body_seen: &[u8],
-    client: &mut TcpStream,
+    client: &mut C,
 ) -> Result<(), String> {
     let mut up = TcpStream::connect(upstream).map_err(|e| format!("connect {upstream}: {e}"))?;
     up.set_read_timeout(Some(Duration::from_secs(30)))

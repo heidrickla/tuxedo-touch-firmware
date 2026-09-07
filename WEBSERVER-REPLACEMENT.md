@@ -1812,6 +1812,48 @@ UI work; the legacy shim is byte-compatible with what HA already consumes.
 **Known cost:** our push client is a second EH client, and registering flushes
 the reply queue (§2.5). Same as running `tuxedo_push.py`.
 
+#### Stage 3 measured on the panel, 2026-09-06
+
+`tuxweb --shim-login` ran on the panel with `TUXWEB_CHAIN`/`TUXWEB_KEY` pointed at
+the owner-CA leaf already in `/opt/tuxedo/configuration/tls/`, listening on
+`0.0.0.0:8443`, proxying to Barracuda on `127.0.0.1:80`. Against
+`https://203.0.113.5:8443/SimpleDebugger.interface/G.` from the workstation:
+
+| client | trust | token | result |
+| --- | --- | --- | --- |
+| Python `ssl`, `check_hostname=True` | owner root | yes | TLS 1.3 `TLS_AES_256_GCM_SHA384`, `200`, 8 frames |
+| Python `ssl` | owner root | no | `401`, 0 frames |
+| Python `ssl` | system roots only | - | handshake rejected, `CERTIFICATE_VERIFY_FAILED` |
+| Python `ssl`, `server_hostname=wrong.example` | owner root | - | rejected, hostname mismatch |
+| curl 8.19 (schannel) | owner root | yes | `200`, 8 frames |
+| curl 8.19 (schannel) | owner root | no | `401` |
+
+Two client families, so the result does not rest on one TLS stack.
+
+TLS 1.3 with a current client is the whole point. Barracuda's own listener is
+OpenSSL 1.0.1h and cannot be reached by an OpenSSL 3 client at any `SECLEVEL`
+(3.6); the shim is the first path to this panel that a modern client can
+negotiate at all. It gets away with proxying to a server it could not itself
+speak TLS to because the upstream leg is plaintext over loopback.
+
+`Sink` in `shim.rs` is the `Read + Write` enum that lets one accept loop serve
+both plaintext and TLS; `proxy::read_head` and `proxy::forward` were made generic
+over it rather than duplicated. `tls_from_env()` exits when `TUXWEB_CHAIN` and
+`TUXWEB_KEY` are set but unusable - a shim that quietly fell back to plaintext
+after being asked for TLS would be the same class of bug as the unauthenticated
+stream in 4.9.
+
+Stopped afterwards: `:8443` closed, `:80`, `:443`, `:6280` and `:9443` still
+Barracuda's, no restart.
+
+**Trap for the documentation, found here.** Windows `curl` is a schannel build.
+`--cacert` alone fails it with `schannel: the revocation status is unknown`,
+because a private CA publishes no CRL or OCSP and schannel treats unknown
+revocation as fatal. `--ssl-revoke-best-effort` clears it. This matters more than
+it looks: an owner who hits that error and cannot explain it is the owner who
+reaches for `verify_ssl: false`, which throws away the reason for doing any of
+this. Say it in the install instructions, next to `install-root`.
+
 ### Stage 4 — Cert lifecycle in production
 
 **Change:** writes `/opt/tuxedo/configuration/tls/` for the first time. Everything
@@ -2289,14 +2331,24 @@ breakage: Tuxedo-to-Tuxedo Z-Wave sync.
 entry. A single-panel installation never exercises the path. If there is a peer,
 the follow-up is to check what the libcurl call sets for `CURLOPT_SSL_VERIFY*`.
 
-### 5.8 Client acceptance of a private root for an IP-literal SAN
+### 5.8 Client acceptance of a private root for an IP-literal SAN - PROGRAMMATIC CLIENTS ANSWERED, 2026-09-06
 
 Decides whether the documentation should push owners toward a hostname plus local
 DNS rather than the bare `203.0.113.5` they use today, and whether a self-signed
 leaf with `CA:FALSE` in the trust store would have been enough (§3.4).
 
-**Cheapest experiment:** issue a leaf with an IP SAN from a throwaway CA, install
-the root, open current Chrome and Firefox. An hour, off-panel, no panel risk.
+Answered for the clients that matter to Home Assistant, against the stage-3
+listener. The leaf carries `CN=203.0.113.5` and one SAN, `IP Address:203.0.113.5`.
+Python `ssl` with the owner root as its only CA and `check_hostname=True` accepts
+it by IP; the same context connecting with `server_hostname="wrong.example"` is
+rejected for hostname mismatch, so name verification was genuinely running and
+the IP SAN is what matched. curl 8.19 (schannel) accepts it too, given
+`--ssl-revoke-best-effort` - see the revocation trap under stage 3.
+
+Still open for browsers: Chrome and Firefox apply their own rules to IP SANs and
+to privately rooted chains, and neither has been tried. The browser result is
+what decides the hostname-plus-local-DNS recommendation; the programmatic result
+only settles that the integration does not need one.
 
 ### 5.9 Can Home Assistant set an Authorization header on a long-lived multipart stream?
 
