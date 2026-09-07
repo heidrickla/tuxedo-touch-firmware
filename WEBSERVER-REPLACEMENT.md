@@ -3020,17 +3020,47 @@ token in a URL lands in access logs and `Referer` headers; there is no reason to
 accept that cost now that the header form is demonstrated on the actual client.
 The shim already gates on either (`shim.rs::presents_token`).
 
-### 5.10 The reply payload beyond `+0x0E`
+### 5.10 The reply payload beyond `+0x0E` — LARGELY ANSWERED STATICALLY, 2026-09-07
 
-Mapped for msgTypes 1, 18, 19, 20, 21, 22 and 504. The other 36 dispatched types
-(Z-Wave, camera, event log, thermostat) are not decoded. This is not a blocker
-for v1 — security and status are covered — but it bounds how much of the feature
-set can be rebuilt later.
+It did not need the window. Every builder is a named function in `/tuxedo` that
+passes `0x22c` to `osal_MqSend`, so the layouts can be read out of the binary,
+and the stage-6 capture becomes confirmation rather than discovery.
 
-**Cheapest experiment:** it falls out of stage 6 for free. The read-only window
-logs every reply raw; correlating them against touchscreen actions decodes them
-without any additional risk. Plan for a longer capture during that window than the
-minimum the stage needs.
+`reply-layouts.py` finds all **78 builders**, resolves the buffer register and
+its base offset, and records every store through it. **45 layouts resolved, 19
+msgTypes recovered** — 20, 21, 51, 59, 60, 61, 62, 101, 103, 109, 111, 112, 147,
+150, 151, 153, 154, 504, 600 — against the 7 this section previously listed. The
+map is committed as `reply-layouts.txt`.
+
+Two things already read off it:
+
+- **msgType 21's `+0x08` is `GetOnlineStatus()`.** The field `ipc.rs` calls
+  `arg` is the panel's online flag on that path, and the observed frame
+  `0:21:1:fe:…` has `arg=1`, i.e. online. A generic name concealed a specific
+  meaning.
+- **msgType 21 has two builders with different shapes.**
+  `sltSendChangedPartitionStatus` and `sltSendPartitionDetailsToWebClient`, the
+  second putting `GetCurrentPartition()` at `+0x04` and a word at `+0x90`. So
+  even one msgType is not one layout.
+
+**The gap, stated because a short entry is easy to misread:** only store
+instructions are recorded. Text arrives by `strcpy`/`memcpy`/`sprintf` and is
+invisible to this method — which is why `registerclient` shows no `+0x91`
+despite the partition description demonstrably being there. An entry listing
+only session and msgType means *the payload does not arrive by store*, not that
+the message is empty. **msgType 20 is exactly such an entry**, so the console
+payload still wants the window.
+
+**33 builders did not resolve** and are listed rather than dropped, because a
+map that looks complete is the failure mode here.
+
+Two defects found while building it, both of which had produced a plausible
+wrong answer: predicated stores (`strbne`, `strbeq`) were silently skipped, so
+`registerclient`'s `+0xb0` and `+0xb8` were missing from a map that looked
+finished; and a `None`-versus-`int` comparison in the sort crashed the run
+partway, leaving a truncated file whose builder count read as a result. The
+first count of "45 resolved" and the second of "15" were both from crashed runs
+and neither was real.
 
 ### 5.11 Loose ends recorded, not planned around
 

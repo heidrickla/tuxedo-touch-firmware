@@ -1,0 +1,358 @@
+# The 556-byte reply union, one layout per builder.
+#
+# Regenerate with:  python reply-layouts.py <rootfs>/tuxedo
+#
+# The reply is a UNION, not a struct. session at +0x00 and msgType at +0x04
+# hold for every message; everything after them depends on the type.
+# CReceiverThread::registerclient puts a partition description at +0x91 and
+# single bytes at +0xaf..+0xb8, and has nothing at +0x0E at all -- so
+# ipc.rs's Reply::parse, which reads text at +0x0E, is right for the status
+# path it came from and wrong for a 504.
+#
+# WHAT THIS DOES NOT SHOW, and it matters when reading a short entry:
+# only `str`/`strb`/`strh` through the buffer register are recorded. Text
+# fields arrive by strcpy, memcpy or sprintf and are INVISIBLE here. That is
+# why registerclient shows no +0x91 even though the partition description is
+# demonstrably there. An entry with only session and msgType means "the
+# payload does not arrive by store instruction", NOT "the message is empty".
+#
+# Also not shown: which of two stores to the same offset wins, when a builder
+# writes conditionally. Both are listed.
+#
+# Useful things already read off this map:
+#   * msgType 21, sltSendChangedPartitionStatus: +0x08 is GetOnlineStatus(),
+#     so the field ipc.rs calls `arg` is the panel's online flag on this path.
+#     The observed frame 0:21:1:fe:... has arg=1, i.e. online.
+#   * msgType 21 has TWO builders with different shapes -- the other is
+#     sltSendPartitionDetailsToWebClient, which puts GetCurrentPartition() at
+#     +0x04 and a word at +0x90.
+#   * msgType 20 is wsltHandleRawDataFromPanel, the console-mode message P10
+#     made real. Its payload does not arrive by store, so it is not visible
+#     here; the stage-6 capture is still the way to see it.
+#
+# 78 builders send a 556-byte reply
+# session is +0x00 and msgType +0x04 in all of them; the rest is
+# per-type, which is why this is a union and not a struct.
+
+== CAccountsSetup::sendHTTPSupdateToWeb()
+   send 0x32611c, buffer in sp, msgType = 61
+     +0x000 u32  = 61
+     +0x004 u32  = 61
+     +0x00d u8   = 0
+
+== CAccountsSetup::sendLocalLoginupdateToWeb()
+   send 0x3260c8, buffer in sp, msgType = 62
+     +0x000 u32  = 62
+     +0x004 u32  = 62
+     +0x00d u8   = 0
+
+== CAccountsSetup::sendUpdateCommandToWeb()
+   send 0x326074, buffer in sp, msgType = 60
+     +0x000 u32  = 60
+     +0x004 u32  = 60
+     +0x00d u8   = 0
+
+== CChannelDBInterface::SendChannelDataRefreshtoVideoApp()
+   send 0x4336b4, buffer in sp, msgType = 151
+     +0x000 u32  <- r4
+     +0x004 u32  = 151
+     +0x008 u32  <- r5
+
+== CHomeScreen::sltHandleDoorBtnPress()
+   send 0x41acc, buffer in sp, msgType = 600
+     +0x000 u32  = 0
+     +0x004 u32  = 600
+     +0x00d u8   = 0
+
+== CInitialAccountsSetup::sendHTTPSupdateToWeb()
+   send 0x4ede0c, buffer in sp, msgType = 61
+     +0x000 u32  = 61
+     +0x004 u32  = 61
+     +0x00d u8   = 0
+
+== CInitialAccountsSetup::sendLocalAuthenticationupdateToWeb()
+   send 0x4eddb8, buffer in sp, msgType = 62
+     +0x000 u32  = 62
+     +0x004 u32  = 62
+     +0x00d u8   = 0
+
+== CInitialAccountsSetup::sendUpdateCommandToWeb()
+   send 0x4edd64, buffer in sp, msgType = 60
+     +0x000 u32  = 60
+     +0x004 u32  = 60
+     +0x00d u8   = 0
+
+== CReceiverThread::getPartitionDetails(char*)
+   send 0x140584, buffer in r4, msgType not a literal here
+     +0x008 u32  = 8
+
+== CReceiverThread::registerclient()
+   send 0x13c3ac, buffer in sp, msgType = 504
+     +0x000 u32  = 0
+     +0x004 u32  = 504
+     +0x090 u8   <- r5
+     +0x0af u8   <- GetPanelCalImplementation()()
+     +0x0b0 u8   <- GetArmingModes()()
+     +0x0b0 u8   <- r3
+     +0x0b1 u8   <- GetOperationMode()()
+     +0x0b1 u8   <- r3
+     +0x0b2 u8   <- r3
+     +0x0b4 u32  <- getZWControllerStatus()()
+     +0x0b8 u8   <- isRisSupported()()
+     +0x0b8 u8   <- r3
+
+== CReceiverThread::setEventIndex()
+   send 0x13e878, buffer in r3, msgType not a literal here
+     +0x000 u8   <- r4
+     +0x00d u8   <- r4
+
+== CReceiverThread::sltCameraDatabaseModified()
+   send 0x13c25c, buffer in sp, msgType = 51
+     +0x000 u32  = 51
+     +0x004 u32  = 51
+     +0x00d u8   = 0
+
+== CReceiverThread::sltCameraDiscoverystatus(int)
+   send 0x13c208, buffer in sp, msgType = 59
+     +0x000 u32  = 59
+     +0x004 u32  = 59
+     +0x008 u32  <- r1
+
+== CReceiverThread::sltGetCameraCredentials(web_request*)
+   send 0x142da4, buffer in sp, msgType not a literal here
+     +0x000 u32  <- r3
+     +0x004 u32  <- r2
+     +0x00d u8   = 0
+     +0x09f u8   <- r6
+
+== CReceiverThread::sltGoAuthLevelReceived(SaplData)
+   send 0x13ddc0, buffer in sp, msgType not a literal here
+     +0x008 u32  = 1
+     +0x008 u32  = 2
+     +0x008 u32  = 6
+     +0x008 u32  <- r3
+     +0x008 u32  <- r4
+     +0x00d u8   = 0
+     +0x00d u8   = 6
+     +0x00d u8   <- r4
+     +0x00e u8   <- r4
+     +0x00e u8   <- r6
+     +0x00f u8   <- r3
+     +0x02e u8   <- r3
+     +0x04d u8   <- r3
+     +0x06c u8   <- r3
+
+== CReceiverThread::sltPartitionDetailReqTimeout()
+   send 0x140364, buffer in r5, msgType not a literal here
+     +0x008 u32  = 8
+     +0x00d u8   <- r3
+     +0x00d u8   = 1
+
+== CReceiverThread::sltRequestSetHomePart(web_request*)
+   send 0x14706c, buffer in sp, msgType not a literal here
+     +0x000 u32  <- lr
+     +0x004 u32  <- ip
+     +0x00c u8   = 1
+
+== CReceiverThread::sltSendChangedPartitionStatus(int)
+   send 0x144aa0, buffer in sp, msgType = 21
+     +0x000 u32  = 0
+     +0x004 u32  <- r2
+     +0x004 u32  = 21
+     +0x008 u32  <- GetOnlineStatus()()
+     +0x008 u32  <- r3
+     +0x00e u8   <- r3
+
+== CReceiverThread::sltSendPartitionDetailsToWebClient(int)
+   send 0x146b60, buffer in r7, msgType = 21
+     +0x000 u32  <- r2
+     +0x000 u32  = 0
+     +0x004 u32  <- GetCurrentPartition()()
+     +0x004 u32  = 21
+     +0x008 u32  = 7
+     +0x00e u8   <- r3
+     +0x090 u32  <- r4
+
+== CReceiverThread::sltSendUserCodeDeclinedWithReasonMsg(QString)
+   send 0x141fd8, buffer in sp, msgType not a literal here
+     +0x000 u32  <- r3
+
+== CReceiverThread::sltSetEventIndex()
+   send 0x13ee9c, buffer in r0, msgType not a literal here
+     +0x000 u32  = 0
+     +0x00d u8   <- r6
+
+== CReceiverThread::wdelaytimerstart(int)
+   send 0x13c2ac, buffer in sp, msgType not a literal here
+     +0x090 u32  <- r1
+
+== CReceiverThread::wsltEventDescRcvd(SaplData)
+   send 0x13ed1c, buffer in r0, msgType not a literal here
+     +0x00d u8   = 0
+
+== CReceiverThread::wsltHandleRawDataFromPanel()
+   send 0x13daf4, buffer in sp, msgType = 20
+     +0x000 u32  = 0
+     +0x004 u32  = 20
+
+== CVoiceTuxThread::processGlobalSet(VOICE_TUX)
+   send 0x3fcb48, buffer in sp, msgType not a literal here
+     +0x000 u32  <- r6
+     +0x004 u32  <- r3
+     +0x00d u8   <- r6
+
+== CZwaveSceneEdit::ApplySettings(bool)
+   send 0x2ed190, buffer in sp, msgType = 150
+     +0x000 u32  = 0
+     +0x004 u32  = 150
+     +0x008 u32  = 0
+
+== DoorBellAction(unsigned int)
+   send 0x41b20, buffer in sp, msgType = 600
+     +0x000 u32  = 0
+     +0x004 u32  = 600
+     +0x00d u8   = 0
+
+== StartVoiceRecogApp()
+   send 0x45ab4, buffer in sp, msgType not a literal here
+     +0x000 u32  <- r4
+     +0x004 u32  <- r3
+     +0x008 u32  = 1
+
+== StopVoiceRecogApp()
+   send 0x45c24, buffer in sp, msgType not a literal here
+     +0x000 u32  = 0
+     +0x004 u32  <- r3
+     +0x008 u32  = 0
+
+== ZWaveSendHomeId()
+   send 0x231758, buffer in sp, msgType not a literal here
+     +0x228 u32  <- r4
+
+== createZDevJSON(void*)
+   send 0x43a6b4, buffer in sp, msgType = 153
+     +0x000 u32  = 0
+     +0x004 u32  = 153
+     +0x008 u32  = 0
+
+== send_msg_to_web(unsigned int)
+   send 0x41a40, buffer in sp, msgType not a literal here
+     +0x004 u32  <- r0
+
+== writeCRCJSONFile()
+   send 0x444bf0, buffer in sp, msgType = 154
+     +0x000 u32  = 0
+     +0x004 u32  = 154
+
+== zil_BinaryLightStatusGet_Callback(unsigned char)
+   send 0x232ef8, buffer in ip, msgType = 109
+     +0x004 u32  = 109
+     +0x090 u16  <- r4
+     +0x092 u8   <- r5
+
+== zil_DimmerLightStatusGet_Callback(unsigned char)
+   send 0x232cdc, buffer in ip, msgType = 111
+     +0x004 u32  = 111
+     +0x090 u16  <- r4
+     +0x092 u8   <- r5
+
+== zil_DoorLockStatusGet_Callback(unsigned char)
+   send 0x23309c, buffer in ip, msgType = 112
+     +0x004 u32  = 112
+     +0x090 u16  <- r4
+     +0x092 u8   <- r5
+
+== zil_GarageDoorStatus_Callback(unsigned char, unsigned char, unsigned char)
+   send 0x232db4, buffer in ip, msgType = 147
+     +0x004 u32  = 147
+     +0x090 u16  <- r6
+     +0x092 u8   <- r4
+
+== zil_ThermostatCurrentTempGet_Callback(unsigned char)
+   send 0x2339d0, buffer in r3, msgType not a literal here
+     +0x090 u16  <- r5
+
+== zil_ZWaveAbortAddDelete(unsigned char, void (*)())
+   send 0x231ba8, buffer in r4, msgType = 101
+     +0x000 u32  = 0
+     +0x004 u32  = 101
+     +0x090 u16  = 0
+     +0x0b4 u32  <- r5
+
+== zil_ZwaveRemoveFailedDevice(unsigned char)
+   send 0x231d2c, buffer in r5, msgType = 101
+     +0x000 u32  = 0
+     +0x004 u32  = 101
+     +0x090 u16  = 0
+     +0x0b4 u32  <- r6
+
+== zil_ZwaveRemoveFailedDevice_Callback()
+   send 0x2341e8, buffer in r5, msgType = 103
+     +0x000 u32  <- r4
+     +0x004 u32  = 103
+     +0x0b0 u32  = 103
+
+== zil_ZwaveStartScanToAddNewDevice()
+   send 0x231f04, buffer in r4, msgType = 101
+     +0x000 u32  <- r5
+     +0x004 u32  = 101
+     +0x090 u16  <- r5
+     +0x0b4 u32  <- r6
+
+== zil_ZwaveStartScanToAddNewDevice_Callback()
+   send 0x2326a0, buffer in r4, msgType = 103
+     +0x000 u32  <- r6
+     +0x004 u32  = 103
+     +0x090 u16  <- r2
+     +0x0b0 u32  = 103
+     +0x0b8 u8   <- ip
+
+== zil_ZwaveStartScanToRemoveDevice()
+   send 0x231e14, buffer in r4, msgType = 101
+     +0x000 u32  = 0
+     +0x004 u32  = 101
+     +0x090 u16  = 0
+     +0x0b4 u32  <- r5
+
+== zil_ZwaveStartScanToRemoveDevice_Callback()
+   send 0x2342f8, buffer in r6, msgType = 103
+     +0x000 u32  = 0
+     +0x004 u32  = 103
+     +0x090 u16  <- r4
+     +0x0b0 u32  = 103
+
+# 33 builder(s) whose buffer could not be resolved, listed rather
+# than dropped -- a short map that looks complete is the failure:
+#   CConfigureMailIds::slthandleOKpress()
+#   CReceiverThread::getAllZoneListFunc()
+#   CReceiverThread::refreshUploadZoneList(int, int const*)
+#   CReceiverThread::run()
+#   CReceiverThread::sltQuickArmStateChangeMsg()
+#   CReceiverThread::sltRequestAllHADeviceStatus(web_request*)
+#   CReceiverThread::sltRequestBypassAllZones(web_request*)
+#   CReceiverThread::sltRequestGetHomePartDetails(web_request*)
+#   CReceiverThread::sltRequestToBypassZones(web_request*)
+#   CReceiverThread::sltRequestZwaveDeviceAbort(web_request*)
+#   CReceiverThread::sltRequestZwaveDeviceAdd(web_request*)
+#   CReceiverThread::sltRequestZwaveDeviceDel(web_request*)
+#   CReceiverThread::sltRequestZwaveDeviceFrmv(web_request*)
+#   CReceiverThread::sltRequestZwaveDimmerStatSet(web_request*)
+#   CReceiverThread::sltRequestZwaveDoorStatSet(web_request*)
+#   CReceiverThread::sltRequestZwaveGarageDoorStatSet(web_request*)
+#   CReceiverThread::sltRequestZwaveLightStatSet(web_request*)
+#   CReceiverThread::sltRequestZwaveTermFanModeSet(web_request*)
+#   CReceiverThread::sltRequestZwaveTermSaveEnergyModeSet(web_request*)
+#   CReceiverThread::sltRequestZwaveTermTarTempSet(web_request*)
+#   CReceiverThread::sltRequestZwaveThermoStatAllInfoSet(web_request*)
+#   CReceiverThread::sltRequestZwaveThermostatModeSet(web_request*)
+#   CReceiverThread::sltSendNewPartitionDetails()
+#   CReceiverThread::sltSendUserCodeAcceptedMsg()
+#   CReceiverThread::sltSendUserCodeDeclinedMsg()
+#   CReceiverThread::sltSendUserRequiredMsg(int)
+#   CReceiverThread::sltTotalNoOfEventsReceived(int)
+#   CReceiverThread::sltUploadCameraDB(web_request*)
+#   zil_DoorLockStatusUnlockByCode_Callback(unsigned char)
+#   zil_ThermostatBasicSaveEnergyModeGet_Callback(unsigned char)
+#   zil_ThermostatFanModeGet_Callback(unsigned char)
+#   zil_ThermostatModeGet_Callback(unsigned char)
+#   zil_ThermostatSetPointTempGet_Callback(unsigned char, unsigned char)
