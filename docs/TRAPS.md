@@ -371,13 +371,23 @@ and left sitting there saying the opposite of the truth.
   never zeroed. Check the budget before flashing a request-path change.
   **DECODED, not folklore, and the mechanism is not what it sounds like:**
 
-      0xc52c  ldrls pc, [pc, r3, lsl #2]   jump table; entries at 0xc54c,
-                                           0xc550, 0xc554 all -> 0xc684
+      0xc528  cmp   r3, #0x1d              in main; 30 cases, default 0xc8fc
+      0xc52c  ldrls pc, [pc, r3, lsl #2]   dispatch, table based at 0xc534
+              cases 6,7,8   -> 0xc684      the counter block
+              cases 3,4,5,9 -> 0xc910      straight to the disarm, see below
+
       0xc684  counter at 0x16be0, add #1, cmp #0x18, str back
       0xc69c  bgt 0xc90c                   on exceeding 24
       0xc90c  bl log_SupervisionText
-      0xc918  bl DisArmSWTimer  on the handle at 0x16c14
+      0xc910  ldr r0, [0x16c14]            <- four switch cases enter HERE
+      0xc918  bl DisArmSWTimer  on that handle
       0xc91c  b  0xc4f0                    and carry on
+
+  **The counter is not the only route to a reset.** Cases 3, 4, 5 and 9 jump to
+  `0xc910` directly, four bytes past the log call, so they disarm the watchdog
+  timer without incrementing or consulting the counter and without writing a
+  supervision log line. What those four case values mean is not decoded; what
+  is decoded is that a panel reset does not require the budget to be spent.
 
   `0x16c14` is the **watchdog kick timer** — the only functions holding it are
   `wdg_init`, `wdg_deinit`, `main` and `SupervisTimeout`, and the binary carries
@@ -394,13 +404,24 @@ and left sitting there saying the opposite of the truth.
 
   ⚠ **Two scans of this block concluded "unreachable" and both were wrong the
   same way: they modelled only `B`/`BL`.** ARM dispatches a switch with
-  `ldr pc, [pc, rN, lsl #2]` and a table of absolute addresses; one scan even
-  found the three table words and then dismissed them in a comment as "far more
-  likely an unrelated constant". **A branch scan that does not model the jump
-  table will report live code as dead**, and a false "unreachable" withholds a
-  true finding instead of publishing a false one — the better failure, and still
-  the same missing edge. Same blindness as `ldr pc,[pc,rN,lsl #2]` read as a
-  return, which section 2 already records.
+  `ldr pc, [pc, rN, lsl #2]` and a table of absolute addresses, which leaves no
+  `B` or `BL` anywhere — so a branch scan is *structurally* blind to it and
+  returns a clean, confident, wrong answer. One of those scans even found the
+  three table words and then dismissed them in a comment as "far more likely an
+  unrelated constant". **The resolving method is not a better disassembler: ask
+  whether the ADDRESS appears as a word anywhere**, and `refs(0xc684)` returns
+  exactly those three slots. Same blindness as `ldr pc,[pc,rN,lsl #2]` read as a
+  return, which section 2 already records — third time in one day.
+
+  ⚠ **AND THE CORRECTED SCAN WAS ALSO WRONG, WHICH IS THE SHARPER LESSON.** The
+  first scan covered 29% of `.text` because `capstone.disasm()` stops at the
+  first undecodable word; that was a real defect and fixing it gave 99.7%. The
+  fixed scan then produced a conclusion that was wrong for an entirely unrelated
+  reason — and it *looked more trustworthy precisely because a scanner had just
+  been repaired to obtain it*. **Removing one blindness does not certify the
+  result against a second.** This one reached the file: an entry saying the
+  block was "NOT evidence" stood over a decoded safety mechanism until it was
+  caught.
 - **DO NOT read the relaunch budget out of the running `supervis`.** The counter
   is at `0x16be0` in `.bss` and the process is non-PIE with that page mapped
   `rw`, so it is at a real fixed address and looks readable. Reading it on
