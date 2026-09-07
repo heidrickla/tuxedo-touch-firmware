@@ -3206,6 +3206,20 @@ offset 0 because `mem.index` was ignored.
 
 ### 5.11 Loose ends recorded, not planned around
 
+- **Which reply msgTypes Barracuda relays versus drops is NOT decoded.**
+  `TRAPS.md` records that msgType 20 has no case and is dropped, which is what
+  makes console mode unreachable. The obvious next question — what happens to
+  the other 25 — was attempted by pointing `dispatch_tree.py` at
+  `gettuxedoIPCCommFunc` with the msgType slot at `sp+0x278`, and the result is
+  **not trustworthy and is deliberately not recorded here**: it prints
+  overlapping intervals (`28-50 accepted and dropped` alongside `29 bprintf`),
+  which cannot all be true, and it claims a handler for msgType 20, which
+  contradicts the console-mode finding. That function has no jump table, so
+  the cause is not the one just fixed in `reply-layouts.py`; the constraint
+  walk simply does not fit this function's shape. Either the walk is wrong or
+  the TRAPS entry is, and until one of them is read against the code nothing
+  should be built on either. Left open rather than published.
+
 - 13 of 95 `ui_sendMsgToUi` call sites did not resolve to a literal mtype, so the
   mtype→emitter map is 82/95, not complete. Intra-tuxedo; does not affect us.
 - `/mqUI_Input_Queue` has a **second writer**: `initNetLinkStatusMonitor`

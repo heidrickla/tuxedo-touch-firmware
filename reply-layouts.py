@@ -342,7 +342,7 @@ class Layouts:
         root, off = regs.get(b, fresh(va))
         return ptr(root, off + op.mem.disp)
 
-    def step(self, regs, ins):
+    def step(self, regs, ins, code=None):
         """Register transfer for one instruction. Stores change no register.
 
         Returns the register written, so the caller can tell an argument from a
@@ -352,15 +352,22 @@ class Layouts:
         dst = self.reg(ops[0].reg) \
             if ops and ops[0].type == ARM_OP_REG else None
 
-        if ins.id in (ARM_INS_BL, ARM_INS_BLX):
-            tgt = ops[0].imm if ops and ops[0].type == ARM_OP_IMM else None
+        if ins.id in (ARM_INS_BL, ARM_INS_BLX) \
+                or (code and self.virtual_call(ins, code)):
+            # A virtual call clobbers exactly like a direct one. Letting it
+            # through as a plain load would leave a pre-call value in r0-r3
+            # available to be named as a field's source.
+            tgt = ops[0].imm if ops and ops[0].type == ARM_OP_IMM \
+                and ins.id in (ARM_INS_BL, ARM_INS_BLX) else None
             for a in CLOBBERED:
                 regs[a] = fresh(ins.address, a)
-            regs["r0"] = ptr(("ret", plain(self.name(tgt)) if tgt else "?",
-                              ins.address))
+            regs["r0"] = ptr(("ret", plain(self.name(tgt)) if tgt
+                              else "indirect", ins.address))
             return "r0"
-        if ins.id in STORES or ins.id in (ARM_INS_STM, ARM_INS_STMDB) \
-                or ins.id in NOWRITE:
+        # STM_IDS, not just STM/STMDB: `stmib r4,{..}` reaching the general
+        # case below would take r4 as a destination and destroy the buffer
+        # pointer it holds.
+        if ins.id in STORES or ins.id in STM_IDS or ins.id in NOWRITE:
             return None
         if dst == "sp":
             # Frame adjustments are prologue and epilogue only, and an early
@@ -481,9 +488,33 @@ class Layouts:
             out.append(t)
         return out
 
+    def virtual_call(self, ins, code):
+        """`mov lr,pc` then `ldr pc,[rX,#N]` -- a virtual CALL, not a return.
+
+        The pre-ARMv5 indirect-call idiom sets the return address by hand, so
+        control comes back to the next instruction. `CReceiverThread::run` has
+        two. Both happen to be preceded by a `beq` to the return point, so
+        nothing was lost by reading them as returns -- but that is luck, and a
+        virtual call not guarded that way would make everything after it
+        unreachable and shorten the map without saying so.
+        """
+        if ins.id not in LOADS or not ins.operands:
+            return False
+        if ins.operands[0].type != ARM_OP_REG \
+                or self.reg(ins.operands[0].reg) != "pc":
+            return False
+        p = code.get(ins.address - 4)
+        return bool(p) and p.id == ARM_INS_MOV and len(p.operands) == 2 \
+            and p.operands[0].type == ARM_OP_REG \
+            and p.operands[1].type == ARM_OP_REG \
+            and self.reg(p.operands[0].reg) == "lr" \
+            and self.reg(p.operands[1].reg) == "pc"
+
     def succs(self, ins, code, start, end):
         """Where control can actually go. `bl` falls through; `b` does not."""
         nxt = ins.address + 4
+        if self.virtual_call(ins, code):
+            return [nxt] if nxt in code else []
         tbl = self.table(ins, code, start, end)
         if tbl is not None:
             return tbl + ([nxt] if ins.cc != ARM_CC_AL and nxt in code else [])
@@ -524,7 +555,7 @@ class Layouts:
             if ins is None:
                 continue
             out = dict(entry[a])
-            self.step(out, ins)
+            self.step(out, ins, code)
             for b in self.succs(ins, code, start, end):
                 cur = entry.get(b)
                 if cur is None:
@@ -619,7 +650,7 @@ class Layouts:
                                    self.reg(op.reg), ins.cc))
             # entry[] is the authoritative state; step a copy purely to learn
             # which register this instruction writes.
-            w = self.step(dict(regs), ins)
+            w = self.step(dict(regs), ins, code)
             if w in ARGS:
                 live.add(w)
 

@@ -221,7 +221,7 @@
      +0x00d u8   = 0                                    @0x142a20
      +0x090 str  <- strcpy([[sp+0x36c]+0xc])            @0x142c50
      +0x090 15   <- memcpy([[sp+0x368]+0xc])            @0x142bd0
-     +0x09f u8   <- ?()                                 @0x142c00 0x142de0
+     +0x09f u8   <- indirect()                          @0x142c00 0x142de0
      +0x0a0 128  <- memcpy(sp+0x22c)                    @0x142d90
 
 == CReceiverThread::sltGoAuthLevelReceived(SaplData)
@@ -624,7 +624,7 @@
      +0x00e 38   <- memcpy("No Cameras Found in the Configuration") @0x143d80
      +0x090 str  <- strcpy([[sp+0x424]+0xc])            @0x143a38
      +0x090 15   <- memcpy([[sp+0x420]+0xc])            @0x1434a4
-     +0x09f u8   <- ?()                                 @0x1434d4
+     +0x09f u8   <- indirect()                          @0x1434d4
      +0x0a0 384  <- memcpy(sp+0x23c)                    @0x143874
 
 == CReceiverThread::sltUploadCameraDB(web_request*)
@@ -640,7 +640,7 @@
      +0x00e 38   <- memcpy("No Cameras Found in the Configuration") @0x143d80
      +0x090 str  <- strcpy([[sp+0x424]+0xc])            @0x143a38
      +0x090 15   <- memcpy([[sp+0x420]+0xc])            @0x1434a4
-     +0x09f u8   <- ?()                                 @0x1434d4
+     +0x09f u8   <- indirect()                          @0x1434d4
      +0x0a0 384  <- memcpy(sp+0x23c)                    @0x143874
 
 == CReceiverThread::wdelaytimerstart(int)
@@ -672,9 +672,9 @@
    send 0x3fcb48, buffer sp+0x0, msgType 999
    NOTE function is 0x11b0 bytes over several cases; they share
         this frame, so check a field's address before using it.
-     +0x000 u32  <- ?()                                 @0x3fcb38
+     +0x000 u32  <- indirect()                          @0x3fcb38
      +0x004 u32  = 999                                  @0x3fcb30
-     +0x00d u8   <- ?()                                 @0x3fcb2c
+     +0x00d u8   <- indirect()                          @0x3fcb2c
 
 == CZwaveSceneEdit::ApplySettings(bool)
    send 0x2ed190, buffer sp+0x4, msgType 150
