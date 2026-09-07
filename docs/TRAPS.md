@@ -219,6 +219,32 @@ and left sitting there saying the opposite of the truth.
 - Line endings are per file. Check with python (`data.count(b"\r\n")`), not
   `grep -c $'\r'` - if the shell does not expand `$'\r'` the pattern is empty and
   matches every line, which reads as "the whole file is CRLF".
+- **`LIVE-RESULTS.md` is not valid UTF-8 and has bitten twice, from opposite
+  directions.** It carries raw latin-1 bytes from the push stream, one of them a
+  NUL. Both consequences are silent:
+  - **`git filter-repo --replace-text` SKIPS ANY BLOB CONTAINING A NUL.** In the
+    2026-09-07 publication scrub every other file was rewritten and this one was
+    not, leaving it as the only file still carrying the real panel address while
+    every check read green. Use the **Python API with a `blob_callback`**, which
+    has no binary check. Add a `commit_callback` too - `--replace-text` does not
+    touch commit messages, and three of them named the address and the
+    workstation.
+  - **`git grep` reports it as `Binary file ... matches`**, so a sweep for
+    citations across the repo silently misses whatever it holds. Read it with an
+    explicit decode-and-replace.
+  Same underlying fact, diagnosed separately a day apart, by two people who had
+  each already been told the other half. **When a file is not valid UTF-8,
+  assume every text tool has an opinion about it and find out which.**
+- **Verify a scrub in BOTH directions**: zero hits for what must go, and
+  still-non-zero for what must stay - vendor addresses, placeholder MACs, the
+  shipped `/etc/hosts`. Only the second half catches a pattern broad enough to
+  have eaten the evidence this repo exists to hold.
+- **After `filter-repo`, the remote-tracking refs lie.** It rewrites
+  `refs/remotes/*` as well, so `gitea/main` pointed at the rewritten head while
+  the server still held the original, and
+  `git rev-list --left-right --count gitea/main...HEAD` read as "in sync, one to
+  push" when nothing had been pushed at all. Ask `git ls-remote`, then
+  `git fetch` to make the tracking refs honest.
 
 ## 4. SSH to the panel
 

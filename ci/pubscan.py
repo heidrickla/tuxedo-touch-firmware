@@ -64,6 +64,34 @@ def real_macs(text: str) -> list[str]:
             if not _PLACEHOLDER_MAC.match(m)]
 
 
+#: Account names that name nobody: what a scrub replaces a real one with, plus
+#: the usual CI and container accounts. Kept short and explicit — guessing at
+#: "looks generic" would start hiding real names.
+_GENERIC_ACCOUNT = re.compile(
+    r"^(?:dev|user|users|test|admin|administrator|runner|build|ci|root|"
+    r"youruser|username)$", re.I)
+
+_USER_PATH = re.compile(r"[A-Za-z]:\\{1,2}Users\\{1,2}([A-Za-z0-9._-]+)")
+_TEMP_PATH = re.compile(r"[A-Za-z]:\\{1,2}(?:temp|Temp)\b")
+
+
+def _user_paths(text: str) -> tuple[list[str], list[str]]:
+    """Split Windows user paths into the ones that name somebody and the rest."""
+    named, generic = [], []
+    for m in _USER_PATH.finditer(text):
+        (generic if _GENERIC_ACCOUNT.match(m.group(1)) else named).append(m.group(0))
+    return named, generic
+
+
+def real_user_paths(text: str) -> list[str]:
+    """Paths carrying a real account name, plus bare temp roots."""
+    return _user_paths(text)[0] + _TEMP_PATH.findall(text)
+
+
+def generic_user_paths(text: str) -> list[str]:
+    return _user_paths(text)[1]
+
+
 def _local_identifiers() -> list[tuple[str, "re.Pattern[str]"]]:
     """Author-specific literals, read from an untracked file beside this one.
 
@@ -103,18 +131,25 @@ def _local_identifiers() -> list[tuple[str, "re.Pattern[str]"]]:
 YOURS = [
     ("private addresses, 10.10.x", re.compile(r"\b10\.10\.\d{1,3}\.\d{1,3}\b")),
     ("real MAC addresses", real_macs),
-    # A Windows user directory discloses the account name whoever it is, so the
-    # shape is worth reporting on its own without naming anybody.
-    ("local filesystem paths", re.compile(r"[A-Za-z]:\\{1,2}(?:Users|temp|Temp)\b")),
+    # A Windows user directory discloses the account NAME, so what matters is
+    # the name and not the shape. `C:\Users\dev\...` after a scrub identifies
+    # nobody, and reporting 23 of those in red is how the next person learns to
+    # skim this category on the day it finds a real one - the same failure the
+    # placeholder-MAC filter exists to prevent. Generic account names are split
+    # off to an informational line below rather than counted here.
+    ("local filesystem paths", real_user_paths),
     ("wifi ssid / psk", re.compile(r"(?i)\b(ssid|psk|wpa_passphrase)\s*[:=]\s*\S")),
     ("private keys", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")),
     ("bearer tokens", re.compile(r"\b(?:ghp|gho|github_pat|xox[baprs])[-_][0-9A-Za-z_-]{16,}")),
 ] + _local_identifiers()
 
-#: Present, but the VENDOR's, so publishing them discloses nothing about you.
+#: Present, but discloses nothing about you: the vendor's own defaults, and
+#: paths whose account name is a placeholder. Reported so the count is honest
+#: about what it excluded, never added to the total.
 VENDOR = [
     ("vendor default addrs", re.compile(
         r"\b(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b")),
+    ("local paths, generic account", generic_user_paths),
 ]
 
 
@@ -165,8 +200,15 @@ def main() -> int:
 
     print()
     for label, rx in VENDOR:
-        hits = {f: len(rx.findall(b)) for f, b in blobs.items() if rx.search(b)}
-        print("    %-26s %3d file(s)  %4d hit(s)   [vendor, not yours]"
+        find = rx if callable(rx) else rx.findall
+        hits = {}
+        for f, b in blobs.items():
+            if f.replace("\\", "/") in SELF:
+                continue
+            n = len(find(b))
+            if n:
+                hits[f] = n
+        print("    %-26s %3d file(s)  %4d hit(s)   [discloses nothing]"
               % (label, len(hits), sum(hits.values())))
 
     print()
