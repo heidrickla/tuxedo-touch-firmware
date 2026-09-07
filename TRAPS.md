@@ -78,6 +78,12 @@ and left sitting there saying the opposite of the truth.
   which kept only the last row per offset and so reported a field the tool had
   actually recovered. A control that lives only in your head is not run again
   after the change that breaks it.
+- **A search that never ran must not report "not found".** The cross-reference
+  for "who filled this buffer" printed `no writer of +0x004 found in the
+  searched set` for a shape whose candidate selection matched no branch, so
+  the candidate set was empty and nothing was ever examined. That reads as a
+  searched-and-empty result and it was not one; the writer existed and set
+  msgType 21. Distinguish "searched, empty" from "did not search".
 - **When a rewrite finds MORE, diff what it finds LESS.** Going from 45 to 92
   resolved layouts looked like unambiguous progress; the diff showed 17 fields
   the old tool had and the new one did not, of which four were real regressions
@@ -111,6 +117,19 @@ and left sitting there saying the opposite of the truth.
 - **`mnemonic.startswith("bl")` also matches `blo`, `bls`, `blt`, `ble`.** Four
   conditional branches read as calls; whole subtrees go unexplored and the
   result still looks tidy. Test `m in ("bl", "blx")`.
+- **There are four store-multiple modes, not two.** `stmib`/`stmda` write at a
+  different offset from `stm`/`stmdb`, and handling only the latter pair drops
+  the instruction *silently* — `wdelaytimerstart`'s entire header,
+  `stmib sp,{r3,ip}`, which is where its session and its msgType (24) live.
+  The map still printed, one instruction short, and the type read as never
+  written. Same for the `ldm` family.
+- **`v2o` must skip sections with `sh_addr == 0`, exactly as `o2v` does.** The
+  integer 801 — a message type from a literal pool — mapped into `.comment` and
+  came back as the string `"U) 4.1.2"`, part of the GCC version banner, which
+  was then published as a field's value. `o2v` was fixed for this trap years
+  ago and `v2o` was not, so the same file was caught by it twice. **A word from
+  a literal pool is a pointer only if it maps to a LOADED section**; otherwise
+  it is a number.
 - **`ldr pc, [pc, rN, lsl #2]` is a switch, not a return.** gcc puts the table
   immediately after the instruction, so reading it as a return cuts every case
   off *and* leaves the table's own words in the instruction stream.

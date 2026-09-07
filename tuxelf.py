@@ -152,7 +152,19 @@ class Elf:
     # -- address mapping --------------------------------------------------
 
     def v2o(self, va):
+        """Virtual address -> file offset, or None if the address is not mapped.
+
+        Skips sections with sh_addr == 0 for the same reason o2v does: they are
+        not loaded, so an address "inside" one is arithmetic, not data. Without
+        this, the small integer 801 -- a literal-pool constant that is a
+        message type, not a pointer -- landed in .comment and read back as the
+        string "U) 4.1.2", a fragment of the GCC version banner, which was then
+        published as the value of a reply's msgType field. o2v carried this
+        guard and v2o did not, so the same trap caught this file twice.
+        """
         for n, a, o, s in self.secs:
+            if a == 0:
+                continue          # not loaded; an address here is not data
             if s and a <= va < a + s and n != ".bss":
                 return o + (va - a)
         return None

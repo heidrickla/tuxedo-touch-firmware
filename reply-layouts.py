@@ -77,7 +77,9 @@ from capstone.arm import (ARM_CC_AL, ARM_INS_ADD, ARM_INS_AND, ARM_INS_ASR,
                           ARM_INS_B, ARM_INS_BX, ARM_INS_CMN, ARM_INS_CMP,
                           ARM_INS_LSL, ARM_INS_LSR, ARM_INS_MOV, ARM_INS_MOVT,
                           ARM_INS_MOVW, ARM_INS_MVN, ARM_INS_NOP, ARM_INS_ORR,
-                          ARM_INS_POP, ARM_INS_PUSH, ARM_INS_STM, ARM_INS_STMDB,
+                          ARM_INS_LDMDA, ARM_INS_LDMDB, ARM_INS_LDMIB,
+                          ARM_INS_POP, ARM_INS_PUSH, ARM_INS_STM, ARM_INS_STMDA,
+                          ARM_INS_STMDB, ARM_INS_STMIB,
                           ARM_INS_STR, ARM_INS_STRB, ARM_INS_STRD,
                           ARM_INS_STRH, ARM_INS_SUB, ARM_INS_TEQ, ARM_INS_TST,
                           ARM_OP_IMM, ARM_OP_MEM, ARM_OP_REG)
@@ -89,6 +91,26 @@ REPLY_LEN = 0x22C
 STORES = {ARM_INS_STR: 4, ARM_INS_STRB: 1, ARM_INS_STRH: 2, ARM_INS_STRD: 8}
 LOADS = (ARM_INS_LDR, ARM_INS_LDRB, ARM_INS_LDRH, ARM_INS_LDRD,
          ARM_INS_LDRSB, ARM_INS_LDRSH)
+# Every store-multiple addressing mode, and where the first register lands
+# relative to the base. Handling only IA and DB dropped `stmib sp,{r3,ip}`
+# whole -- the instruction that writes wdelaytimerstart's session AND its
+# msgType -- and the entry still printed, just one field short and with the
+# type reported as never written.
+STM_IDS = (ARM_INS_STM, ARM_INS_STMIB, ARM_INS_STMDA, ARM_INS_STMDB)
+LDM_IDS = (ARM_INS_LDM, ARM_INS_LDMIB, ARM_INS_LDMDA, ARM_INS_LDMDB)
+
+
+def multi_base(ins_id, n):
+    """Offset of the first register in a store/load multiple."""
+    if ins_id in (ARM_INS_STMIB, ARM_INS_LDMIB):
+        return 4
+    if ins_id in (ARM_INS_STMDA, ARM_INS_LDMDA):
+        return -4 * (n - 1)
+    if ins_id in (ARM_INS_STMDB, ARM_INS_LDMDB):
+        return -4 * n
+    return 0
+
+
 CLOBBERED = ("r0", "r1", "r2", "r3", "r12")
 ARGS = ("r0", "r1", "r2", "r3")
 REGS = ["r%d" % i for i in range(13)] + ["sp", "lr", "pc"]
@@ -212,7 +234,33 @@ class Layouts:
             return None
         return struct.unpack_from("<I", self.elf.d, o)[0]
 
+    # Where a string can actually live. Reading one out of .text or an
+    # unloaded section is how the integer 801 became "U) 4.1.2".
+    STRSEC = (".rodata", ".data", ".data.rel.ro", ".rodata.str1.4")
+
+    def section(self, va):
+        for n, a, o, s in self.elf.secs:
+            if a and s and a <= va < a + s and n != ".bss":
+                return n
+        return None
+
+    def literal(self, v):
+        """The constant a value provably is, or None.
+
+        A literal-pool word that maps to no loaded section cannot be a
+        pointer, so it is a number. Without this a msgType loaded from the
+        pool was rendered as whatever bytes sat at that file offset.
+        """
+        root, off = v
+        if root == ("imm",):
+            return off
+        if root == ("abs",) and self.section(off) is None:
+            return off
+        return None
+
     def cstr(self, va, limit=72):
+        if self.section(va) not in self.STRSEC:
+            return None
         o = self.elf.v2o(va)
         if o is None:
             return None
@@ -334,7 +382,7 @@ class Layouts:
             if ins.writeback:
                 regs[self.reg(ops[-1].mem.base)] = fresh(ins.address)
             return dst
-        if ins.id in (ARM_INS_LDM, ARM_INS_POP) and ops:
+        if ins.id in LDM_IDS or ins.id == ARM_INS_POP:
             # A `pop {r4,r5,pc}` is a return, and `pop {r4,r5,lr}` before a
             # tail-call `b` is the same epilogue: the writes belong to the
             # caller, not to the address after it. Letting one clobber
@@ -342,6 +390,8 @@ class Layouts:
             # before the send path that follows, and five builders the
             # previous tool resolved came back UNRESOLVED.
             first = 0 if ins.id == ARM_INS_POP else 1
+            if not ops:
+                return None
             if any(op.type == ARM_OP_REG and self.reg(op.reg) in ("pc", "lr")
                    for op in ops[first:]):
                 return None
@@ -383,6 +433,8 @@ class Layouts:
         ops = ins.operands
         if ins.id in (ARM_INS_POP, ARM_INS_LDM):
             first = 0 if ins.id == ARM_INS_POP else 1
+            if not ops:
+                return None
             return any(o.type == ARM_OP_REG and self.reg(o.reg) == "pc"
                        for o in ops[first:])
         if ins.id == ARM_INS_BX:
@@ -556,12 +608,9 @@ class Layouts:
                     stores.append((ins.address, k, STORES[ins.id],
                                    regs.get(self.reg(ops[0].reg), fresh(0)),
                                    self.reg(ops[0].reg), ins.cc))
-            elif ins.id in (ARM_INS_STM, ARM_INS_STMDB) and ops \
-                    and ops[0].type == ARM_OP_REG:
+            elif ins.id in STM_IDS and ops and ops[0].type == ARM_OP_REG:
                 root, off = regs.get(self.reg(ops[0].reg), fresh(ins.address))
-                n = len(ops) - 1
-                if ins.id == ARM_INS_STMDB:
-                    off -= 4 * n
+                off += multi_base(ins.id, len(ops) - 1)
                 for j, op in enumerate(ops[1:]):
                     if op.type != ARM_OP_REG:
                         continue
@@ -625,6 +674,70 @@ class Layouts:
             return self.describe(v)
         return None
 
+    def candidates(self, root, cls=None):
+        """Functions that could write through a pointer with this root.
+
+        Bounded rather than "trace all 12,592": for a global pointer, the
+        functions whose literal pool holds that global's address; for an
+        object field, the other methods of the same class.
+        """
+        out = set()
+        if root[0] == "load" and root[1] == ("abs",):
+            for va, _ in self.elf.refs(root[2]):
+                if self.section(va) == ".text":
+                    out.add(self.name(va))
+        elif cls and (root[0] == "in"
+                      or (root[0] == "load" and root[1][0] == "in")):
+            # Either a pointer held in a member, or the buffer inlined in the
+            # object. The inline case fell through both branches and produced
+            # "no writer found", which reads as a searched-and-empty result
+            # when in fact no search had run.
+            for _, n in self.elf.syms:
+                d = self.elf.dem(n)
+                if cls and d.startswith(cls + "::"):
+                    out.add(d)
+        return out
+
+    def fillers(self, root, off4, cls=None):
+        """Who stores msgType into a buffer that arrives already filled.
+
+        28 send sites never write +0x004 themselves. The message still has a
+        type; it was put there by whoever filled the buffer, and for a heap
+        pointer held in a member or a global that is a different function.
+        """
+        found = []
+        # The slot the pointer itself lives in, for `[X+n]` buffers. A filler
+        # usually writes the payload through the allocator's return value and
+        # only then parks the pointer in the member, so the fill happens under
+        # a different root and searching for the member's root alone finds
+        # nothing -- which is what "no writer found" meant on the first run.
+        slot = (root[1], root[2]) if root[0] == "load" else None
+        for fn in sorted(self.candidates(root, cls)):
+            try:
+                _, stores, _, _, outp, _ = self.trace(fn)
+            except (KeyError, ValueError):
+                continue
+
+            def note(addr, v, via=""):
+                lit = self.literal(v)
+                found.append((fn, addr, ("= %d" % lit if lit is not None
+                                         else "<- " + (self.source(v, outp)
+                                                       or "?")) + via))
+
+            for addr, k, w, v, sreg, cc in stores:
+                if k[0] == root and k[1] == off4 and w == 4:
+                    note(addr, v)
+            if slot is None:
+                continue
+            aliases = {v for addr, k, w, v, sreg, cc in stores
+                       if k == slot and w == 4 and v[0][0] != "?"}
+            for a in aliases:
+                for addr, k, w, v, sreg, cc in stores:
+                    if k[0] == a[0] and k[1] == a[1] + 4 and w == 4:
+                        note(addr, v, " (via %s before it is parked in the "
+                                      "member)" % self.describe(a))
+        return found
+
     def layout(self, fn, expect=()):
         """(send_va, buffer, memset_confirmed, fields|None, size) per send.
 
@@ -648,9 +761,9 @@ class Layouts:
             for addr, k, w, v, sreg, cc in stores:
                 if k[0] != root or not 0 <= k[1] - boff < REPLY_LEN:
                     continue
-                s = self.source(v, outp)
-                what = ("= " + s) if v[0] == ("imm",) else \
-                    ("<- " + (s or sreg))
+                lit = self.literal(v)
+                what = ("= %d" % lit) if lit is not None else \
+                    ("<- " + (self.source(v, outp) or sreg))
                 fields.setdefault((k[1] - boff, w, what), []).append((addr, cc))
             for addr, dst, cname, src, np, cc in copies:
                 if dst[0] != root or not 0 <= dst[1] - boff < REPLY_LEN:
@@ -671,11 +784,22 @@ def render(L, fn, entries, sink):
                  " entry" if buf[0][0] == "unreached" else "buffer UNRESOLVED"))
             sink("")
             continue
-        mt = [k for k in fields if k[0] == 4 and k[2].startswith("= ")]
+        # msgType is a constant, a named non-constant, or absent -- and the
+        # three mean different things. 20 of the web_request handlers copy it
+        # out of the request they are answering, which is an answer, not a
+        # gap; calling that "not a literal" hid it among the real unknowns.
+        at4 = [k for k in fields if k[0] == 4]
+        lit = [k for k in at4 if k[2].startswith("= ")]
+        if lit:
+            mt = "msgType " + " or ".join(sorted(k[2][2:] for k in lit))
+        elif at4:
+            mt = "msgType from " + " or ".join(
+                sorted(k[2][3:] for k in at4))
+        else:
+            mt = "msgType NOT WRITTEN HERE; the buffer arrives pre-filled"
         sink("   send 0x%x, buffer %s%s, %s" % (
             send_va, L.describe(buf),
-            ", memset 0x22c confirms" if confirmed else "",
-            "msgType %s" % mt[0][2][2:] if mt else "msgType not a literal here"))
+            ", memset 0x22c confirms" if confirmed else "", mt))
         if size > 0x400:
             sink("   NOTE function is 0x%x bytes over several cases; they share"
                  % size)
@@ -693,6 +817,7 @@ def main(path, check):
     L = Layouts(path)
     bs = L.builders()
     lines, resolved, unresolved, sites, control = [], 0, 0, 0, {}
+    prefilled = {}
     for fn in sorted(bs):
         entries = L.layout(fn, bs[fn])
         sites += len(entries)
@@ -701,6 +826,10 @@ def main(path, check):
                 unresolved += 1
             else:
                 resolved += 1
+                if not any(k[0] == 4 for k in e[3]):
+                    cls = fn.split("::")[0] if "::" in fn else None
+                    prefilled.setdefault((e[1][0], e[1][1], cls),
+                                         []).append(fn)
         if fn == CONTROL_FN and entries and entries[0][3] is not None:
             # Join every row at an offset. A dict comprehension keeps only the
             # last, so a predicated pair reported one arm and the control
@@ -708,6 +837,31 @@ def main(path, check):
             for k in entries[0][3]:
                 control.setdefault(k[0], []).append(k[2])
         render(L, fn, entries, lines.append)
+
+    if prefilled:
+        lines.append("")
+        lines.append("=== WHO SETS msgType FOR A BUFFER THAT ARRIVES FILLED ===")
+        lines.append("")
+        lines.append("%d sites never write +0x004 themselves. The message still"
+                     % sum(len(v) for v in prefilled.values()))
+        lines.append("has a type; it was put there by whoever filled the buffer.")
+        lines.append("Searched: for a global pointer, the functions whose literal")
+        lines.append("pool holds it; for an object field, the other methods of the")
+        lines.append("same class. A buffer with no writer listed is a real gap,")
+        lines.append("not a finished answer.")
+        lines.append("")
+        for (root, off, cls), fns in sorted(
+                prefilled.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
+            lines.append("-- buffer %s, used by %d site(s):"
+                         % (L.describe((root, off)), len(fns)))
+            for f in sorted(set(fns)):
+                lines.append("     %s" % f)
+            hits = L.fillers(root, off + 4, cls)
+            if not hits:
+                lines.append("   no writer of +0x004 found in the searched set.")
+            for f, addr, what in hits:
+                lines.append("   +0x004 %-28s in %s @0x%x" % (what, f, addr))
+            lines.append("")
 
     head = [
         "# The 556-byte reply union, one layout per send site.",
@@ -738,9 +892,12 @@ def main(path, check):
         "#   filled once and read after, and can mislead for one reused twice.",
         "#   `<- rN` means the producer could not be determined -- the field is",
         "#   real, its source is not claimed.",
-        "#   `msgType not a literal here` means +0x04 is not written with a",
-        "#   constant in this function. The message still has a type; it arrives",
-        "#   from a caller or inside a copy.",
+        "#   msgType is reported three ways, and they mean different things:",
+        "#   a number is a constant stored at +0x04 here; `from <expr>` is a",
+        "#   non-constant whose source is named -- `from [arg r1+0x4]` is the",
+        "#   type of the web_request being answered, echoed back; and NOT",
+        "#   WRITTEN HERE means the buffer arrives already stamped, in which",
+        "#   case the last section names the function that stamped it.",
         "#",
         "# WHAT THIS DOES NOT SHOW",
         "#   A function with several cases shares one frame across all of them,",

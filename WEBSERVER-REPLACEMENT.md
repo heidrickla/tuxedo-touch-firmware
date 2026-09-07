@@ -3033,13 +3033,37 @@ the same object when their roots match, so the buffer is whatever `r1` holds at
 the send and a field is any store, or any `strcpy`/`memcpy`/`sprintf`, whose
 destination shares that root.
 
-**78 builders, 92 send sites, all 92 resolved. 20 msgTypes** — 20, 21, 51, 59,
-60, 61, 62, 101, 103, 109, 111, 112, 147, 150, 151, 152, 153, 154, 504, 600 —
-against the 7 this section originally listed. **105 text fields** that a
-store-only method cannot see. The map is committed as `reply-layouts.txt`.
+**78 builders, 92 send sites, all 92 resolved. 25 msgTypes** — 18, 20, 21, 24,
+51, 59, 60, 61, 62, 101, 103, 109, 111, 112, 147, 150, 151, 152, 153, 154, 504,
+600, 801, 999, 9999 — against the 7 this section originally listed. **105 text
+fields** that a store-only method cannot see. The map is committed as
+`reply-layouts.txt`.
+
+**Every site's msgType is now accounted for**, which took a second pass: 35 are
+a constant stored at +0x04, 33 name a non-constant source, and the remaining 23
+never write +0x04 at all because the buffer arrives already stamped. For those
+the map names the function that stamped it, and the answer is one architecture
+repeated four times — a `web_request*` handler allocates or claims the reply
+buffer, copies `session` and `msgType` out of the request it is answering,
+parks the pointer in a member or a global, and an asynchronous callback later
+fills the payload and sends it:
+
+| buffer | sites | stamped by |
+|---|---|---|
+| `[*0xd2f2e8]` global | 6 Z-Wave/thermostat callbacks | 22 `sltRequestZwave*` handlers, from `[arg r1+0x4]` |
+| `[this+0x244]` | 9 zone-list sites | `sltRequestAllZoneCurrStatus`, via `osal_Malloc()` |
+| `[this+0x14]` | 6 event-log sites | `sltRequestEventLogUpload`, via `osal_Malloc()` |
+| `this+0x18` inline | 2 partition sites | `sltSendPartitionDetailsToWebClient`, `= 21` |
+
+**One shared global reply buffer serves every Z-Wave path.** Two concurrent
+Z-Wave requests race on `0xd2f2e8`; a replacement that pipelines requests where
+the vendor serialised them can expose that.
 
 What it says:
 
+- **msgType 18 is `sltSendNewPartitionDetails`.** `TRAPS.md` §1 records
+  `0:18:` frames arriving 32.98 s apart and mistaken for a button's effect; the
+  heartbeat now has a name.
 - **msgType 20's payload is at `+0x0E`.** `wsltHandleRawDataFromPanel` builds
   it with `strcpy` then `strcat` from `apl_getEcpConsoleModeData()`. This is
   the console-mode message P10 made real, and it is the one field I said would
@@ -3100,6 +3124,23 @@ matters more than the fixes: each looked like a tidy result.
    Decoding the table also required stepping over its own entries, because
    capstone's `disasm()` stops at the first undecodable word rather than
    skipping it (TRAPS §1 again).
+
+8. `stmib sp,{r3,ip}` was dropped whole. Only `STMIA` and `STMDB` were
+   handled, so `STMIB` and `STMDA` recorded nothing and `wdelaytimerstart`'s
+   entry printed with its session and msgType simply absent. That instruction
+   *is* its msgType: **24**.
+9. `tuxelf.Elf.v2o` mapped addresses inside sections with `sh_addr == 0`. The
+   integer **801** — a literal-pool constant that is a message type — landed in
+   `.comment` and read back as `"U) 4.1.2"`, a fragment of the GCC version
+   banner, which was published as a field's value. `o2v` has carried a guard
+   against exactly this since the phantom-reference bug; `v2o` never did.
+10. A literal-pool word was rendered as a pointer whenever a string could be
+    read at that address. It is a pointer only if it maps to a loaded section;
+    otherwise it is a number, and for msgType it always was.
+11. The "who filled this buffer" search reported "no writer found" for an
+    inline buffer, because neither branch of the candidate selection matched
+    that shape and no search had run. A search that never ran must not report
+    an empty result.
 
 Two further errors were caught by the regression diff rather than by the tool:
 `osal_MqSend` was being recorded regardless of length, so a **580-byte**
