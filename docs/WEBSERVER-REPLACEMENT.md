@@ -3305,8 +3305,27 @@ offset 0 because `mem.index` was ignored.
   from Barracuda's single `sigHandler` caller; this replaces that inference
   with the mechanism.
 
-  Holds for the live panel as well as for stock: **v13 differs from the stock
-  binary in exactly the four P9 bytes**, which are nowhere near this path.
+  A third strand arrived after this was written and is **stronger than either
+  of the above**: `supervis` creates exactly one thread,
+  `serverThreadForCamera` at `0xc5e8`, and that thread touches no queue, no
+  kill and no clock.
+
+  ⚠ **OPEN — two statements about P9 that cannot both stand as worded, and this
+  gates stage 6.** The first account said the finding holds on the live panel
+  because *"v13 differs from the stock binary in exactly the four P9 bytes,
+  which are nowhere near this path"*. The second said `0xc5e8` is *"the precise
+  address P9 patches out, so on this panel it is never created"*. If P9 removes
+  the only thread `supervis` creates, then P9 is not nowhere near this path —
+  it is the reason the conclusion holds *here*, which also means the conclusion
+  is **panel-specific rather than a property of stock `supervis`**. The two may
+  be reconcilable if "this path" meant the `SupervisTimeout` decision path
+  specifically, with the camera thread a separate concern; that is a plausible
+  reading and it is not the one the words carry.
+
+  **Do not book the window on this entry until that is resolved.** The
+  underlying conclusion may well be right by three independent routes; what is
+  not yet established is whether it depends on P9 being applied. Raised with
+  the firmware session 2026-09-07.
 
   Recorded on behalf of the firmware session, which found it and could not
   commit it while this repository was held for the publication rewrite.
