@@ -449,8 +449,47 @@ each leaks a parsed tree per operation.
 
   🔑 **And a browser DOES work** — Lewis created a group through the web UI on
   2026-09-08 while the scripted session was bailing, so this is a difference
-  between the two clients and not a dead endpoint. Whatever it is, it is not in
-  the list above.
+  between the two clients and not a dead endpoint.
+
+  ## ✅ ROOT CAUSE: the session is registered OUTSIDE the range the reader scans
+
+  Found by searching guest memory for a value the server itself had rendered,
+  rather than by address arithmetic — `/eventhandler.html` carries
+  `<input id="hidSession" value="...">`, so the session id is knowable exactly,
+  and `findsession.py` looks for that u32 instead of computing where the table
+  ought to be. Two constraints then fix the mapping (the pointer must land in a
+  writable region **and** the found record must sit on a 40-byte boundary from
+  it), so a wrong delta cannot quietly satisfy it.
+
+      the record IS there:  index 10   id=0x21cb39c0  flag=1
+                            token='7c17e0518d3c7a1c41894ce458...'
+      slots 1..9:           0xFFFFFFFF, i.e. FREE
+
+  So `addSessionItem` writes correctly — and `getCSRFToken1` scans
+  **`i = 1 .. getNoOfUsers()`** from `r4 = 40`. This unit has **5 web accounts**
+  (`UserNamesFile.txt`), so the reader looks at indices 1–5 and the record at 10
+  is structurally invisible to it. `getCSRFToken1` returns NULL, `0x3a3c8`
+  branches to the bail, and the request answers 200 with an empty body.
+
+  🔑 **The writer picks the LAST free slot, the reader only checks the first few.**
+  `mov r8, r6` at 0x1431c runs on *every* empty slot the scan passes, so `r8`
+  ends as the highest index examined, not the lowest — while the reader's bound
+  is the USER count, not the session-list length. Whenever the session list is
+  longer than the number of web accounts, registration lands out of range.
+
+  ⚠ **Not yet explained: why the browser works anyway.** `group_configuration.js`
+  calls `sendCommand(6293/6295, …)`, and `httpRequest.js` builds
+  `/handlerequest.html?cmd=…&sessionid=<hidSession>&tokenkey=<hiddenKey>&sid=<rand>`
+  — the same gated endpoint. Either Lewis's session landed at a low index, or the
+  group write reached the panel by another route. **Do not assume the UI is
+  exempt** until that is measured; the peer found arm/disarm goes to
+  `/AdvancedSecurity/*` on the API surface instead, so a second route plainly
+  exists.
+
+  ✅ **What this hands the next attempt:** the scripted request shape is now
+  known exactly — `sessionid` is the NUMERIC `hidSession` from
+  `/eventhandler.html`, not the cookie's hex, and `tokenkey` is a required
+  parameter that is `-1` precisely because of the bug above.
 
   ⚠ Reading the table on the PANEL to settle it directly does not work either:
   `/proc/<pid>/mem` on 2.6.31 needs a ptrace attach, and attaching to Barracuda
