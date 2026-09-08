@@ -398,21 +398,44 @@ each leaks a parsed tree per operation.
   `[0..3]` session id, `[4]` flag, `[5..]` a token string from
   `random_string(32)` + `getKeyFromPassword`.
 
-  🔑 **A REAL CANDIDATE BUG, worth checking before anything else:**
-  `addSessionItem1` writes at `index * 40` with no lower bound, but
-  `getCSRFToken1` searches `i = 1 .. getNoOfUsers()` starting at `r4 = 40`.
-  **Index 0 is written but never searched.** If `authPage_service` passes 0 as
-  the index, the entry is stored somewhere the reader structurally cannot find,
-  and that alone would explain everything above.
+  🚨 **RETRACTED: "it registers at index 0, which the reader never searches."**
+  That was committed here and it is WRONG. `mov r8, r6` at 0x1431c is *inside*
+  the basic block starting at 0x14314, and 0x14314 IS in the trace — so it does
+  execute, and `r8` ends up as **the last free/reclaimed slot index**, not 0.
+  The mistake was reading a trace of block ENTRIES as if a listed address were
+  the only instruction that ran; every instruction from the block start to its
+  terminating branch runs. `r8 = 0` at 0x142d8 is only the initial value.
 
-  ❔ **Still unresolved, and the last attempt was NOT conclusive.** Dumping the
-  table after a registering GET showed every record as `0xFF`, but that read
-  resolved the table address by "first delta that maps", which is exactly the
-  weak criterion that returned convincing garbage earlier today (guest VA vs the
-  second LOAD, +0x10000). **Do not treat that dump as evidence the write did not
-  land.** Resolve the mapping properly first — and confirm what index
-  `authPage_service` passes in `r8` at 0x14398, which is the value the candidate
-  bug above turns on.
+  **What the loop actually does** (0x142f8..0x14340), for the next attempt:
+
+      142f8  getSessionID(r6)              -> r4 = slot r6's stored id
+      14308  HttpServer_getSession(...)    -> is that session still alive?
+      14310  bne 14334                     alive -> compare with ours
+      14314  cmn r4, #1 ; mov r8, r6       empty slot: REMEMBER it as reusable
+      14324  removeSessionItem / clientExit   stale: reclaim it
+      14334  cmp fp, r4 ; moveq sl, #1     ours already present
+      143a4  addSessionItem(r8, fp, 1)     write into the remembered slot
+
+  and `fp` is a real value, not `-1`: the `mvneq fp, #-1` arm at 0x142e4 needs
+  `[sp,#4] == 0`, which cannot hold here because the path reached 0x142d0 past
+  the `beq` at 0x142cc.
+
+  ❔ **So the write looks correct and the lookup still fails. The live suspect is
+  now the FRAMEWORK session, not the vendor one.** Both sides key on
+  `HttpRequest_getSession(req, ...)->[r7,#8]`, and 0x142b0 calls it with the
+  **create** flag. If a scripted client does not carry whatever identifies that
+  framework session, every request mints a *new* one — so the id registered
+  during the GET is not the id looked up during the `/handlerequest.html` call,
+  and both halves are individually correct.
+
+  ⚠ The cookie test that was supposed to settle this **had a bug**: the jar was
+  built with `re.findall(r"([^,;\s]+)=([^,;\s]+)")` over `Set-Cookie`, which
+  swallows attributes — it produced a cookie literally named `path`. Redo it with
+  `http.cookiejar` before concluding anything about cookies.
+
+  ⚠ Reading the table on the PANEL to settle it directly does not work either:
+  `/proc/<pid>/mem` on 2.6.31 needs a ptrace attach, and attaching to Barracuda
+  is not worth a relaunch unit.
 
   🔑 **The consequence reaches past the scene work: any `/handlerequest.html`
   number taken through console mode measured the bail-out.** Clean 200s with a
