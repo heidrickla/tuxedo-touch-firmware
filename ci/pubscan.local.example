@@ -53,21 +53,34 @@ author paths	[A-Za-z]:\\{1,2}(?:MyRepoDir|MyProjectsDir)\b
 #                                       ... if ":" in raw else ("MyName", raw)
 #
 #   v5  v4, but that arm also needs   v4 said "prose carries no such token" and
-#       an `=` AND a quote before      THAT WAS WRONG. These docs discuss
-#       the name                      accounts and the owner in one sentence
+#       an `=` between the token       THAT WAS WRONG. These docs discuss
+#       and the name                  accounts and the owner in one sentence
 #                                     constantly, so v4 flagged five prose
 #                                     lines: "locks MyName out of his own
 #                                     panel", "one MyName created as limited".
 #
-# So the trailing arm is distance-tolerant but demands two things prose does not
-# have TOGETHER: an `=` on the line, and a quote immediately before the name.
+#   v6  + account|login in that       v5's keyword group had user|username|acct,
+#       arm's keyword group            so `--account", default="MyName"` and
+#                                     `--login", …` slipped through: the
+#                                     `--(?:account|login)[= ]+` arm wants the
+#                                     name straight after the flag. `--acct`
+#                                     was covered only because acct was listed.
+#
+# So the trailing arm is distance-tolerant but demands an `=` between the
+# keyword and the name, which the prose here does not have.
+# ⚠ **It does NOT require a quote** -- the tail is `["']?`, optional. An earlier
+# version of this comment claimed a quote was required, which was wrong and is
+# the sort of inaccuracy that makes the next person trust the wrong constraint.
+#
 # Adjacency is what kept failing in v2-v3 -- each fix matched the syntax last
 # seen rather than the idea "this name is being used as a login" -- but pure
 # proximity swings back into v1. **Test any new arm against the repo's own prose,
-# not invented sentences: the false positives here were real doc lines.**
+# not invented sentences: v4 passed a set of invented negatives and still flagged
+# five real doc lines. Run ci/pubscan.py over the tree; that is the only check
+# that sees the actual text.**
 #
 # Enumerate the ways an account reaches a credential position -- short flag,
 # long flag, assignment, argparse default, positional into a client -- and TEST
 # the pattern against forms it must hit AND prose it must not, before trusting
 # it. A detector that cannot fire looks exactly like a clean repo.
-account in credential position	(?i)(?:(?:^|[\s;|&(])-u[= ]+|--user(?:name)?[= ]+|--(?:account|login)[= ]+|\b(?:user|username|account|login|acct)\b\s*[=:]\s*|--user(?:name)?\b[^\n]{0,24}?["']|TuxedoProbe\([^\n]{0,60}?|\b(?:user|username|acct)\b[^\n]{0,60}?=[^\n]{0,60}?)["']?MyName\b
+account in credential position	(?i)(?:(?:^|[\s;|&(])-u[= ]+|--user(?:name)?[= ]+|--(?:account|login)[= ]+|\b(?:user|username|account|login|acct)\b\s*[=:]\s*|--user(?:name)?\b[^\n]{0,24}?["']|TuxedoProbe\([^\n]{0,60}?|\b(?:user|username|acct|account|login)\b[^\n]{0,60}?=[^\n]{0,60}?)["']?MyName\b
