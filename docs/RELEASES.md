@@ -103,10 +103,18 @@ P11 and P12 fix the last defect that affected the panel in daily use: after the
 first web-keypad visit, Back and Home died permanently, because command 1125
 increments a counter that the shipped UI never decrements.
 
-P10 is necessary but **not** sufficient on its own — Barracuda discards reply
-type 20 entirely, so console mode still cannot be reached until Barracuda is
-replaced. It is in v12 so that when a replacement does read the queue, the
-message already carries real display text.
+P10 makes reply type 20 carry real keypad display text instead of a canned
+placeholder.
+
+🚨 **This paragraph previously said Barracuda "discards reply type 20 entirely"
+so console mode "cannot be reached until Barracuda is replaced". That was wrong,
+corrected 2026-09-08 by measurement.** Barracuda routes type 20 at `0xd6b8` to a
+handler that broadcasts the text on the push stream and caches it via
+`setConsoleMessage`, which is what the web UI's `commandID=5002` poll serves. The
+old claim came from enumerating the dispatch chain's equality comparisons; type
+20 is caught by a **range** arm (`bcc`), which that method cannot see. So P10 is
+sufficient for the display path and **console mode needs no Barracuda change** —
+see `TUXEDO-FIX-STATUS.md` for the trace and the control that proves it.
 
 ### Carried over from v11
 

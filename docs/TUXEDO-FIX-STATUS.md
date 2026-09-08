@@ -59,21 +59,67 @@ They are in the live-on-the-panel table above. The offsets quoted in the old
 version of this section (`0x14934`, `0x4b88`) were wrong; the verifier carries
 the correct ones.
 
-## Console mode: patched, and still not reachable
+## Console mode: the display path in Barracuda is COMPLETE
 
-`/tuxedo` P10 at `0x135a3c` is applied and verified. It is **necessary but not
-sufficient**, and the reason is worth keeping straight:
+🚨 **This section previously said Barracuda drops reply type 20 and that console
+mode "cannot work through Barracuda by any means". That was wrong. Corrected
+2026-09-08 by measurement.**
 
-- The gate it fixes selects the *payload* of reply message type 20 — real keypad
-  display text versus a canned 14-byte placeholder. It never controlled whether
-  the message was sent.
-- The message is dropped by **Barracuda**, whose reply dispatcher
-  `gettuxedoIPCCommFunc` handles 42 message types and has no case for 20.
+`/tuxedo` P10 at `0x135a3c` is applied and verified: it selects the *payload* of
+reply type 20 — real keypad display text versus a canned 14-byte placeholder.
 
-So console mode cannot work through Barracuda by any means, and it arrives free
-once Barracuda is replaced, because a server reading `/Q_ServCmdTrsmtr` directly
-receives type 20 — carrying real display text precisely because P10 is applied.
-Full trace in `TUXEDO-VIRTUAL-CONSOLE-BUGS.md`.
+**Barracuda handles type 20.** `gettuxedoIPCCommFunc` routes it at `0xd6b8` to
+the handler at `0xdb8c`, which assigns the text (at message **+0x0E**, not
++0x0F), broadcasts it on the push stream as id 20 and again as id **-1**, and
+calls `setConsoleMessage(20, text)` at `0xdc70`. That fills the buffer
+`getConsoleMessage()` returns, which is exactly what the web UI's
+`commandID=5002` poll on `/handlerequest_mobile.html` serves — `/console.html`
+issues it every 5 s from `waitForconsoleStatus()`.
+
+**Measured end to end, with a control.** Injecting msgType 20 carrying a unique
+marker leaves **2 copies in the guest heap**; injecting msgType 23, which
+genuinely is absent from the chain, leaves **0**. Both leave one copy in qemu's
+raw message buffer at the same address, so the instrument discriminates rather
+than merely reading high.
+
+And the cache itself can be read: after injecting the marker,
+`setConsoleMessage`'s buffer holds
+
+    20:CONSOLEMARK42|LINE2TEXT
+
+which is exactly its own format — `Itoa(20)`, the separator at `0x84f5c`, then
+the text — and exactly what `getConsoleMessage()` returns for `commandID=5002` to
+print. So the path is confirmed from injected IPC message to the bytes the page
+would render, not inferred from the disassembly.
+
+⚠ **Reading that buffer needs the second-LOAD delta.** Guest VA `0x55b7e4` is
+mapped at host `0x56b7e4` under qemu-user, **+0x10000** — the same delta
+`patches.tsv` notes for the P14 attr block. Seeking to the guest VA lands in the
+read-only ELF mapping instead and returns S-box data, which looks like a failed
+write rather than a wrong address.
+
+⚠ **Why the old claim survived, and it generalises.** The "42 message types"
+list was built by enumerating the dispatch chain's **equality** comparisons.
+Type 20 is routed by a **range** arm instead:
+
+    d6b0  cmp r8, #21
+    d6b4  beq da80        <- 21, partition status
+    d6b8  bcc db8c        <- r8 < 21, the console handler
+
+`bcc` is unsigned less-than. **Enumerating `cmp`/`beq` pairs in a
+compiler-generated binary-search chain silently misses every value handled by a
+range arm**, so any "type N is not dispatched" claim derived that way needs
+re-checking.
+
+⚠ **Consequence for Home Assistant:** console display text is broadcast with id
+**-1**, which `ha-tuxedo-touch` treats as `CMD_UNSOLICITED` and feeds to its
+partition-status path. That is stock behaviour whenever console mode is in use,
+not something introduced by any patch here.
+
+So console mode needs **no** Barracuda change. If the web keypad looks broken,
+check which page is served first: `/console.html` carries the keypad as 12 static
+`<a class="btn" onclick="sendKeys(...)">` cells with all nine assets serving 200,
+while `/consolekeypad.html` contains no keypad markup at all.
 
 ## Outstanding, analysed but not reduced to bytes
 

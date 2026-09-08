@@ -1,10 +1,14 @@
 # P15 leak fix: tooling and derivation
 
 The vendor webserver leaked **1488 bytes per API request**, **7537 per
-`/tuxedoapi.html` request**, and **10880 per IPC status message**. All three now
-measure zero. `patches.tsv` carries the **165** resulting rows; this directory
-is how they were derived and verified, because without it those rows are
-unexplained hex.
+`/tuxedoapi.html` request**, **10880 per IPC status message**, **727 per
+`/scene_configuration.html` view** and **704 per `/groups.html` view**. All of
+those now measure zero. `patches.tsv` carries the **228** resulting rows; this
+directory is how they were derived and verified, because without it those rows
+are unexplained hex.
+
+Still leaking, measured and recorded rather than assumed closed: `/GetSceneList`
+at ~491 B/request after LEAK 20 — see the two `json_write` strings below.
 
 Every site is a vendor defect present in unmodified `324209e1`. None was
 introduced by our patches — `attribute.py` proves it.
@@ -141,9 +145,133 @@ the sweep it sat at position 17 and everything after it failed too. Running it
 shows up late in a sequence, re-run it first before concluding it is cumulative
 — and A/B it against the previous build before concluding it is yours.
 
-## Still open: `/GetSceneList` leaks ~780 B/request, and it IS drivable
+## LEAK 20: `getEScenes`, the `/GetSceneList` handler — 780 → 491 B/request
 
-The "no driver" problem below is solved for the API side:
+**Attribution took a jump table, which is why a `bl` search never found it.**
+`/GetSceneList` is dispatched by ID: `Test1Module_constructor` (0x15740)
+registers a 74-entry table at 0x8ab14 of `{name1_ptr, name2_ptr, id}` with the
+decoder at 0x15778, which does `ldrh` the id, `bic #0xf000` to strip the flag
+nibble, `sub #8`, then `ldr pc, [pc, r1, lsl #2]` into a jump table at 0x15798.
+For `GetSceneList` (id 0x10018039) that is index 49 → 0x1585c → **0x159a0**,
+which is a **tail-branch thunk**: `mov r1, r3 ; b getEScenes`.
+
+`getEScenes` (0x16520, 252 bytes) is **straight-line — no conditional branches**
+— and leaks four things, the same four as `getPartitionStatus`:
+
+| where | what | patched |
+| --- | --- | --- |
+| 1656c | `json_write(r6)` STRING 1, destroyed by `strlen`'s return | no, see below |
+| 1657c | tree B (`r7`), never deleted | **yes** |
+| 165a4 | `json_write(r6)` STRING 2, destroyed by `encrypt`'s return | no |
+| 165c8 | the `Base64Encode` buffer at `[fp-48]` | **yes** |
+
+The epilogue is the safe place: at 0x165f8 both `r7` and `[fp-48]` are still
+live, `r7` is callee-saved so `json_delete` preserves it, and nothing can branch
+past it. **Measured 778/790 → 491.5 B/request**, two runs each, with the plain
+API endpoint reading 0.0 in the same session.
+
+### LEAKS 21 and 22 were both built, measured, and NOT shipped
+
+Freeing STRING 1 (wrapping `bl strlen` at 0x16570) and freeing STRING 2
+(wrapping `bl encrypt` at 0x165b8) each changed **nothing**: 491.5 B/request with
+STRING 1 freed, with STRING 2 freed, and with neither — identical, two runs each.
+Both stubs are sound; the STRING 2 build served 302 with all four listeners up
+afterwards. They simply release nothing that was accumulating. Both are kept in
+`mkapifix.py` with their `*_SITES` tuples emptied, so the next attempt knows what
+was tried and what it produced.
+
+🔑 **The two null results together are the useful finding: the residual is not
+the strings.** The chunk histogram after LEAK 20 shows, per request, roughly
+
+    5 x 40 B    3 x 32 B    2.7 x 16 B    1 x 64 B    1 x 56 B
+
+— a dozen small chunks, which is the shape of a **JSON tree**, not of two large
+serialised strings. Freeing strings was the wrong target, and measuring said so
+twice before anything shipped.
+
+### What the residual actually is — named by dumping the chunks
+
+`chunkdiff.py` on the growing sizes gives it directly:
+
+| size | contents |
+| --- | --- |
+| 64 B, 56 B | copies of the Base64 response string, `Rn/ljjpt3Bda8joyGqr1kdvMmt7qSWoc6eNtpVaojJw=` |
+| 40 B | `{"Status":"No scenes found"}` and **`Children is null inc`** — a libjson error string |
+
+So it is libjson error nodes plus extra copies of the encoded response, not a tree
+of ours. `Children is null inc` is libjson complaining about a node with no
+children, which fits: the scene database is all placeholder slots.
+
+🔑 **AND THE BENCH IS FAITHFUL HERE — checked, not assumed.**
+`hatcscenedb.json` is **byte-identical on the bench and the panel** (3182 bytes,
+every entry `"id":0, "name":"", "isUsed":0`), so "No scenes found" is what the
+panel returns too and this residual is real rather than an artefact of an empty
+test fixture. Worth stating because the obvious worry — that the bench takes an
+empty-database branch the panel does not — is exactly the mistake that cost a day
+on the IPC path. Re-check the two files before trusting any future measurement
+here.
+
+⚠ Note the scene names visible in the web UI (`Bed time`, `Evening time`, ...)
+come from `voicecommandglobal.json`'s `SCENES` list, **not** from
+`hatcscenedb.json`. Seeing them does not mean scenes are configured.
+
+**Where to look next — two candidates already eliminated.**
+
+- `Base64Encode` (0x1cf20) is **balanced**: `malloc ; fmemopen ; BIO_new(b64) ;
+  BIO_new_fp ; BIO_push ; BIO_write ; BIO_ctrl ; BIO_free_all ; fclose`. The two
+  BIOs are chained, so one `BIO_free_all` releases both — the textbook OpenSSL
+  idiom. Its single `malloc` is the output buffer, which LEAK 20 frees.
+- `encrypt` (0x1cdf8) is **balanced**: `EVP_CIPHER_CTX_new` / `EVP_CIPHER_CTX_free`.
+
+⚠ **One theory tried and refuted, recorded so it is not tried again:** that
+`json_push_back` COPIES the node `json_new_a` returns, leaving the original
+unowned. If that were true, every `json_new_a` + `json_push_back` pair in the
+image would leak a node — and the API path, which uses that pair, measures
+**0.0 B/request**. So `push_back` takes ownership and the node dies with its
+tree. The API path reading zero is the evidence.
+
+That leaves the allocation unattributed. The next step is a trace rather than
+more static reading: `serve-traced.sh` over `getEScenes` and its callees with a
+wide `-dfilter`, comparing executed blocks against the frees, which is how the
+`getPartitionStatus` leaks were found. Before spending that effort, weigh that
+this endpoint is polled only while someone has the scene page open and the panel
+measures flat at idle — the libjson error nodes in particular are inside the
+library and may not be reachable from our side at all.
+
+⚠ **The RSS slope is page-quantised and cannot resolve small wins.** 144 kB over
+300 requests moves in 4 kB steps, so anything under ~14 B/request is invisible to
+it. Use `sceneleak.sh` for increments that size — and note that a slope repeating
+to the decimal across builds is a sign it is quantisation, not stability.
+
+⚠ **A stub at 0x165b8 must not push.** `encrypt` takes a fifth argument on the
+stack (`str r5,[sp]` at 0x165ac), so moving sp hands it the wrong value. The
+disabled LEAK 22 stub shows the alternative: stash in r4/r8/r9, which are each
+consumed into an argument register before the call and never read again, and
+return with `bx r9` because `json_free` destroys lr.
+
+## `commandID=5002` does NOT leak — settled by construction
+
+The console display poll runs 720 times an hour, far heavier than anything else
+here, so it was the obvious suspect. It cannot leak:
+
+    getConsoleMessage:  ldr r0, [pc]   -> the static buffer 0x55b7e4
+                        bx lr
+    the 5002 arm:       bl getConsoleMessage ; HttpResponse_printf ; exit
+
+Three instructions and no allocation. The ~1965 B/poll seen while the page was
+open was page-load working set, which is consistent with RSS plateauing the
+moment the page closed.
+
+⚠ `/handlerequest_mobile.html` rejects every `commandID` with
+`Session_Expired` for a session obtained the normal way — the page's own
+`hiddenKey` is `-1` and `hidSession` a placeholder, so something else populates
+them. Driving that surface would need a bench-only session bypass; it was not
+needed here because the static reading is decisive.
+
+## Still open: the rest of `/GetSceneList`
+
+Remaining after LEAK 20: ~491 B/request, which is STRING 1 and STRING 2 above.
+The "no driver" problem is solved for the API side:
 
     leakprobe.py --mode api --endpoint /GetSceneList --plain operation=get
 

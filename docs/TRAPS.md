@@ -10,6 +10,21 @@ already written down somewhere when I hit it. Hand-rolling an emulation rig
 cost hours while `ssh/BUILD.md` held the recipe and `WEBSERVER-REPLACEMENT.md`
 held the queue facts.
 
+🚨 **READING THIS FILE IS NOT CHECKING THE REPO, AND THAT DISTINCTION COST A
+PANEL RESET.** 2026-09-08: I read §6, found the 24-relaunch decode, felt covered,
+and never grepped further. **`docs/PUSH-STREAM-AUTH.md` R1/R4 held the actual
+procedure** — the log path, the counter readout, the ceiling, the note that
+`killall` spends a unit — and because I never read it I spent the budget unaware
+it was cumulative across the whole uptime and **tripped the hardware reset.**
+Same day, twice more: I re-derived §6's decode from the binary, and re-derived
+the event enum that `probe/supervis_events.py` regenerates on demand.
+
+🔑 **This file carries MECHANISMS. Procedures for the live panel are in
+`docs/PUSH-STREAM-AUTH.md`.** Before deriving anything about panel behaviour,
+grep `docs/` for the noun — `SupervisionLog`, `RESTART`, `budget`. Three
+re-derivations in one day, each worse than the record it duplicated, is not bad
+luck; it is what stopping at one file looks like.
+
 **When you find something stale, FIX it. Do not annotate it as stale.** Saying
 "this is superseded" and moving on leaves the next reader hunting for the actual
 state, which is the whole failure this file exists to stop. Rewrite the entry to
@@ -148,6 +163,25 @@ and left sitting there saying the opposite of the truth.
   1,744 reachable functions as uncallable.
 - ARM immediates are 8-bit rotated: **1125 and 1126 are not encodable**, so a
   `cmp #imm` scan cannot see them. Check the literal pool.
+- 🚨 **A COMPILER-GENERATED BINARY-SEARCH CHAIN ROUTES VALUES BY RANGE, SO
+  ENUMERATING `cmp`/`beq` PAIRS SILENTLY MISSES THEM.** `gettuxedoIPCCommFunc`
+  was documented for a release as dispatching "42 message types" with **no case
+  for 20**, and three docs concluded console mode "cannot work through Barracuda
+  by any means". Type 20 *is* dispatched — by the range arm:
+
+      d6b0  cmp r8, #21
+      d6b4  beq da80        <- 21
+      d6b8  bcc db8c        <- everything BELOW 21, including 20
+
+  `bcc` is unsigned less-than, and nothing in the chain ever compares against 20,
+  so an equality-based enumeration cannot see it however carefully it is run.
+  Disproved by injecting msgType 20 and finding its text in the guest heap, with
+  msgType 23 as a control leaving none. **Any claim of the form "value N is not
+  in the dispatch table", derived by listing equality comparisons, is unsafe** —
+  walk the chain for the specific value, or drive it and observe.
+  Same family as the `bl`-only scan that made `pthread_detach` look uncalled and
+  `grep -A1 '^Tcp:'` landing on the UDP header: **a scan that answers by
+  enumeration is only as complete as the shapes it enumerates.**
 - ELF sections with `sh_addr == 0` are not loaded. Mapping offsets inside
   `.symtab`/`.strtab`/`.comment` yields phantom VAs and fake data references.
 - **`mnemonic.startswith("bl")` also matches `blo`, `bls`, `blt`, `ble`.** Four
@@ -368,7 +402,23 @@ and left sitting there saying the opposite of the truth.
   reported `34  Secs Remaining` six polls running across 30 s while the push
   stream counted down correctly. Use the stream for state.
 - `supervis` allows **24 relaunches then a hardware reset**, and the counter is
-  never zeroed. Check the budget before flashing a request-path change.
+  never zeroed *while the panel is up* — a **boot** clears it, because it lives
+  in `.bss` and `supervis` restarts with the system. Both halves matter: the
+  budget is **cumulative across an entire uptime**, so a panel up for two days
+  may have almost none left, and it is **full again after a reset**.
+  🚨 **OBSERVED FIRING 2026-09-08**, not merely decoded — it reset the panel
+  during leak work, over an uptime whose counter already stood at 19. The log
+  extract and the per-boot trap are in `PUSH-STREAM-AUTH.md` R4.
+  ✅ **Read the budget without touching the process** — `supervis` prints it into
+  a file on mtd17 that survives a reflash:
+
+      grep -oE "BARRACUDA_RESTART-[0-9]+" /opt/tuxedo/configuration/SupervisionLog.txt | tail -1
+
+  Read it **before** the first restart of a session, not after the last.
+  ⚠ **There is no free restart.** `kill -9` posts no message at all and *still*
+  spends a unit (measured: `RESTART-1`, no `RECV_*` line), so the charge is for
+  the relaunch, not the signal. A `killall` can spend **two**, because
+  `sigHandler` often faults during its own cleanup and both signals count.
   **DECODED, not folklore, and the mechanism is not what it sounds like:**
 
       0xc528  cmp   r3, #0x1d              in main; 30 cases, default 0xc8fc

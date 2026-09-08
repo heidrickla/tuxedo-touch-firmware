@@ -688,11 +688,34 @@ That closes the chain end to end:
 | `cmd=19` to `handlerequest.html` | Barracuda forwards it, `0x3cd54`, unconditional |
 | tuxedo `CReceiverThread::run` | sets both gates, calls `requestconsolemode` |
 | `wsltHandleRawDataFromPanel` | copies the display, `osal_MqSend` type 20 |
-| Barracuda `gettuxedoIPCCommFunc` | **no case for 20 -- dropped** |
+| Barracuda `gettuxedoIPCCommFunc` | routes 20 at `0xd6b8` to the handler at `0xdb8c` |
+| that handler | broadcasts as id 20, again as id **-1**, and calls `setConsoleMessage(20, text)` |
+| web UI | `commandID=5002` on `/handlerequest_mobile.html` returns `getConsoleMessage()` |
 
-**Console mode cannot be reached through Barracuda by any means, and no patch to
-`/tuxedo` can change that.** The one-byte patch at `0x13da3c` was never going to
-be sufficient; the reason is now known rather than suspected.
+🚨 **CORRECTED 2026-09-08. The Barracuda row previously read "no case for 20 --
+dropped" and this section concluded console mode "cannot be reached through
+Barracuda by any means". Both were wrong.** Type 20 is dispatched by a **range**
+arm, not an equality comparison:
+
+    d6b0  cmp r8, #21
+    d6b4  beq da80        <- 21, partition status
+    d6b8  bcc db8c        <- r8 < 21, the console handler
+
+so the 42-value list, built by enumerating `cmp`/`beq` pairs, could not see it.
+⚠ **Any "type N is not dispatched" claim derived by enumerating equality
+comparisons in a compiler-generated binary-search chain is unsafe** — range arms
+are invisible to it.
+
+**Measured with a control:** msgType 20 carrying a unique marker leaves 2 copies
+in the guest heap; msgType 23, genuinely absent from the chain, leaves 0. Both
+leave one copy in qemu's raw message buffer, so the instrument discriminates.
+
+⚠ The handler reads the text at message **+0x0E**, not +0x0F where the type-21
+layout puts it — a driver using the type-21 offset sends an empty string.
+
+⚠ Because the handler also broadcasts with id **-1**, console display text
+already reaches `ha-tuxedo-touch` as `CMD_UNSOLICITED` whenever console mode is
+in use. Stock behaviour, not introduced by any patch here.
 
 It also fits the wider pattern exactly: the capability is intact on the panel
 side and cut off at the edge -- the same shape as the other vendor dev tools left

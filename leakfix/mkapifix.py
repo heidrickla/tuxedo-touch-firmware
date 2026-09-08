@@ -498,6 +498,128 @@ IPC_ERRNODE_SITES = ((0x34958, 0xEBFFFBE2),)
 #
 # 0x34964 is EXCLUDED: it is already redirected to IPC_BUF_STUB, which frees
 # this same string AND the operator new[] buffer that only that site has.
+# LEAK 20 - getEScenes (0x16520), the /GetSceneList handler: ~780 B per request.
+#
+# ATTRIBUTION, and a bl-search would never have found it. /GetSceneList is
+# dispatched by ID, not by name->function pointer:
+#
+#   Test1Module_constructor (0x15740) registers the endpoint table
+#     base 0x8ab14, 74 entries of {name1_ptr, name2_ptr, id}
+#   with the handler at 0x15778, which decodes the id:
+#     ldrh r1,[r0] -> 0x8039 ; bic #0xf000 -> 0x39 ; sub #8 -> 49
+#     ldr pc,[pc,r1,lsl #2]  -> jump table at 0x15798, entry 49 = 0x1585c
+#   0x159a0 is a TAIL BRANCH thunk: mov r1,r3 ; b getEScenes
+#
+# THE FUNCTION IS STRAIGHT-LINE - no conditional branches at all - so every
+# pointer below is always initialised and nothing can skip the epilogue:
+#
+#   16540  r6 = json_new()               TREE A, the payload
+#   1656c  json_write(r6) -> r0          STRING 1
+#   16570  strlen(r0) -> r4              <- r0 destroyed at birth, STRING 1 leaks
+#   1657c  r7 = json_new()               TREE B, the wrapper
+#   165a4  json_write(r6) -> r0          STRING 2
+#   165b8  encrypt(...)                  <- r0 clobbered, STRING 2 leaks
+#   165c8  Base64Encode -> [fp-48]       malloc'd, copied by json_new_a, leaks
+#   165e8  json_write_formatted(r7)      returned via the out-param, caller owns
+#   165f8  json_delete(r6)               TREE A freed; TREE B and [fp-48] are NOT
+#
+# Structurally identical to getPartitionStatus (LEAKS 4-7) - the same four leaks
+# in the same order in a sibling function.
+#
+# THIS PATCH takes the two the epilogue can reach safely: TREE B and the Base64
+# buffer. 0x165f8 is redirected to a stub that performs the displaced
+# json_delete(r6), then frees r7 and [fp-48]. r7 is callee-saved so json_delete
+# preserves it; fp is live; 0x165fc sets r0 = 0 so the stub's r0 is irrelevant.
+# STRING 1 and STRING 2 are left for a later increment - freeing them needs the
+# strlen-result and stack-argument care that LEAKS 5 and 6 documented, and this
+# increment is measured on its own first.
+GETESCENES_STUB = 0x69510
+GETESCENES_SITES = ((0x165F8, 0xEBFFD506),)
+
+# LEAK 21 - getEScenes STRING 1: json_write(r6) destroyed by strlen's return.
+#
+#   1656c  bl json_write   -> r0 = the serialised tree
+#   16570  bl strlen       -> r0 becomes the LENGTH; the string pointer is gone
+#
+# Identical to LEAK 5 in getPartitionStatus. Freed by wrapping the strlen call:
+# stash the string, take the length, release the string, hand the length back.
+# The pointer is provably the json_write result because the two calls are
+# adjacent and nothing writes r0 between them.
+#
+# ⚠ STRING 2 at 0x165a4 is NOT patched here and needs more care: it is consumed
+# by `encrypt` at 0x165b8, which takes a STACK argument (`str r5,[sp]` at
+# 0x165ac), so a stub must not push. The registers dead after that call in this
+# straight-line function are r4, r8 and r9, so the shape would be
+# `mov r4,r0 ; mov r9,lr ; bl encrypt ; mov r8,r0 ; json_free(r4) ; mov r0,r8 ;
+# bx r9` - three stashes and a custom return, the most delicate stub in this
+# file. Measured on its own increment before being written.
+# 🚨 BUILT, MEASURED, AND DELIBERATELY NOT SHIPPED. Redirecting 0x16570 changed
+# the leak by NOTHING: /GetSceneList read 491.5 B/request with and without it, on
+# two runs each, and the chunk histogram showed no row disappearing either. So
+# either the string is already released somewhere, or its effect is below both
+# instruments.
+#
+# An unverifiable free is not worth shipping: if that json_write result is not
+# actually caller-owned at 0x16570, freeing it is a double-free, and the upside is
+# measurably zero. Same reasoning that left the unreachable per-client leaks
+# alone. The stub and its site are kept here, disabled, so the next attempt knows
+# this was tried and what it produced rather than re-deriving it.
+#
+# To re-enable for another look: restore the site tuple below and re-measure with
+# leakfix/sceneleak.sh, which is the sensitive instrument - the RSS slope is
+# page-quantised at 4 kB, so 144 kB over 300 requests cannot resolve a change
+# smaller than about 14 B/request.
+STRLEN_PLT = 0xBCC4
+ESCENES_STR1_STUB = 0x69538
+ESCENES_STR1_SITES = ()          # was ((0x16570, 0xEBFFD5D3),)
+
+# LEAK 22 - getEScenes STRING 2: json_write destroyed by encrypt's return.
+#
+#   165a4  bl json_write   -> r0 = the serialised tree
+#   165ac  str r5, [sp]     <- encrypt takes a STACK ARGUMENT
+#   165b8  bl encrypt      -> r0 becomes the ciphertext; the string is gone
+#
+# ⚠ A STUB HERE MUST NOT PUSH. [sp] holds encrypt's fifth argument, so moving sp
+# by even one word hands it the wrong value. That rules out the stack-stash shape
+# every other stub in this file uses.
+#
+# Instead it stashes in registers that are provably dead. getEScenes is
+# straight-line, and r4, r8 and r9 are each consumed into an argument register
+# BEFORE the call and never read again:
+#
+#   165a8  mov r3, r8      <- r8 consumed
+#   165b0  mov r2, r9      <- r9 consumed
+#   165b4  mov r1, r4      <- r4 consumed
+#   165b8  bl encrypt      <- nothing after this reads r4, r8 or r9
+#
+# and all three are callee-saved, so encrypt and json_free preserve them and the
+# function's own epilogue at 0x16608 restores the caller's values from the stack.
+# lr is saved in r9 because `bl json_free` would otherwise destroy the return
+# address; the stub returns with `bx r9`.
+# 🚨 ALSO BUILT, MEASURED, AND NOT SHIPPED - same verdict as LEAK 21, and the two
+# together are the informative result. /GetSceneList read 491.5 B/request with
+# STRING 1 freed, with STRING 2 freed, and with neither: identical, two runs each.
+# The stub itself is sound (the server answered 302 with all four listeners up
+# afterwards), it just releases nothing that was accumulating.
+#
+# 🔑 WHAT THE TWO NULL RESULTS TOGETHER SAY: the residual is NOT the json_write
+# strings. The chunk histogram after LEAK 20 shows, per request, roughly
+# 5x40 B, 3x32 B, 2.7x16 B, 1x64 B and 1x56 B - a dozen small chunks, which is
+# the shape of a JSON TREE, not of two large serialised strings. Freeing strings
+# was the wrong target and the measurements said so twice before any of it
+# shipped.
+#
+# Next step for whoever picks this up: find which tree. getEScenes' own two trees
+# are now both freed, so look OUTSIDE it - the likeliest candidate is STRING 3,
+# `json_write_formatted(r7)` at 0x165e8, handed to the caller through the
+# out-param at [fp-56] and possibly never released there (the shape of LEAK 7),
+# or an allocation inside encrypt/Base64Encode. Drive it with
+# leakfix/sceneleak.sh and dump the growing sizes with chunkdiff.py, which is
+# what named the IPC leaks.
+ENCRYPT_FN = 0x1CDF8
+ESCENES_STR2_STUB = 0x6955C
+ESCENES_STR2_SITES = ()          # was ((0x165B8, 0xEB001A0E),)
+
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
     0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
@@ -752,6 +874,83 @@ def build_ipc_newa_stub():
     ]
 
 
+def build_getescenes_stub():
+    """json_delete(tree A), then also free tree B and the Base64Encode buffer.
+
+    Called with `bl` from 0x165f8 with r0 already holding tree A, and returns via
+    lr. r7 (tree B) is callee-saved so json_delete preserves it across the first
+    call; [fp-48] is written unconditionally by Base64Encode at 0x165c8 because
+    the function is straight-line.
+    """
+    g = GETESCENES_STUB
+    blne_del = (b_encode(g + 0x10, JSON_DELETE_PLT, link=True)
+                & 0x0FFFFFFF) | 0x10000000
+    blne_free = (b_encode(g + 0x1C, FREE_PLT, link=True)
+                 & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE92D400E, "push {r1, r2, r3, lr}"),
+        (g + 0x04, b_encode(g + 0x04, JSON_DELETE_PLT, link=True),
+         "bl   json_delete       @ tree A, the displaced call"),
+        (g + 0x08, 0xE1A00007, "mov  r0, r7            @ tree B, never freed"),
+        (g + 0x0C, 0xE3500000, "cmp  r0, #0"),
+        (g + 0x10, blne_del, "blne json_delete"),
+        (g + 0x14, 0xE51B0030, "ldr  r0, [fp, #-48]    @ the Base64Encode buffer"),
+        (g + 0x18, 0xE3500000, "cmp  r0, #0"),
+        (g + 0x1C, blne_free, "blne free              @ malloc'd, so plain free"),
+        (g + 0x20, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
+        (g + 0x24, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
+def build_escenes_str2_stub():
+    """encrypt(...), then json_free the json_write result it consumed.
+
+    Touches NO stack: encrypt's fifth argument lives at [sp]. Stashes the string
+    in r4, the return address in r9 and encrypt's result in r8 - all three dead
+    after 0x165b8 and all three callee-saved, so encrypt and json_free preserve
+    them. r0-r3 are untouched before the call, so encrypt sees its original
+    arguments.
+    """
+    k = ESCENES_STR2_STUB
+    blne = (b_encode(k + 0x18, JSON_FREE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (k + 0x00, 0xE1A04000, "mov  r4, r0            @ stash the json_write string"),
+        (k + 0x04, 0xE1A0900E, "mov  r9, lr            @ save the return address"),
+        (k + 0x08, b_encode(k + 0x08, ENCRYPT_FN, link=True),
+         "bl   encrypt           @ r0-r3 and [sp] untouched"),
+        (k + 0x0C, 0xE1A08000, "mov  r8, r0            @ stash the ciphertext"),
+        (k + 0x10, 0xE1A00004, "mov  r0, r4"),
+        (k + 0x14, 0xE3500000, "cmp  r0, #0"),
+        (k + 0x18, blne, "blne json_free"),
+        (k + 0x1C, 0xE1A00008, "mov  r0, r8            @ ciphertext back"),
+        (k + 0x20, 0xE12FFF19, "bx   r9                @ NOT lr: json_free clobbered it"),
+    ]
+
+
+def build_escenes_str1_stub():
+    """strlen(str), then json_free(str), returning the LENGTH in r0.
+
+    Wraps the `bl strlen` at 0x16570. r0 on entry is the json_write result from
+    the immediately preceding call, so the stub needs no per-site analysis. The
+    length is stashed across the free because json_free clobbers r0.
+    """
+    h = ESCENES_STR1_STUB
+    blne = (b_encode(h + 0x14, JSON_FREE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (h + 0x00, 0xE92D4007, "push {r0, r1, r2, lr}  @ the string, pad, pad, lr"),
+        (h + 0x04, b_encode(h + 0x04, STRLEN_PLT, link=True), "bl   strlen"),
+        (h + 0x08, 0xE58D0004, "str  r0, [sp, #4]      @ stash the length"),
+        (h + 0x0C, 0xE59D0000, "ldr  r0, [sp]          @ the json_write string"),
+        (h + 0x10, 0xE3500000, "cmp  r0, #0"),
+        (h + 0x14, blne, "blne json_free"),
+        (h + 0x18, 0xE59D0004, "ldr  r0, [sp, #4]      @ length back"),
+        (h + 0x1C, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
+        (h + 0x20, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
 def build_strip_parse_stub():
     """json_parse_unformatted(strip_result), then json_free the strip result.
 
@@ -977,6 +1176,19 @@ def main():
     ipc_newa_sites = () if args.without_ipc else IPC_NEWA_SITES
     ipc_errnode_sites = () if args.without_ipc else IPC_ERRNODE_SITES
     strip_sites = () if args.without_ipc else STRIP_PARSE_SITES
+    escenes_sites = () if args.without_ipc else GETESCENES_SITES
+    str1_sites = () if args.without_ipc else ESCENES_STR1_SITES
+    str2_sites = () if args.without_ipc else ESCENES_STR2_SITES
+    for site, want, what in ([(s, w, "bl json_delete in getEScenes")
+                              for s, w in escenes_sites]
+                             + [(s, w, "bl strlen in getEScenes")
+                                for s, w in str1_sites]
+                             + [(s, w, "bl encrypt in getEScenes")
+                                for s, w in str2_sites]):
+        got = rd(site)
+        if got != want:
+            sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, expected "
+                     f"0x{want:08x} ({what})")
     # Each site must currently hold a `bl json_parse_unformatted`. Computing the
     # expected word rather than listing 43 of them keeps the check honest: it
     # still refuses on a different build or an already-patched image, and it
@@ -1023,6 +1235,13 @@ def main():
     ipctreea = [] if args.without_ipc else build_ipc_treea_stub()
     ipcerrnode = [] if args.without_ipc else build_ipc_errnode_stub()
     stripparse = [] if args.without_ipc else build_strip_parse_stub()
+    escenes = [] if args.without_ipc else build_getescenes_stub()
+    # Only emit the str1 stub if its site is actually redirected. It is disabled
+    # (see ESCENES_STR1_SITES) because it measured zero, and an orphan stub with
+    # nothing branching into it is exactly the "wrote the stub, lost the site"
+    # failure this tool's self-check exists to catch - in reverse.
+    escstr1 = build_escenes_str1_stub() if str1_sites else []
+    escstr2 = build_escenes_str2_stub() if str2_sites else []
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -1038,7 +1257,13 @@ def main():
             sys.exit("REFUSING: the ipc tree-A and errnode stubs overlap")
         if ipcerrnode[-1][0] + 4 > STRIP_PARSE_STUB:
             sys.exit("REFUSING: the errnode and strip-parse stubs overlap")
-        if stripparse[-1][0] + 4 > CMPFREE_CAVE_END:
+        if stripparse[-1][0] + 4 > GETESCENES_STUB:
+            sys.exit("REFUSING: the strip-parse and getEScenes stubs overlap")
+        if escstr1 and escenes[-1][0] + 4 > ESCENES_STR1_STUB:
+            sys.exit("REFUSING: the getEScenes and str1 stubs overlap")
+        if escstr2 and escstr2[-1][0] + 4 > CMPFREE_CAVE_END:
+            sys.exit("REFUSING: the str2 stub overruns its dead region")
+        if (escstr1 or escenes) and (escstr1 or escenes)[-1][0] + 4 > CMPFREE_CAVE_END:
             sys.exit("REFUSING: ipc stubs overrun their dead region")
     if scmp[-1][0] + 4 > PRINTF2_STUB:
         sys.exit("REFUSING: cmp stubs and printf2 stub overlap")
@@ -1188,6 +1413,36 @@ def main():
         for va, word, note in stripparse:
             print(f"    0x{va:08x}  {word:08x}   {note}")
         print("  sites: " + " ".join(f"0x{s:x}" for s in strip_sites))
+        print()
+        print("LEAK 20 - getEScenes: tree B and the Base64Encode buffer")
+        for va, word, note in escenes:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        for site, _w in escenes_sites:
+            print(f"  site 0x{site:08x} -> "
+                  f"0x{b_encode(site, GETESCENES_STUB, link=True):08x}")
+        print()
+        print()
+        if not str2_sites:
+            print("LEAK 22 - getEScenes STRING 2: DISABLED, measured zero effect "
+                  "(see ESCENES_STR2_SITES)")
+        else:
+            print("LEAK 22 - getEScenes STRING 2: json_write destroyed by encrypt")
+            for va, word, note in escstr2:
+                print(f"    0x{va:08x}  {word:08x}   {note}")
+            for site, _w in str2_sites:
+                print(f"  site 0x{site:08x} -> "
+                      f"0x{b_encode(site, ESCENES_STR2_STUB, link=True):08x}")
+        print()
+        if not str1_sites:
+            print("LEAK 21 - getEScenes STRING 1: DISABLED, measured zero effect "
+                  "(see ESCENES_STR1_SITES)")
+        else:
+            print("LEAK 21 - getEScenes STRING 1: json_write destroyed by strlen")
+            for va, word, note in escstr1:
+                print(f"    0x{va:08x}  {word:08x}   {note}")
+            for site, _w in str1_sites:
+                print(f"  site 0x{site:08x} -> "
+                      f"0x{b_encode(site, ESCENES_STR1_STUB, link=True):08x}")
 
     if args.tsv:
         rows = []
@@ -1195,7 +1450,7 @@ def main():
                                + cave7 + cave8 + cave9 + cave10 + freestr
                                + ncmp + scmp + printf2 + ipcbuf
                                + ipcnewa + ipctree + ipcskip + ipctreea
-                               + ipcerrnode + stripparse):
+                               + ipcerrnode + stripparse + escenes + escstr1 + escstr2):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -1251,6 +1506,18 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, STRIP_PARSE_STUB, link=True),
                          "parse then json_free the strip_white_space result"))
+        for site, _w in escenes_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, GETESCENES_STUB, link=True),
+                         "getEScenes: free tree B and the Base64 buffer"))
+        for site, _w in str1_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, ESCENES_STR1_STUB, link=True),
+                         "getEScenes: strlen then json_free the json_write result"))
+        for site, _w in str2_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, ESCENES_STR2_STUB, link=True),
+                         "getEScenes: encrypt then json_free the json_write result"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -1265,7 +1532,7 @@ def main():
     all_stubs = (cave + cave2 + cave3 + cave4 + cave5 + cave6 + cave7
                  + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
-                 + ipcerrnode + stripparse)
+                 + ipcerrnode + stripparse + escenes + escstr1 + escstr2)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -1285,6 +1552,9 @@ def main():
     site_writes += [(s, IPC_NEWA_STUB, True) for s, _ in ipc_newa_sites]
     site_writes += [(s, IPC_ERRNODE_STUB, True) for s, _ in ipc_errnode_sites]
     site_writes += [(s, STRIP_PARSE_STUB, True) for s in strip_sites]
+    site_writes += [(s, GETESCENES_STUB, True) for s, _ in escenes_sites]
+    site_writes += [(s, ESCENES_STR1_STUB, True) for s, _ in str1_sites]
+    site_writes += [(s, ESCENES_STR2_STUB, True) for s, _ in str2_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:

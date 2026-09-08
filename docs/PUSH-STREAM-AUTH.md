@@ -310,8 +310,29 @@ ssh ... 'cp /tmp/B.good /opt/webserver/Barracuda.new && chmod 755 /opt/webserver
 ssh ... 'killall Barracuda'
 ```
 `killall` sends **SIGTERM**, not SIGKILL (busybox v1.36.1: "Send a signal (default: TERM)"). Barracuda registers `sigHandler` for SIGTERM at 0x10a10, so this takes supervis's *reported* path: message 7 → `ArmSWTimer(g_barracudaTmr, 5)` → relaunch in about 5 seconds. Confirmed live in `SupervisionLog.txt`: `RECV_SIGABRT 09:36:28` → `RESTART-1 09:36:33`.
-Do **not** use `kill -9`. That runs no handler, so supervis only notices on its 600 s `SupervisTimeout` poll and the panel has no web server for up to ten minutes.
-Each rollback cycle spends one unit of the cumulative 24-relaunch budget. Read it back: `grep BARRACUDA_RESTART /opt/tuxedo/configuration/SupervisionLog.txt | tail -1`.
+Prefer `killall` over `kill -9`, but **not for the reason given here originally, and `kill -9` is not free.** Measured 2026-09-08 on the live panel with the counter at 0:
+
+    kill -9 <barracuda>   ->  respawn after ~90 s
+                              log: E_SUPVTRD_BARRACUDA_RESTART-1
+                              NO E_SUPVTRD_BARRACUDA_RECV_* line at all
+
+**SIGKILL spends a relaunch unit too.** It posts no message — `sigHandler` cannot
+run, and `signal(9, ...)` never took — yet the counter still advanced. So the
+budget is charged for *the relaunch*, not for the signal classification, and
+there is no free way to restart Barracuda. The real difference is only latency:
+about 5 s on the reported path against ~90 s here (not the 600 s
+`SupervisTimeout` this file used to claim; that number was inferred, ~90 s is
+measured once).
+
+⚠ **And a `killall` can cost TWO.** `sigHandler` runs a long cleanup —
+`freeCameraDetailsList`, four `DeleteSWTimer`s, `sendUnregisterCommand`, two
+`free`s, `osal_SemDestroy` — and frequently faults partway, so the SIGTERM posts
+message 7 and the fault posts message 8 a second later. Each `RECV` advances the
+counter and only the last one prints a `RESTART-N` line, which is why the live
+log steps `RESTART-17` -> `RESTART-19` with no 18. **Budget a SIGTERM restart as
+2, not 1.**
+
+Read the counter back after every cycle: `grep BARRACUDA_RESTART /opt/tuxedo/configuration/SupervisionLog.txt | tail -1`.
 
 **R2 — crash loop, SSH window ~2.5 min per cycle.** dropbear (rc.local) starts before supervis and is independent of Barracuda, so SSH is up early in every boot. Loop:
 ```
@@ -327,7 +348,33 @@ Get the `mv` in during that window and the loop stops at the next relaunch. Budg
 grep -c "reached max relaunches" /opt/tuxedo/configuration/SupervisionLog.txt
 grep "E_SUPVTRD_BARRACUDA" /opt/tuxedo/configuration/SupervisionLog.txt | tail -20
 ```
-That partition survives reflash, and the restart counter is printed in the line (`E_SUPVTRD_BARRACUDA_RESTART-N`). Across 16 logged `SYSTEM START`s this unit has **never** hit the ceiling, so the reset half of the model is READ, not MEASURED.
+That partition survives reflash, and the restart counter is printed in the line (`E_SUPVTRD_BARRACUDA_RESTART-N`).
+
+🚨 **The reset half of the model is now MEASURED, and it was measured the
+expensive way: I tripped it.** 2026-09-08, doing leak work over a panel that had
+been up since 2026-09-06 13:02 with the counter already at 19:
+
+    10:45:27 - E_SUPVTRD_BARRACUDA_RECV_SIGABRT
+    10:45:27 - E_SUPVTRD_BARRACUDA_RECV_SIGABRT
+    10:45:27 - Webserver reached max relaunches. Restarting the Tuxedo
+    10:45:27 - E_SUPVTRD_BARRACUDA_RECV_SIGSEGV
+    10:45:27 - Webserver reached max relaunches. Restarting the Tuxedo
+    10:45:45 - ######## SYSTEM START ########
+
+The panel reset itself in hardware, exactly as section 6 of `TRAPS.md` decoded.
+Delete "never hit the ceiling" on sight; the previous sentence stood for 16 boots
+and stopped being true on the 17th.
+
+🔑 **The trap is that the budget is per-BOOT, not per-session, and nothing on the
+panel reminds you.** The counter was at 19 before I sent a single signal. A
+session that spends "only" six restarts is fine on a fresh boot and fatal on a
+two-day-old one. **Read the counter BEFORE the first restart, not after the
+last** — one `grep`, and it is the whole difference between budgeting and
+guessing:
+
+```
+grep -oE "BARRACUDA_RESTART-[0-9]+" /opt/tuxedo/configuration/SupervisionLog.txt | tail -1
+```
 
 ---
 
