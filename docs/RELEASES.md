@@ -116,6 +116,43 @@ old claim came from enumerating the dispatch chain's equality comparisons; type
 sufficient for the display path and **console mode needs no Barracuda change** —
 see `TUXEDO-FIX-STATUS.md` for the trace and the control that proves it.
 
+### Staged, NOT yet on the live panel: `tz`
+
+`export TZ="CST6CDT,M3.2.0/2,M11.1.0/2"` appended to `/etc/rc.d/rc.conf` in
+`/work/v13/root`. **Staged in the image only** — the same edit to the running
+panel was refused by the permission classifier and is the owner's to approve.
+
+**The clock is 5 h out and a timezone is genuinely the fix, but the naive form of
+it makes things worse.** Measured 2026-09-08:
+
+    true UTC epoch (NTP)   1788891171
+    panel system clock     1788873149      18022 s behind
+    panel RTC              18:12:54        correct UTC
+    TZ unset      date ->  13:11:58 UTC    correct local, WRONG label
+    TZ=CST6CDT    date ->  08:11:58 CDT    WRONG by 5 h
+
+`/tuxedo` sets the clock from the VISTA with `date -s '%d-%d-%d %d:%d:%d'`, and
+that time is **local**. `date -s` is TZ-aware — proved read-only with `date -d`,
+which returns `1788872400` under `TZ=UTC0` and `1788890400` under `TZ=CST6CDT`,
+exactly 18000 s apart. So with no TZ the clock ends up **holding local time while
+libc labels it UTC**, which is why every log line after runlevel 3 is 5 h off and
+`syslogd started` is the last trustworthy UTC stamp.
+
+🔑 **Set TZ and the same write lands on the correct epoch instead.** `rcS`
+sources `rc.conf` at its line 7, before starting any service, so supervis — and
+therefore `/tuxedo` and Barracuda — inherits it.
+
+⚠ **ORDER MATTERS on a running panel.** Setting TZ while the clock still holds
+local time makes the alarm screen read 08:xx; that is measured, not predicted. On
+a boot it is fine, because `settime`/`ntpclient` sets true UTC before `/tuxedo`
+starts. To apply it live, set TZ **and** reload the clock from the RTC in one
+step: `hwclock -s -f /dev/rtc0`. There is no zoneinfo tree on the panel, so the
+POSIX rule string is required — `/etc/localtime` would have nothing to read.
+
+⚠ `/tuxedo` has its own `g_stDateTimeConfig.i8TimeZone` with DST months and a
+touchscreen control, persisted in `DateTimeConfig.txt` (28 bytes, with a `_sec`
+twin). That is a **separate** setting from the OS TZ and was left alone.
+
 ### Carried over from v11
 
 `lockout-patch, heap-fix, ssh, sd-init-hook, hosts-fix, ntp, musl-spare,
