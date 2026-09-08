@@ -825,6 +825,73 @@ EDITSCENE_SITES = ((0x34EC0, 0xE28DD00C),)
 EDITEARLY_STUB = 0x695F0
 EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 
+# LEAK 29 - WnmpDir_serviceField never frees the module `get` out-param.
+#
+# /GetSceneList measures 733 B/request on 0066ad95, the largest known leak in the
+# image, and chunkdiff names the three biggest chunks as the API response chain:
+# the formatted `{"Result" : "<base64>"}` (120 B), the base64 itself (96 B) and
+# the inner `{"Status":"Sucess",...}` (64 B), one of each per request.
+#
+# 🔑 THE VENDOR'S OWN CODE SHOWS THE INTENDED PATTERN, on the sibling path:
+#
+#   29014  mov lr,pc ; ldr pc,[ip,#16]   module->method16(...) -> r0 = a string
+#   29034  HttpResponse_printf(r9, r4)
+#   2903c  bl free                        <- FREED
+#
+# and the `get` path does the same work and frees nothing:
+#
+#   2908c  str r1(=0), [fp,#-868]         the out slot, initialised
+#   290a8  mov r2, r5 (= &slot)
+#   290b0  ldr pc, [r4, #12]              module->get(..., out=&slot, ...)
+#   290e0  WnmpModule_printFieldControl(..., r5, ...)   consumes the string
+#   290fc  ldr r4, [r7, #4]               <- and it is DROPPED here
+#
+# It is the one allocation getEScenes hands to its caller (0x165f0 writes
+# json_write_formatted's result through the out param), which is why every
+# handler-side analysis missed it: the owner is this dispatcher, not getEScenes.
+#
+# Traced on /GetSceneList: 0x290b4, 0x290e0 and 0x290fc each run once per request
+# and the freeing sibling at 0x29014 runs ZERO times, so this path is the one
+# taken and the free genuinely never happens.
+#
+# ⚠ json_free, NOT free. The vendor frees the sibling's string with plain `free`,
+# but that one comes from a different producer; this slot holds a
+# json_write_formatted result, which the libjson contract says must go to
+# json_free. Using the wrong one corrupts the heap, so this is bench-verified
+# under load before it goes anywhere near the panel.
+#
+# ⚠ HIGH BLAST RADIUS: WnmpDir_serviceField is ~11 000 lines and serves EVERY API
+# endpoint, not just this one. r0 is dead at 0x290fc (reassigned at 0x29104) and
+# lr is stale there, but lr is saved anyway rather than reasoned about.
+# 🚨 BUILT, TESTED ON THE BENCH, AND IT CRASHES. DO NOT SHIP THIS SITE.
+#
+#   *** glibc detected *** /opt/webserver/Barracuda: free(): invalid pointer:
+#       0x40bddcd8 ***
+#
+# on the first /GetSceneList request. So the slot at [fp-868] does NOT hold a
+# pointer this code may release at 0x290fc. The likeliest reading is that
+# WnmpModule_printFieldControl already frees it and this is a double free --
+# which also means the 120-byte formatted response is NOT leaked here, and the
+# 733 B/request comes from elsewhere in the chain.
+#
+# 🔑 The reasoning that produced this was good and still wrong, which is the part
+# worth keeping. The vendor's sibling path at 0x29014 really does print-then-free
+# an equivalent string; the `get` path really does drop the out slot; the trace
+# really does show 0x290fc running once per request while the freeing sibling
+# never runs. Every one of those is true and the conclusion was still a double
+# free. **An ownership argument assembled from a sibling path is a hypothesis,
+# not a contract.**
+#
+# ⚠ AND THIS IS WHY IT WAS BENCH-ONLY. WnmpDir_serviceField serves EVERY API
+# endpoint, so on the panel this would have corrupted the heap on the first API
+# request and cost two relaunch units per crash. Prove a free on the bench under
+# load before it goes near the unit; that rule earned itself here.
+#
+# Next attempt: read WnmpModule_printFieldControl (0x1e48c) first, since it is the
+# function that consumes the slot and therefore the one that probably owns it.
+WNMPGET_STUB = 0x69614
+WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES
+
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
     0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
@@ -1222,6 +1289,29 @@ def build_editearly_stub():
     ]
 
 
+def build_wnmpget_stub():
+    """json_free the module `get` out-param after printFieldControl consumed it.
+
+    Entered by `b` from 0x290fc, performs the displaced `ldr r4,[r7,#4]` and
+    branches back to 0x29100. lr is saved rather than reasoned about: it is stale
+    here (it last held the return of the indirect call at 0x290b0), but this
+    function is enormous and a wrong assumption about it is expensive.
+    """
+    g = WNMPGET_STUB
+    blne_free = (b_encode(g + 0x0C, JSON_FREE_PLT, link=True)
+                 & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE92D4000, "push {lr}"),
+        (g + 0x04, 0xE51B0364, "ldr  r0, [fp, #-868]   @ the module get out slot"),
+        (g + 0x08, 0xE3500000, "cmp  r0, #0            @ zeroed at 0x2908c"),
+        (g + 0x0C, blne_free, "blne json_free         @ a json_write_formatted result"),
+        (g + 0x10, 0xE8BD4000, "pop  {lr}"),
+        (g + 0x14, 0xE5974004, "ldr  r4, [r7, #4]      @ the displaced instruction"),
+        (g + 0x18, b_encode(g + 0x18, 0x29100),
+         "b    0x29100           @ back into WnmpDir_serviceField"),
+    ]
+
+
 def build_escenes_str2_stub():
     """encrypt(...), then json_free the json_write result it consumed.
 
@@ -1504,12 +1594,15 @@ def main():
     validstr_sites = () if args.without_ipc else VALIDSTR_SITES
     editscene_sites = () if args.without_ipc else EDITSCENE_SITES
     editearly_sites = () if args.without_ipc else EDITEARLY_SITES
+    wnmpget_sites = () if args.without_ipc else WNMPGET_SITES
     for site, want, what in ([(s, w, "bl json_delete in getEScenes")
                               for s, w in escenes_sites]
                              + [(s, w, "bl strlen in getEScenes")
                                 for s, w in str1_sites]
                              + [(s, w, "bl encrypt in getEScenes")
                                 for s, w in str2_sites]
+                             + [(s, w, "ldr r4 after printFieldControl")
+                                for s, w in wnmpget_sites]
                              + [(s, w, "beq at editSceneDetails parse-failed exit")
                                 for s, w in editearly_sites]
                              + [(s, w, "add sp at editSceneDetails exit")
@@ -1582,6 +1675,7 @@ def main():
     validstr = build_validstr_stub() if validstr_sites else []
     editscene = build_editscene_stub() if editscene_sites else []
     editearly = build_editearly_stub() if editearly_sites else []
+    wnmpget = build_wnmpget_stub() if wnmpget_sites else []
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -1792,7 +1886,7 @@ def main():
                                + ipcnewa + ipctree + ipcskip + ipctreea
                                + ipcerrnode + stripparse + escenes + escstr1 + escstr2
                                + checkscene + validpage + validstr + editscene
-                               + editearly):
+                               + editearly + wnmpget):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -1880,6 +1974,10 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, EDITEARLY_STUB) & 0x0FFFFFFF,
                          "editSceneDetails: free both trees on the parse-failed exit"))
+        for site, _w in wnmpget_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, WNMPGET_STUB),
+                         "WnmpDir: json_free the module get out-param"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -1895,7 +1993,8 @@ def main():
                  + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
                  + ipcerrnode + stripparse + escenes + escstr1 + escstr2
-                 + checkscene + validpage + validstr + editscene + editearly)
+                 + checkscene + validpage + validstr + editscene + editearly
+                 + wnmpget)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -1924,6 +2023,7 @@ def main():
     site_writes += [(s, VALIDPAGE_STUB, False) for s, _ in validpage_sites]
     site_writes += [(s, VALIDSTR_STUB, True) for s, _ in validstr_sites]
     site_writes += [(s, EDITSCENE_STUB, False) for s, _ in editscene_sites]
+    site_writes += [(s, WNMPGET_STUB, False) for s, _ in wnmpget_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:

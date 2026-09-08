@@ -238,8 +238,47 @@ formatted, and **every stage is abandoned**. The 120 B chunk is the
 handler-side analysis below could not account for it.
 
 ⚠ **This is the API surface, so today's `cmd=140`/`cmd=141` fixes do not touch
-it** — different auth, different path. It is now the largest single leak known in
-the image, and the next thing to fix.
+it** — different auth, different path. It is the largest single leak known in the
+image.
+
+### 🚨 LEAK 29 attempted the obvious fix and it CRASHES — do not repeat it
+
+The owner of that 120 B chunk looked settled. `WnmpDir_serviceField` calls the
+module through a vtable and drops the out slot:
+
+    2908c  str r1(=0), [fp,#-868]        the out slot, initialised
+    290b0  ldr pc, [r4, #12]             module->get(..., out=&slot, ...)
+    290e0  WnmpModule_printFieldControl(..., &slot, ...)
+    290fc  ldr r4, [r7, #4]              <- slot dropped here
+
+and the vendor's **own sibling path** shows the intended shape, print-then-free:
+
+    29018  ldr pc, [ip, #16]   -> r0 = a string
+    29034  HttpResponse_printf(r9, r4)
+    2903c  bl free             <- FREED
+
+Traced on `/GetSceneList`: 0x290b4, 0x290e0 and 0x290fc each run once per request
+and the freeing sibling at 0x29014 runs **zero** times. Every one of those facts is
+true. Freeing the slot at 0x290fc still produces, on the first request:
+
+    *** glibc detected *** /opt/webserver/Barracuda: free(): invalid pointer:
+        0x40bddcd8 ***
+
+Most likely `WnmpModule_printFieldControl` already frees it, making this a double
+free — which also means **the 120 B chunk is not leaked at this site** and the
+733 B/request is elsewhere in the chain.
+
+🔑 **An ownership argument assembled from a sibling path is a hypothesis, not a
+contract.** Four independent true observations pointed one way and the conclusion
+was still wrong.
+
+⚠ **And this is exactly why it was bench-only.** `WnmpDir_serviceField` serves
+EVERY API endpoint, so on the panel this would have corrupted the heap on the
+first API request and cost two relaunch units per crash. The panel never saw it —
+it stayed on `0066ad95` throughout, with zero glibc errors in its log.
+
+**Next attempt starts at `WnmpModule_printFieldControl` (0x1e48c)**, the function
+that consumes the slot and therefore probably owns it.
 
 ⚠ **And it revises the note below.** "Freeing STRING 1 and STRING 2 changed
 nothing" was measured with the RSS slope, which cannot resolve anything under
