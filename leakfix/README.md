@@ -622,10 +622,37 @@ function returns through `pop {r4,r5,r6,r7,r8,pc}` off the frame it pushed at
 
     mov r0, r6 ; cmp r0, #0 ; blne json_delete ; mov r0, r5 ; pop {r4,r5,r6,r7,r8,pc}
 
-⚠ **Not written yet, deliberately.** An unverifiable free is what the two
-withheld `getEScenes` string stubs were about, and the same rule applies here:
-the CSRF gate means a fix cannot yet be measured, and shipping it would be
-reasoning, not evidence.
+🚨 **WRITTEN, MEASURED, AND WITHHELD — it frees nothing on this unit.** LEAK 23 in
+`mkapifix.py` is exactly that stub, and the endpoint is drivable now, so it was
+measured properly rather than reasoned about:
+
+    json_delete calls per 10 requests, traced at the PLT (0xba18):
+        62ee361c unpatched   29
+        + LEAK 23            29        <- identical: the blne is NEVER taken
+
+    chunk deltas over 300 requests, before -> after the fix:
+        40 B  +374 -> +366     32 B  +361 -> +361     16 B  +75 -> +76
+
+The stub definitely executes — `0x69580` and `0x6958c` each run exactly once per
+request — so this is not the "stub never written" failure that wasted a day on the
+IPC path. **`r6` is simply always 0.**
+
+🔑 **Because `checkIfSceneExists` parses the WRONG-looking file, and reading the
+string settles it.** The pointer at `0x90e94` is `0x8b080` =
+`/opt/tuxedo/configuration/hascenedb.json` — the **Z-Wave** scene database, which
+is **0 bytes** on the panel and the bench. Not `hatcscenedb.json`, the 3182-byte
+TC scene file the rest of the scene code reads. An empty file parses to NULL, so
+`scene_getRootNodeOfObjects` allocates nothing and there is nothing to free.
+
+⚠ **So the ~107 B/request measured on `cmd=141` is real but comes from elsewhere
+in that handler**, not from this tree. That is the next thing to chase, and
+`chunkdiff.py` on the 40- and 32-byte sizes will name it, the way it named the IPC
+buffers.
+
+✅ **Re-enable LEAK 23 the moment `hascenedb.json` is non-empty** — i.e. once real
+Z-Wave scenes exist. Then the tree is real, the leak is real, and the stub frees
+it. Disabling it restores the previous build byte-for-byte (`ad0a4c30`, 228
+words), so `patches.tsv` does not drift while it sits idle.
 
 ## The defect
 

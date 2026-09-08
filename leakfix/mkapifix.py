@@ -620,6 +620,57 @@ ENCRYPT_FN = 0x1CDF8
 ESCENES_STR2_STUB = 0x6955C
 ESCENES_STR2_SITES = ()          # was ((0x165B8, 0xEB001A0E),)
 
+# LEAK 23 - checkIfSceneExists abandons its parsed tree on EVERY call.
+#
+#   34c00  bl   scene_getRootNodeOfObjects  -> r6 = the parsed tree
+#   34c04  subs r6, r0, #0 ; beq 34c50      -> r6 NULL only if the parse failed
+#   34c24  loop: json_at / json_get / json_as_int, r5 = 1 on an id match
+#   34c50  mov  r0, r5                      <- returns an INT; THE TREE IS DROPPED
+#   34c54  pop  {r4,r5,r6,r7,r8,pc}
+#
+# Nothing derived from the tree escapes: the loop reads ids with json_as_int,
+# which returns a value, and the result r5 is a flag. Both exits converge on
+# 0x34c50, and the NULL path is exactly the one that arrives with r6 = 0, so one
+# NULL-guarded json_delete at the convergence covers both.
+#
+# MEASURED on a session that actually dispatches - 300 requests to cmd=141:
+#   40 B +374, 32 B +361, 24 B +128, 16 B +75, about 107 B/request, one tree each.
+# Every reply was 200 with a 43-byte body, not the empty bail-out.
+#
+# The stub does NOT push and does not need lr: checkIfSceneExists returns through
+# `pop {...,pc}` off the frame built at 0x34bf0, so `bl json_delete` clobbering lr
+# is harmless, and r5/r6 are callee-saved so json_delete preserves both.
+#
+# The site is a `b`, not a `bl` - the stub performs the displaced `mov r0, r5` and
+# then executes the function's own epilogue. 0x34c50 is also a BRANCH TARGET
+# (`beq 34c50` at 0x34c0c, and the loop exit), which a `b` into a stub handles
+# because both arrivals fall into it - but it is why the displaced instruction has
+# to be reproduced rather than dropped.
+# 🚨 BUILT, MEASURED, AND NOT SHIPPED - the free is correct and frees NOTHING on
+# this unit, because the tree is always NULL. Same verdict as LEAKS 21 and 22,
+# reached the same way, and the evidence is specific rather than a null slope:
+#
+#   json_delete calls per 10 requests, traced at the PLT (0xba18):
+#       62ee361c unpatched   29
+#       + this stub          29      <- identical, so the blne is NEVER taken
+#
+# The stub itself definitely runs - 0x69580 and 0x6958c each execute exactly once
+# per request - so this is not the "stub never written" failure. r6 is simply 0.
+#
+# 🔑 WHY, and it is not a mystery once the right string is read:
+# checkIfSceneExists parses the file named by the pointer at 0x90e94, which is
+# 0x8b080 = "/opt/tuxedo/configuration/hascenedb.json" - the ZWAVE scene database,
+# which is **0 bytes** on this unit (and on the bench). Not hatcscenedb.json, the
+# 3182-byte TC scene file the rest of the scene code uses. An empty file parses to
+# NULL, so scene_getRootNodeOfObjects allocates nothing and there is nothing to
+# free. The leak measured on this path (about 107 B/request) comes from somewhere
+# else in the cmd=141 handler.
+#
+# Re-enable it if hascenedb.json ever becomes non-empty, i.e. once real Z-Wave
+# scenes exist: then the tree is real, the leak is real, and this frees it.
+CHECKSCENE_STUB = 0x69580
+CHECKSCENE_SITES = ()            # was ((0x34C50, 0xE1A00005),)
+
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
     0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
@@ -902,6 +953,27 @@ def build_getescenes_stub():
     ]
 
 
+def build_checkscene_stub():
+    """json_delete the tree checkIfSceneExists drops, then run its own epilogue.
+
+    Reached by `b` from the converged exit at 0x34c50, so it does not return to
+    the site: it reproduces the displaced `mov r0, r5` and then performs the
+    function's `pop {r4,r5,r6,r7,r8,pc}`. No push, and lr is expendable because
+    the return address comes off the frame rather than out of lr. r5 (the flag it
+    returns) and r6 (the tree) are callee-saved, so json_delete preserves both.
+    """
+    g = CHECKSCENE_STUB
+    blne_del = (b_encode(g + 0x08, JSON_DELETE_PLT, link=True)
+                & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE1A00006, "mov  r0, r6            @ the parsed tree"),
+        (g + 0x04, 0xE3500000, "cmp  r0, #0            @ NULL on the parse-failed path"),
+        (g + 0x08, blne_del, "blne json_delete"),
+        (g + 0x0C, 0xE1A00005, "mov  r0, r5            @ the displaced instruction"),
+        (g + 0x10, 0xE8BD81F0, "pop  {r4,r5,r6,r7,r8,pc}  @ the function's epilogue"),
+    ]
+
+
 def build_escenes_str2_stub():
     """encrypt(...), then json_free the json_write result it consumed.
 
@@ -1179,12 +1251,15 @@ def main():
     escenes_sites = () if args.without_ipc else GETESCENES_SITES
     str1_sites = () if args.without_ipc else ESCENES_STR1_SITES
     str2_sites = () if args.without_ipc else ESCENES_STR2_SITES
+    checkscene_sites = () if args.without_ipc else CHECKSCENE_SITES
     for site, want, what in ([(s, w, "bl json_delete in getEScenes")
                               for s, w in escenes_sites]
                              + [(s, w, "bl strlen in getEScenes")
                                 for s, w in str1_sites]
                              + [(s, w, "bl encrypt in getEScenes")
-                                for s, w in str2_sites]):
+                                for s, w in str2_sites]
+                             + [(s, w, "mov r0, r5 at checkIfSceneExists exit")
+                                for s, w in checkscene_sites]):
         got = rd(site)
         if got != want:
             sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, expected "
@@ -1242,6 +1317,7 @@ def main():
     # failure this tool's self-check exists to catch - in reverse.
     escstr1 = build_escenes_str1_stub() if str1_sites else []
     escstr2 = build_escenes_str2_stub() if str2_sites else []
+    checkscene = build_checkscene_stub() if checkscene_sites else []
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -1450,7 +1526,8 @@ def main():
                                + cave7 + cave8 + cave9 + cave10 + freestr
                                + ncmp + scmp + printf2 + ipcbuf
                                + ipcnewa + ipctree + ipcskip + ipctreea
-                               + ipcerrnode + stripparse + escenes + escstr1 + escstr2):
+                               + ipcerrnode + stripparse + escenes + escstr1 + escstr2
+                               + checkscene):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -1518,6 +1595,10 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, ESCENES_STR2_STUB, link=True),
                          "getEScenes: encrypt then json_free the json_write result"))
+        for site, _w in checkscene_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, CHECKSCENE_STUB),
+                         "checkIfSceneExists: json_delete the abandoned tree"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -1532,7 +1613,8 @@ def main():
     all_stubs = (cave + cave2 + cave3 + cave4 + cave5 + cave6 + cave7
                  + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
-                 + ipcerrnode + stripparse + escenes + escstr1 + escstr2)
+                 + ipcerrnode + stripparse + escenes + escstr1 + escstr2
+                 + checkscene)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -1555,6 +1637,9 @@ def main():
     site_writes += [(s, GETESCENES_STUB, True) for s, _ in escenes_sites]
     site_writes += [(s, ESCENES_STR1_STUB, True) for s, _ in str1_sites]
     site_writes += [(s, ESCENES_STR2_STUB, True) for s, _ in str2_sites]
+    # `b`, not `bl`: the stub reproduces the displaced `mov r0, r5` and then runs
+    # checkIfSceneExists's own `pop {...,pc}`, so it never returns to the site.
+    site_writes += [(s, CHECKSCENE_STUB, False) for s, _ in checkscene_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:
