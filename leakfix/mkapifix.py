@@ -698,6 +698,50 @@ CHECKSCENE_SITES = ()            # was ((0x34C50, 0xE1A00005),)
 VALIDPAGE_STUB = 0x69594
 VALIDPAGE_SITES = ((0x13B68, 0xE28DD004),)
 
+# LEAK 25 - validatePageName's SECOND leak: a json_as_string result per iteration.
+#
+# LEAK 24 freed the tree and took cmd=141 from ~107 to 39 B/request. The 32-byte
+# row barely moved (+361 -> +349), and this is it:
+#
+#   13b34  bl json_at          -> the value node for this entry
+#   13b38  bl json_as_string   -> r0 = CALLER-OWNED string, needs json_free
+#   13b3c  mov r1, r7             the page name being looked for
+#   13b40  bl strcmp           <- consumes r0 and DROPS it
+#   13b44  cmp r0, #0 ; addeq r0,r0,#1 ; beq 13b68
+#
+# Once per loop iteration, up to 29 entries before a match, which is why this row
+# is the larger share. json_free, not free: they are different functions and the
+# wrong one corrupts the heap.
+#
+# Freed by wrapping the strcmp, which is the same shape as LEAK 12's printf stub.
+# ⚠ THE RESULT CANNOT BE HELD IN A REGISTER ACROSS THE FREE. Every callee-saved
+# register here is live -- r4 is the loop counter, r5 the entry count, r6 the tree,
+# r7 the target name -- so the compare result goes on the stack instead, over the
+# stashed r1. Registers dead after the compare are r1 (reassigned at 0x13b54), r2
+# and r3, so popping into those is safe; lr must come back for the `bx lr`.
+# 🚨 BUILT, MEASURED, NOT SHIPPED - it changes nothing, and the reasoning that
+# predicted otherwise was wrong in a way worth writing down.
+#
+#   per-request bytes on cmd=141:  + LEAK 24        39 B
+#                                  + LEAK 24 and 25 39 B
+#   32-byte row:                   +349  ->  +337
+#
+# The stub RUNS - 0x695b0, 0x695b8 and 0x695c8 each execute exactly once per
+# request - so this is not the never-reached failure.
+#
+# 🔑 "Once per request" is the finding. I predicted up to 29 frees per request,
+# one per map entry, and the trace says the loop body runs ONCE. So the 32-byte
+# row at ~1.16 per request was never the loop, and the arithmetic said so before
+# the trace did: 349 growth over 300 requests is 1.16, not 10 or 29. **When a
+# per-iteration theory predicts N per request and the measurement says ~1, the
+# theory is already refuted; check that before building the stub.**
+#
+# What the 32-byte chunks actually hold is POINTERS, not text - a 0x21 header then
+# pointer pairs, the shape of an internal node - so they belong to some other
+# structure abandoned once per request, still unidentified.
+VALIDSTR_STUB = 0x695B0
+VALIDSTR_SITES = ()              # was ((0x13B40, 0xEBFFE03E),)
+
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
     0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
@@ -1023,6 +1067,30 @@ def build_validpage_stub():
     ]
 
 
+def build_validstr_stub():
+    """strcmp(...), then json_free the json_as_string result it consumed.
+
+    Called with `bl` from 0x13b40 with r0 and r1 already set, and returns via lr.
+    The compare result is stashed on the stack rather than in a register because
+    every callee-saved register in validatePageName is live across the loop.
+    """
+    s = VALIDSTR_STUB
+    blne_free = (b_encode(s + 0x14, JSON_FREE_PLT, link=True)
+                 & 0x0FFFFFFF) | 0x10000000
+    return [
+        (s + 0x00, 0xE92D4007, "push {r0, r1, r2, lr}   @ [sp] = the string"),
+        (s + 0x04, b_encode(s + 0x04, STRCMP_PLT, link=True),
+         "bl   strcmp             @ the displaced call, args already in r0/r1"),
+        (s + 0x08, 0xE58D0004, "str  r0, [sp, #4]       @ stash the compare result"),
+        (s + 0x0C, 0xE59D0000, "ldr  r0, [sp]           @ the json_as_string result"),
+        (s + 0x10, 0xE3500000, "cmp  r0, #0"),
+        (s + 0x14, blne_free, "blne json_free          @ NOT free; different function"),
+        (s + 0x18, 0xE59D0004, "ldr  r0, [sp, #4]       @ restore the compare result"),
+        (s + 0x1C, 0xE8BD400E, "pop  {r1, r2, r3, lr}   @ r1-r3 are dead here"),
+        (s + 0x20, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
 def build_escenes_str2_stub():
     """encrypt(...), then json_free the json_write result it consumed.
 
@@ -1302,12 +1370,15 @@ def main():
     str2_sites = () if args.without_ipc else ESCENES_STR2_SITES
     checkscene_sites = () if args.without_ipc else CHECKSCENE_SITES
     validpage_sites = () if args.without_ipc else VALIDPAGE_SITES
+    validstr_sites = () if args.without_ipc else VALIDSTR_SITES
     for site, want, what in ([(s, w, "bl json_delete in getEScenes")
                               for s, w in escenes_sites]
                              + [(s, w, "bl strlen in getEScenes")
                                 for s, w in str1_sites]
                              + [(s, w, "bl encrypt in getEScenes")
                                 for s, w in str2_sites]
+                             + [(s, w, "bl strcmp in validatePageName")
+                                for s, w in validstr_sites]
                              + [(s, w, "add sp at validatePageName exit")
                                 for s, w in validpage_sites]
                              + [(s, w, "mov r0, r5 at checkIfSceneExists exit")
@@ -1371,6 +1442,7 @@ def main():
     escstr2 = build_escenes_str2_stub() if str2_sites else []
     checkscene = build_checkscene_stub() if checkscene_sites else []
     validpage = build_validpage_stub() if validpage_sites else []
+    validstr = build_validstr_stub() if validstr_sites else []
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -1580,7 +1652,7 @@ def main():
                                + ncmp + scmp + printf2 + ipcbuf
                                + ipcnewa + ipctree + ipcskip + ipctreea
                                + ipcerrnode + stripparse + escenes + escstr1 + escstr2
-                               + checkscene + validpage):
+                               + checkscene + validpage + validstr):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -1656,6 +1728,10 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, VALIDPAGE_STUB),
                          "validatePageName: json_delete the page-map tree"))
+        for site, _w in validstr_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, VALIDSTR_STUB, link=True),
+                         "validatePageName: strcmp then json_free the as_string"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -1671,7 +1747,7 @@ def main():
                  + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
                  + ipcerrnode + stripparse + escenes + escstr1 + escstr2
-                 + checkscene + validpage)
+                 + checkscene + validpage + validstr)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -1698,6 +1774,7 @@ def main():
     # checkIfSceneExists's own `pop {...,pc}`, so it never returns to the site.
     site_writes += [(s, CHECKSCENE_STUB, False) for s, _ in checkscene_sites]
     site_writes += [(s, VALIDPAGE_STUB, False) for s, _ in validpage_sites]
+    site_writes += [(s, VALIDSTR_STUB, True) for s, _ in validstr_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:

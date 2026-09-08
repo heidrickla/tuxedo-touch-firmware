@@ -709,10 +709,29 @@ still passes the §2.6 smoke test (31-hex `hiddenKey`, `DISPATCHES`) — which
 matters because `authPage_service` is one of the two callers, so the login path
 exercises this stub every time.
 
-⚠ **The 32-byte row is the remaining two-thirds, and it is the loop.**
-`json_as_string` at 0x13b38 is consumed by `strcmp` at 0x13b40 and dropped, once
-per iteration, up to 29 before a match. Fix that next; it is the more delicate of
-the two because the result is consumed immediately.
+### ⚠ LEAK 25 (the loop's `json_as_string`) — BUILT, MEASURED, WITHHELD
+
+I predicted the 32-byte row was the per-iteration `json_as_string` at 0x13b38 and
+built the stub. It changes nothing:
+
+    per-request bytes:  + LEAK 24  39 B     + LEAK 24 and 25  39 B
+    32-byte row:        +349        ->      +337
+
+The stub runs — 0x695b0, 0x695b8, 0x695c8 each execute exactly once per request —
+so this is not the never-reached failure.
+
+🔑 **"Once per request" is the whole point, and the arithmetic had already said
+so.** I predicted up to 29 frees per request, one per map entry. The loop body
+runs **once**. And +349 over 300 requests is **1.16 per request**, not 10 or 29 —
+the growth rate refuted the per-iteration theory before any stub was written.
+**When a per-iteration theory predicts N per request and the measurement says ~1,
+it is already refuted; check the rate against the theory before building.**
+
+❔ **So the remaining 39 B/request is still unidentified.** The 32-byte chunks hold
+**pointers, not text** — a `0x21` header then pointer pairs, the shape of an
+internal node — so they belong to some other structure abandoned once per request.
+`chunkdiff` named the first one from its text; this one will need the allocation
+traced instead, because its contents are addresses.
 
 🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
 IS DEPLOYED.** The table's whole value is that it says what the panel runs;
