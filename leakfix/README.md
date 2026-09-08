@@ -215,6 +215,38 @@ here.
 come from `voicecommandglobal.json`'s `SCENES` list, **not** from
 `hatcscenedb.json`. Seeing them does not mean scenes are configured.
 
+## 🚨 `/GetSceneList` STILL LEAKS 733 B/request — re-measured 2026-09-08 on `0066ad95`
+
+The "491.5 B/request" figure below is **stale and was measured with a
+page-quantised instrument**. On the current build, with the chunk histogram:
+
+    slope 733 B/request over 300 requests, all 200
+    32 B +1243   40 B +895   16 B +843   64 B +556
+    24 B  +379  120 B +302   96 B +298
+
+`chunkdiff` names the three biggest by contents, and they are the API response
+chain rather than the scene tree:
+
+    120 B   {"Result" : "H+wsszVIJ5tJnSFfrHo4KvKnmG8yASStfm8W+807n...=="}
+     96 B   H+wsszVIJ5tJnSFfrHo4KvKnmG8yASStfm8W+807n...==
+     64 B   {"Status":"Sucess","Result":{"Response":"No scenes found...
+
+one of each per request. So the response is serialised, Base64'd, wrapped and
+formatted, and **every stage is abandoned**. The 120 B chunk is the
+`json_write_formatted` result `getEScenes` hands back through its out-param at
+0x165f0 — the one allocation whose fate is decided by the CALLER, which is why the
+handler-side analysis below could not account for it.
+
+⚠ **This is the API surface, so today's `cmd=140`/`cmd=141` fixes do not touch
+it** — different auth, different path. It is now the largest single leak known in
+the image, and the next thing to fix.
+
+⚠ **And it revises the note below.** "Freeing STRING 1 and STRING 2 changed
+nothing" was measured with the RSS slope, which cannot resolve anything under
+~14 B/request; the contents above show 64-byte `json_write` output accumulating at
+one per request. Re-measure those two with the chunk histogram before trusting the
+null result — the instrument, not the fix, may have been the problem.
+
 **Where to look next — two candidates already eliminated.**
 
 - `Base64Encode` (0x1cf20) is **balanced**: `malloc ; fmemopen ; BIO_new(b64) ;
