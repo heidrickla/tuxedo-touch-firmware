@@ -17,8 +17,14 @@
 # Lines that are blank, start with #, or contain no tab are ignored.
 #
 # Anything structural -- private address ranges, MAC shapes, key headers,
-# Windows user paths -- belongs in pubscan.py itself, where it identifies
-# nobody and everyone benefits from it. Only put a literal here.
+# Windows user paths, EMAIL ADDRESS SHAPES -- belongs in pubscan.py itself,
+# where it identifies nobody and everyone benefits from it. Only put a literal
+# here.
+#
+# `personal email` used to live in this file, and that was a real hole: a fresh
+# clone had NO email detector at all and still printed a clean summary. A
+# detector that cannot fire reads exactly like one that found nothing. It is now
+# structural, in pubscan.py, with selftest cases. Do not add it back here.
 
 author hostnames	\b(my-workstation|my-forge-host)\b
 author domains	\b[a-z0-9-]+\.(?:example|example-two)\.com\b

@@ -89,6 +89,34 @@ _GENERIC_ACCOUNT = re.compile(
 _USER_PATH = re.compile(r"[A-Za-z]:\\{1,2}Users\\{1,2}([A-Za-z0-9._-]+)")
 _TEMP_PATH = re.compile(r"[A-Za-z]:\\{1,2}(?:temp|Temp)\b")
 
+#: Asset filenames that an address regex reads as an email. `icon@2x.png` splits
+#: as local part `icon`, domain `2x`, TLD `png`, and HA brand assets are full of
+#: them: five of a sibling repo's 61 reported hits were `icon@2x.png` and
+#: `logo@2x.png`. Inflating a count with noise is how a scanner gets skimmed on
+#: the day it finds something real -- the same argument the placeholder-MAC
+#: filter exists for.
+#:
+#: Deliberately narrow: only a retina suffix followed by an IMAGE extension.
+#: `user@2x.com` is a perfectly good address at a real domain and must still
+#: fire, which is what the `2x.com` selftest case is for.
+_RETINA_ASSET = r"(?!\d+x\.(?:png|jpe?g|gif|svg|webp|ico|bmp|tiff?)\b)"
+
+
+def personal_email_re() -> "re.Pattern[str]":
+    """Match an email address, excluding vendor domains and retina assets.
+
+    Structural: an address SHAPE identifies nobody, so this belongs in the
+    tracked file. It previously lived in `ci/pubscan.local`, which is gitignored
+    -- so a fresh clone had no email detector at all and still printed a clean
+    summary. That is the same failure mode the module docstring warns about: a
+    detector that cannot fire reads exactly like a detector that found nothing.
+    """
+    return re.compile(
+        r"\b[A-Za-z0-9._%+-]+@"
+        r"(?!realtimelogic|example)"
+        + _RETINA_ASSET +
+        r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+
 
 def _user_paths(text: str) -> tuple[list[str], list[str]]:
     """Split Windows user paths into the ones that name somebody and the rest."""
@@ -171,6 +199,10 @@ YOURS = [
     ("wifi ssid / psk", re.compile(r"(?i)\b(ssid|psk|wpa_passphrase)\s*[:=]\s*\S")),
     ("private keys", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")),
     ("bearer tokens", re.compile(r"\b(?:ghp|gho|github_pat|xox[baprs])[-_][0-9A-Za-z_-]{16,}")),
+    # An address SHAPE identifies nobody, so this belongs here and not in
+    # pubscan.local -- where it sat, meaning a fresh clone had NO email detector
+    # and still printed a clean summary.
+    ("personal email", personal_email_re()),
 ] + _local_identifiers()
 
 def masked_addr_re(prefix: str) -> "re.Pattern[str]":
@@ -213,19 +245,51 @@ MASK_CASES = (
 )
 
 
+#: Cases for personal_email_re. Every address here is SYNTHETIC -- this file's
+#: whole job is keeping real values out, and it has already had a real one added
+#: to it once, in the comment explaining why real ones do not belong.
+#:
+#: The `2x.com` case is the point of the exercise: the retina-asset exclusion
+#: must be narrow enough that a real address at a domain which happens to start
+#: `2x` still fires. An exclusion that over-reaches is how a scanner goes quiet.
+EMAIL_CASES = (
+    ("someone@notreal.tld", True),
+    ("first.last+tag@sub.notreal.tld", True),
+    ("contact me at a.b@somewhere.invalid please", True),
+    ("user@2x.com", True),
+    ("icon@2x.png", False),
+    ("logo@2x.png", False),
+    ("dark_logo@2x.png", False),
+    ("icon@3x.jpeg", False),
+    ("sprite@2x.svg", False),
+    ("build@example.com", False),
+    ("support@realtimelogic.com", False),
+)
+
+
 def selftest() -> int:
-    """Prove masked_addr_re fires and refuses on the right inputs."""
-    rx = masked_addr_re(SELFTEST_PREFIX)
+    """Prove the detectors fire and refuse on the right inputs."""
     bad = 0
-    for text, want in MASK_CASES:
-        got = bool(rx.search(text))
-        if got != want:
-            bad += 1
-            print("  FAIL %-34r want %s got %s" % (text, want, got))
-    print("  %d case(s), %d failure(s)" % (len(MASK_CASES), bad))
-    if not any(w for _, w in MASK_CASES):
-        print("  ABORT: no case expects a match; this test cannot fail")
-        return 2
+    checks = (
+        ("masked address", masked_addr_re(SELFTEST_PREFIX), MASK_CASES),
+        ("personal email", personal_email_re(), EMAIL_CASES),
+    )
+    total = 0
+    for label, rx, cases in checks:
+        total += len(cases)
+        for text, want in cases:
+            got = bool(rx.search(text))
+            if got != want:
+                bad += 1
+                print("  FAIL [%s] %-38r want %s got %s"
+                      % (label, text, want, got))
+        # Each detector needs a case that makes it FIRE. A table of negatives
+        # passes whether or not the pattern works at all.
+        if not any(w for _, w in cases):
+            print("  ABORT: [%s] no case expects a match; it cannot fail" % label)
+            return 2
+    print("  %d case(s) across %d detector(s), %d failure(s)"
+          % (total, len(checks), bad))
     return 1 if bad else 0
 
 
