@@ -671,6 +671,33 @@ ESCENES_STR2_SITES = ()          # was ((0x165B8, 0xEB001A0E),)
 CHECKSCENE_STUB = 0x69580
 CHECKSCENE_SITES = ()            # was ((0x34C50, 0xE1A00005),)
 
+# LEAK 24 - validatePageName drops the page-map tree on every call.
+#
+# The map is a literal at 0x86168: [{"1":"zwavedevicelist.html"},...29 entries].
+# 0x13b70, its only reference in the image, is validatePageName's literal pool.
+#
+#   13b0c  bl json_strip_white_space   already freed - 0x13B10 is LEAK 19's first site
+#   13b10  bl json_parse_unformatted   -> r6, THE TREE, never json_delete'd
+#   13b14  subs r6, r0, #0 ; beq 13b64
+#   13b38  json_as_string in the loop  -> a SECOND leak, per iteration, NOT fixed here
+#   13b64  mov r0, #0                  no-match path, falls through
+#   13b68  add sp, #4 ; pop {r4,r5,r6,r7,pc}
+#
+# Named by contents first: chunkdiff on the 40-byte size dumped
+# `"10":"home.'/`html"}` and `"9":"mobile'/`view.htm`, which is this literal.
+#
+# 0x13b68 is the ONE exit - 0x13b64 falls into it - so a single stub covers the
+# match and no-match paths. r6 is NULL exactly on the branch that skips the loop,
+# so the guard covers it. lr is expendable because the function returns through
+# `pop {...,pc}`, and r4 is restored by that same pop, so it can carry the return
+# value (0 or 1) across the call. r6 is callee-saved, so json_delete preserves it.
+#
+# The per-iteration json_as_string leak is deliberately left alone until this one
+# is measured: LEAK 23 was a correct free that moved nothing, and doing both at
+# once would leave no way to tell which did the work.
+VALIDPAGE_STUB = 0x69594
+VALIDPAGE_SITES = ((0x13B68, 0xE28DD004),)
+
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
     0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
@@ -974,6 +1001,28 @@ def build_checkscene_stub():
     ]
 
 
+def build_validpage_stub():
+    """json_delete the page-map tree validatePageName drops, at its one exit.
+
+    Reached by `b` from 0x13b68, so it does not return: it frees, restores the
+    return value, performs the displaced `add sp, sp, #4` and then the function's
+    own pop. r4 carries r0 across the call because that pop restores r4 anyway,
+    and r6 (the tree) is callee-saved so json_delete preserves it.
+    """
+    g = VALIDPAGE_STUB
+    blne_del = (b_encode(g + 0x0C, JSON_DELETE_PLT, link=True)
+                & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE1A04000, "mov  r4, r0            @ the 0/1 return value"),
+        (g + 0x04, 0xE1A00006, "mov  r0, r6            @ the parsed page map"),
+        (g + 0x08, 0xE3500000, "cmp  r0, #0            @ NULL on the skip-loop path"),
+        (g + 0x0C, blne_del, "blne json_delete"),
+        (g + 0x10, 0xE1A00004, "mov  r0, r4            @ restore the return value"),
+        (g + 0x14, 0xE28DD004, "add  sp, sp, #4        @ the displaced instruction"),
+        (g + 0x18, 0xE8BD80F0, "pop  {r4,r5,r6,r7,pc}  @ the function's epilogue"),
+    ]
+
+
 def build_escenes_str2_stub():
     """encrypt(...), then json_free the json_write result it consumed.
 
@@ -1252,12 +1301,15 @@ def main():
     str1_sites = () if args.without_ipc else ESCENES_STR1_SITES
     str2_sites = () if args.without_ipc else ESCENES_STR2_SITES
     checkscene_sites = () if args.without_ipc else CHECKSCENE_SITES
+    validpage_sites = () if args.without_ipc else VALIDPAGE_SITES
     for site, want, what in ([(s, w, "bl json_delete in getEScenes")
                               for s, w in escenes_sites]
                              + [(s, w, "bl strlen in getEScenes")
                                 for s, w in str1_sites]
                              + [(s, w, "bl encrypt in getEScenes")
                                 for s, w in str2_sites]
+                             + [(s, w, "add sp at validatePageName exit")
+                                for s, w in validpage_sites]
                              + [(s, w, "mov r0, r5 at checkIfSceneExists exit")
                                 for s, w in checkscene_sites]):
         got = rd(site)
@@ -1318,6 +1370,7 @@ def main():
     escstr1 = build_escenes_str1_stub() if str1_sites else []
     escstr2 = build_escenes_str2_stub() if str2_sites else []
     checkscene = build_checkscene_stub() if checkscene_sites else []
+    validpage = build_validpage_stub() if validpage_sites else []
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -1527,7 +1580,7 @@ def main():
                                + ncmp + scmp + printf2 + ipcbuf
                                + ipcnewa + ipctree + ipcskip + ipctreea
                                + ipcerrnode + stripparse + escenes + escstr1 + escstr2
-                               + checkscene):
+                               + checkscene + validpage):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -1599,6 +1652,10 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, CHECKSCENE_STUB),
                          "checkIfSceneExists: json_delete the abandoned tree"))
+        for site, _w in validpage_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, VALIDPAGE_STUB),
+                         "validatePageName: json_delete the page-map tree"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -1614,7 +1671,7 @@ def main():
                  + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
                  + ipcerrnode + stripparse + escenes + escstr1 + escstr2
-                 + checkscene)
+                 + checkscene + validpage)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -1640,6 +1697,7 @@ def main():
     # `b`, not `bl`: the stub reproduces the displaced `mov r0, r5` and then runs
     # checkIfSceneExists's own `pop {...,pc}`, so it never returns to the site.
     site_writes += [(s, CHECKSCENE_STUB, False) for s, _ in checkscene_sites]
+    site_writes += [(s, VALIDPAGE_STUB, False) for s, _ in validpage_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:

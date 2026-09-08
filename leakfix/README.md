@@ -691,11 +691,35 @@ return value across a `bl`:
     mov r4, r0 ; mov r0, r6 ; cmp r0,#0 ; blne json_delete ;
     mov r0, r4 ; add sp,sp,#4 ; pop {r4,r5,r6,r7,pc}
 
-⚠ **Fix the tree first and measure before touching the loop.** The per-iteration
-`json_as_string` free is the more delicate of the two, and LEAK 23 is a fresh
-reminder that a correct-looking free can move nothing at all. Both callers are
-`MyPage_service` and `authPage_service`, so this is on the page path generally,
-not only `cmd=141`.
+## ✅ LEAK 24 SHIPPED IN THE BUILDER: 107 -> 39 B/request, replicated
+
+`VALIDPAGE_SITES` is live in `mkapifix.py` (7-word stub at 0x69594, one site at
+0x13b68). Same 300-request load on `cmd=141`, before and after:
+
+    size    62ee361c    + LEAK 24
+    40 B      +374        +294 / +295     <- the tree, gone
+    32 B      +361        +349 / +349     <- barely moves: the per-iteration
+    24 B      +128         +32 /  +32        json_as_string, still unfixed
+    16 B       +75         +20 /  +17
+    total   ~107 B/req    39 B/req  (both runs)
+
+**Two runs, identical to the byte.** And it does not break the handler: 1200
+requests across the runs all answered 200 with 43-byte bodies, and a fresh login
+still passes the §2.6 smoke test (31-hex `hiddenKey`, `DISPATCHES`) — which
+matters because `authPage_service` is one of the two callers, so the login path
+exercises this stub every time.
+
+⚠ **The 32-byte row is the remaining two-thirds, and it is the loop.**
+`json_as_string` at 0x13b38 is consumed by `strcmp` at 0x13b40 and dropped, once
+per iteration, up to 29 before a match. Fix that next; it is the more delicate of
+the two because the result is consumed immediately.
+
+🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
+IS DEPLOYED.** The table's whole value is that it says what the panel runs;
+regenerating it now would make it describe a build that exists nowhere, which is
+the stale-header failure its own header records twice. When LEAK 24 goes to the
+panel: deploy, then regenerate the P15 rows, then re-verify stock -> new md5 from
+a clean tree, then update the chain and the `LIVE_DRIFT` line together.
 
 ✅ **Re-enable LEAK 23 the moment `hascenedb.json` is non-empty** — i.e. once real
 Z-Wave scenes exist. Then the tree is real, the leak is real, and the stub frees
