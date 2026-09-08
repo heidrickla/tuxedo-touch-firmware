@@ -851,6 +851,30 @@ Live on the panel as **`0066ad95`**, 273 verify checks passing, `patches.tsv` at
 284 sites re-verified from genuine stock. Scene databases byte-identical after
 2400 edit attempts.
 
+### ✅ The rest of the dispatch surface is CLEAN — swept, not assumed
+
+`leakfix/cmdsweep.sh` drives each remaining arm of the chain at 0x3a6c8 and
+reports its chunk growth, so the next target is chosen by size rather than by
+which function looked suspicious. 200 requests each, fresh server per command:
+
+    cmd=129  38 B bodies    32 +55   16 +40   24 +10
+    cmd=134  44 B bodies    32 +55   16 +40   24 +10
+    cmd=136  46 B bodies    32 +55   16 +38   24 +10
+    cmd=137  81 B bodies    32 +55   16 +40   24 +10
+    cmd=139  38 B bodies    32 +55   16 +40   24 +10
+    cmd=145  38 B bodies    32 +55   16 +40   24 +10
+    cmd=146  38 B bodies    32 +55   16 +40   24 +10
+
+**Every arm shows the identical figure, and it is the per-login constant** — the
+same +55/+40/+10 that a fixed `cmd=141` shows. Different body sizes prove the
+handlers really ran and differ from one another, so this is not seven copies of
+one bail-out. **None of them leaks per request.**
+
+So on this surface `cmd=140` and `cmd=141` were the leaky pair, and both are now
+closed. ⚠ The sweep's own numbers are not per-request rates — each measured phase
+logs in once. Anything that ever looks interesting here must be re-measured at two
+request counts before it is believed.
+
 🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
 IS DEPLOYED.** The table's whole value is that it says what the panel runs;
 regenerating it now would make it describe a build that exists nowhere, which is
