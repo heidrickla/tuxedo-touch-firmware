@@ -14,7 +14,7 @@ held the queue facts.
 PANEL RESET.** 2026-09-08: I read §6, found the 24-relaunch decode, felt covered,
 and never grepped further. **`docs/PUSH-STREAM-AUTH.md` R1/R4 held the actual
 procedure** — the log path, the counter readout, the ceiling, the note that
-`killall` spends a unit — and because I never read it I spent the budget unaware
+a SIGTERM restart spends a unit — and because I never read it I spent the budget unaware
 it was cumulative across the whole uptime and **tripped the hardware reset.**
 Same day, twice more: I re-derived §6's decode from the binary, and re-derived
 the event enum that `probe/supervis_events.py` regenerates on demand.
@@ -435,7 +435,7 @@ and left sitting there saying the opposite of the truth.
   Read it **before** the first restart of a session, not after the last.
   ⚠ **There is no free restart.** `kill -9` posts no message at all and *still*
   spends a unit (measured: `RESTART-1`, no `RECV_*` line), so the charge is for
-  the relaunch, not the signal. A `killall` can spend **two**, because
+  the relaunch, not the signal. A SIGTERM restart can spend **two**, because
   `sigHandler` often faults during its own cleanup and both signals count.
   **DECODED, not folklore, and the mechanism is not what it sounds like:**
 

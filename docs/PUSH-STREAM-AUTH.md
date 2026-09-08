@@ -307,10 +307,15 @@ scp -i ~/.ssh/tuxedo_ed25519 Barracuda.v12.golden root@203.0.113.5:/tmp/B.good
 ssh ... 'PATH=/bin:/sbin:/usr/bin:/usr/sbin:$PATH; md5sum /tmp/B.good'      # must be c8971027...
 ssh ... 'cp /tmp/B.good /opt/webserver/Barracuda.new && chmod 755 /opt/webserver/Barracuda.new \
          && mv /opt/webserver/Barracuda.new /opt/webserver/Barracuda && md5sum /opt/webserver/Barracuda'
-ssh ... 'killall Barracuda'
+ssh ... 'for p in /proc/[0-9]*; do e=$(readlink "$p/exe" 2>/dev/null); \
+           case "$e" in *Barracuda*) kill "${p#/proc/}" ;; esac; done'
 ```
-`killall` sends **SIGTERM**, not SIGKILL (busybox v1.36.1: "Send a signal (default: TERM)"). Barracuda registers `sigHandler` for SIGTERM at 0x10a10, so this takes supervis's *reported* path: message 7 → `ArmSWTimer(g_barracudaTmr, 5)` → relaunch in about 5 seconds. Confirmed live in `SupervisionLog.txt`: `RECV_SIGABRT 09:36:28` → `RESTART-1 09:36:33`.
-Prefer `killall` over `kill -9`, but **not for the reason given here originally, and `kill -9` is not free.** Measured 2026-09-08 on the live panel with the counter at 0:
+🚨 **`killall` DOES NOT EXIST ON THIS UNIT, and this line used to say `killall Barracuda`.** It fails with "killall: not found", the deploy reports success, and the panel keeps serving the OLD binary from the deleted inode while the new one sits on disk. Nothing in the output says so — 2026-09-08 it printed `listeners 4/4` and an unchanged relaunch counter, which is exactly what a healthy panel looks like. **The unchanged counter is the tell:** a real restart always moves it.
+
+So kill by pid, matching the exe link, and tolerate the `(deleted)` suffix — after the `mv`, the running process's `/proc/PID/exe` reads `/opt/webserver/Barracuda (deleted)`, so an exact-path match finds nothing.
+
+Plain `kill` sends **SIGTERM**. Barracuda registers `sigHandler` for SIGTERM at 0x10a10, so this takes supervis's *reported* path: message 7 → `ArmSWTimer(g_barracudaTmr, 5)` → relaunch in about 5 seconds. Confirmed live in `SupervisionLog.txt`: `RECV_SIGABRT 14:43:51` → `RESTART-2 14:43:56`, respawned in ~6 s on the LEAK 24 deploy.
+Prefer plain `kill` (SIGTERM) over `kill -9`, but **not for the reason given here originally, and `kill -9` is not free.** Measured 2026-09-08 on the live panel with the counter at 0:
 
     kill -9 <barracuda>   ->  respawn after ~90 s
                               log: E_SUPVTRD_BARRACUDA_RESTART-1
@@ -324,7 +329,7 @@ about 5 s on the reported path against ~90 s here (not the 600 s
 `SupervisTimeout` this file used to claim; that number was inferred, ~90 s is
 measured once).
 
-⚠ **And a `killall` can cost TWO.** `sigHandler` runs a long cleanup —
+⚠ **And a SIGTERM restart can cost TWO.** `sigHandler` runs a long cleanup —
 `freeCameraDetailsList`, four `DeleteSWTimer`s, `sendUnregisterCommand`, two
 `free`s, `osal_SemDestroy` — and frequently faults partway, so the SIGTERM posts
 message 7 and the fault posts message 8 a second later. Each `RECV` advances the
