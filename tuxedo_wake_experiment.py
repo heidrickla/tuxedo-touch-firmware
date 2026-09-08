@@ -26,7 +26,7 @@ per-cycle outcomes and a tally, and it explicitly reports DISAGREEMENT rather
 than averaging it away - a hypothesis that holds 3 times out of 5 is not
 "mostly true", it is false, and the exceptions are where the real mechanism is.
 
-    python tuxedo_wake_experiment.py 203.0.113.5 -u Lewis --exclusive \
+    python tuxedo_wake_experiment.py 203.0.113.5 -u <panel-user> --exclusive \
         --cycles 4 --quiet 600 --active 300
 
 Time cost is cycles * (quiet + active). The defaults run about an hour.

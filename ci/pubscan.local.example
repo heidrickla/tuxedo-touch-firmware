@@ -47,9 +47,27 @@ author paths	[A-Za-z]:\\{1,2}(?:MyRepoDir|MyProjectsDir)\b
 #   v2  quoted "MyName" after user=  missed `--user MyName`, unquoted
 #   v3  + `--user MyName`            missed `-u MyName`, the SHORT flag
 # v3 reported 0 hits while six `-u MyName` sat in tracked, published files.
+#   v4  + short flag, --account,     missed the two forms where the quoted name
+#       argparse default, ctor arg    sits AWAY from the `user` token:
+#                                       USER = sys.argv[2] ... else "MyName"
+#                                       ... if ":" in raw else ("MyName", raw)
+#
+#   v5  v4, but that arm also needs   v4 said "prose carries no such token" and
+#       an `=` AND a quote before      THAT WAS WRONG. These docs discuss
+#       the name                      accounts and the owner in one sentence
+#                                     constantly, so v4 flagged five prose
+#                                     lines: "locks MyName out of his own
+#                                     panel", "one MyName created as limited".
+#
+# So the trailing arm is distance-tolerant but demands two things prose does not
+# have TOGETHER: an `=` on the line, and a quote immediately before the name.
+# Adjacency is what kept failing in v2-v3 -- each fix matched the syntax last
+# seen rather than the idea "this name is being used as a login" -- but pure
+# proximity swings back into v1. **Test any new arm against the repo's own prose,
+# not invented sentences: the false positives here were real doc lines.**
 #
 # Enumerate the ways an account reaches a credential position -- short flag,
 # long flag, assignment, argparse default, positional into a client -- and TEST
 # the pattern against forms it must hit AND prose it must not, before trusting
 # it. A detector that cannot fire looks exactly like a clean repo.
-account in credential position	(?i)(?:(?:^|[\s;|&(])-u[= ]+|--user(?:name)?[= ]+|--(?:account|login)[= ]+|\b(?:user|username|account|login|acct)\b\s*[=:]\s*|--user(?:name)?\b[^\n]{0,24}?["']|TuxedoProbe\([^\n]{0,60}?)["']?MyName\b
+account in credential position	(?i)(?:(?:^|[\s;|&(])-u[= ]+|--user(?:name)?[= ]+|--(?:account|login)[= ]+|\b(?:user|username|account|login|acct)\b\s*[=:]\s*|--user(?:name)?\b[^\n]{0,24}?["']|TuxedoProbe\([^\n]{0,60}?|\b(?:user|username|acct)\b[^\n]{0,60}?=[^\n]{0,60}?)["']?MyName\b

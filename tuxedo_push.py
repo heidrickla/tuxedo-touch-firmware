@@ -39,8 +39,8 @@ Payloads are colon-delimited and **field 2 is the originating command id**:
     0:18:1 P1  H:2               18 = home partition
     0:-1:<part>Ready To Arm      -1 = unsolicited status update
 
-    python tuxedo_push.py 203.0.113.5 -u Lewis                 # watch the stream
-    python tuxedo_push.py 203.0.113.5 -u Lewis --cmd 12 17     # send, then watch
+    python tuxedo_push.py 203.0.113.5 -u <panel-user>                 # watch the stream
+    python tuxedo_push.py 203.0.113.5 -u <panel-user> --cmd 12 17     # send, then watch
 
 READ-ONLY BY DEFAULT. --cmd accepts only commands from a read-only allowlist.
 Arming, disarming and bypass are deliberately NOT reachable from this tool.

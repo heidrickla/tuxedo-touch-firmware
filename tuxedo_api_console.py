@@ -13,7 +13,7 @@ live on TUXW_V5.3.21.0:
   * the command API       /handlerequest.html?cmd=N...     (numeric commands)
   * the push stream       /SimpleDebugger.interface/G.     (replies + live state)
 
-    python tuxedo_api_console.py 203.0.113.5 -u Lewis
+    python tuxedo_api_console.py 203.0.113.5 -u <panel-user>
 
 Then, at the prompt:
 

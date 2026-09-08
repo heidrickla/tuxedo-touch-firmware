@@ -47,8 +47,8 @@ Console mode returns the panel's ACTUAL two-line keypad display. That is far
 richer than GetSecurityStatus, which returns one word — and it reads the panel
 directly rather than the cache that produces the "Not available" bug.
 
-    python tuxedo_console.py 203.0.113.5 -u Lewis --watch
-    python tuxedo_console.py 203.0.113.5 -u Lewis --once
+    python tuxedo_console.py 203.0.113.5 -u <panel-user> --watch
+    python tuxedo_console.py 203.0.113.5 -u <panel-user> --once
 
 SAFETY. Console mode IS a keypad: the owner confirms it arms and disarms the
 system exactly like the physical one. Keystrokes sent here are real keypad
