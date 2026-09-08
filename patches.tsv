@@ -21,16 +21,26 @@
 #
 # COMPLETE as of 2026-09-08, and this was EXECUTED, not asserted. A copy of the
 # genuine stock tree at /work/extracted/root_stock was patched with every row:
-# "20 sites: 0 already patched, 20 applied, 0 needing attention", and the three
+# "134 sites: 0 already patched, 134 applied, 0 needing attention", and the
 # results matched byte-exactly. Re-run it any time; see below.
 #
-#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> 3463efccf8e8f599a40001b44d576f75
+#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> a84c220a8dd4d315559d65b238b7e8a0
 #   tuxedo     6f8055f5cadba9d0b1582297606427a8 -> 98370c310e709ba565abfce8ea0a3e17
 #   supervis   04386af2971fc29b63bd6f7a87f2b9e2 -> 6caac69eb46fb78447bcd3032078fa44
 #
-# The Barracuda target moved 2026-09-08: it was c8971027 (v12, 11 rows), then
-# 55448f05 once the two P13 push-auth rows landed, and is now 3463efcc with the
-# seven P14 rows. 3463efcc is what the panel runs.
+# The Barracuda target moved four times on 2026-09-08. Written out because a
+# stale md5 here is the file's most misleading possible defect -- it is the line
+# anyone checks first:
+#
+#   c8971027   v12, 11 rows
+#   55448f05   + the two P13 push-auth rows
+#   3463efcc   + the seven P14 thread-detach rows
+#   a84c220a   + the P15 heap-leak rows          <- what the panel runs
+#
+# ⚠ THIS HEADER WAS STALE ONCE ALREADY. When the P15 rows landed it still read
+# "20 sites" and "-> 3463efcc", so the table's headline contradicted the table.
+# Update the count and the chain in the same commit that adds rows; the row
+# count is mechanically checked by ci/checks.sh, the md5 chain is not.
 #
 # ⚠ THE P14 ROWS WERE ADDED AFTER THE FACT AND THAT IS THE HAZARD THIS FILE
 # EXISTS TO PREVENT. The thread-leak fix was applied straight to the live panel
