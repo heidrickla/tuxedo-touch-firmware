@@ -11,14 +11,28 @@
 # OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda the two differ
 # by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four bytes.
 #
-# COMPLETE as of 2026-09-06, and this was EXECUTED, not asserted. A copy of the
+# COMPLETE as of 2026-09-08, and this was EXECUTED, not asserted. A copy of the
 # genuine stock tree at /work/extracted/root_stock was patched with every row:
-# "11 sites: 0 already patched, 11 applied, 0 needing attention", and the three
-# results matched the v12 md5s byte-exactly. Re-run it any time; see below.
+# "20 sites: 0 already patched, 20 applied, 0 needing attention", and the three
+# results matched byte-exactly. Re-run it any time; see below.
 #
-#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> c8971027bb9f77801d01713b4ae50b2f
+#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> 3463efccf8e8f599a40001b44d576f75
 #   tuxedo     6f8055f5cadba9d0b1582297606427a8 -> 98370c310e709ba565abfce8ea0a3e17
 #   supervis   04386af2971fc29b63bd6f7a87f2b9e2 -> 6caac69eb46fb78447bcd3032078fa44
+#
+# The Barracuda target moved 2026-09-08: it was c8971027 (v12, 11 rows), then
+# 55448f05 once the two P13 push-auth rows landed, and is now 3463efcc with the
+# seven P14 rows. 3463efcc is what the panel runs.
+#
+# ⚠ THE P14 ROWS WERE ADDED AFTER THE FACT AND THAT IS THE HAZARD THIS FILE
+# EXISTS TO PREVENT. The thread-leak fix was applied straight to the live panel
+# over SSH on 2026-09-08 and was absent here for about an hour. In that window a
+# rebuild would have silently reverted it -- an image build stages a fresh tree
+# and applies THIS table -- and `verify-panel.sh` reported "panel matches
+# expectations, rc=0", because it iterates the rows and an offset absent from
+# the table is never read. The panel was ahead of the table and the one
+# mechanical check that should have caught it was structurally unable to.
+# Anything applied to the panel by hand belongs here in the same action.
 #
 # Re-run it on the build VM (stock tree at /work/extracted/root_stock):
 #   python3 apply-patches.py --apply --root <copy-of-stock-tree> --table patches.tsv
@@ -56,3 +70,10 @@ P9-cam-listener	/supervis	0x45e8	b4f4ffeb	0100a0e3	remove the camera listener on
 P10-console-gate	/tuxedo	0x135a3c	0300000a	030000ea	console mode sends real display text instead of a canned placeholder
 P13-pushauth-hook	/opt/webserver/Barracuda	0x72420	47c4ffeb	26c9ffeb	push stream: EhDir_service auth call redirected into the P13 stub
 P13-pushauth-cave	/opt/webserver/Barracuda	0x648c0	30402de90050a0e104d04de2020000ead8ffffeb0400a0e11c7efeeb0500a0e16be9ffeb004050e2f8ffff1a020000ead0ffffeb0400a0e1147efeeb080085e263e9ffeb004050e2f8ffff1a030000eaa82095e54830a0e3912320e0	70402de90040a0e10150a0e11cfbffeb000050e37080bd0834309fe5030054e17080bd18080085e277e4ffeb000050e30100a0137080bd18b63bd5e1600085e210109fe5000053e361fcff0b0000a0e37080bde89cb5550091010000	SimpleDebugger.interface push stream now requires a logged-in session, else HTTP 401
+P14-detach-attr1	/opt/webserver/Barracuda	0x5908	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd94c (path A)
+P14-detach-attr2	/opt/webserver/Barracuda	0x593c	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd94c (path B)
+P14-detach-attr3	/opt/webserver/Barracuda	0x59a8	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd9f0 (path A)
+P14-detach-attr4	/opt/webserver/Barracuda	0x5ab0	0710a0e1	071c40e2	thread leak: attr for the pthread_create at VA 0xdab8
+P14-detach-hoist	/opt/webserver/Barracuda	0x59e4	0510a0e1	8c099fe5	thread leak: hoisted r0 load, freeing VA 0xd9ec for the attr setup
+P14-detach-attr5	/opt/webserver/Barracuda	0x59ec	84099fe5	071c40e2	thread leak: attr for the pthread_create at VA 0xd9f0 (path B)
+P14-detach-block	/opt/webserver/Barracuda	0x54a85c	000000000000000000000000000000000000000000000000000000000000000000000000	000000000000000001000000001000000000000000000000000000000000000000000000	thread leak: static pthread_attr_t, PTHREAD_CREATE_DETACHED, guardsize 4096
