@@ -55,10 +55,13 @@ and left sitting there saying the opposite of the truth.
   reading at the HTTP layer. **Trace one request, or assert a side effect, before
   believing any endpoint measurement.** `TuxedoProbe.login()` does the genuine
   challenge/HMAC UI login, so being properly logged in does not imply a
-  dispatchable session. ⚠ The trace is from the BENCH; the panel cannot be
-  traced. `/console.html` renders `hiddenKey=-1` for such a session on the panel
-  too, which is suggestive but is a different code path from the handler's
-  `r5 = -1` — so "the panel bails the same way" is inference, not measurement.
+  dispatchable session. **The panel does the same thing, measured** with
+  `leakfix/dispatchcheck.py`: the bail precedes the switch, so it cannot answer
+  differently per command — and `Type` 0, 1, 141, 60000 and 65535 all return one
+  identical **empty** body on the panel as well as the bench. That is the
+  trace-free way to ask "did this endpoint dispatch at all", and it works where
+  qemu cannot go. ⚠ The empty body was the tell all along: "400 requests, all
+  200" was 400 empty responses, and nobody looked at the length.
 - **A CHECK MUST DISTINGUISH "RAN AND PASSED" FROM "DID NOT RUN".** Deciding a
   verdict by searching a command's output for a failure word conflates them,
   because the absence of that word is produced by success and by absence alike.

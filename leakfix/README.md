@@ -350,17 +350,22 @@ each leaks a parsed tree per operation.
   gate and not a per-command quirk. `handlerequest_mobile_html076EF` calls
   `getCSRFToken1` too, so it is not a way around.
 
-  **Be exact about what is measured here, because the two halves have different
-  strength:**
+  ✅ **AND THE PANEL DOES THE SAME — measured, not inferred.** The panel cannot
+  be traced, so a trace-free instrument was needed:
+  **`leakfix/dispatchcheck.py`**. The bail is taken *before* the switch, so it
+  cannot give a command-dependent answer — if the handler dispatches, a real
+  command and an out-of-range one must differ somewhere. Both hosts:
 
-  - ✅ **MEASURED, bench:** the trace above. Four `cmd` values, same last block.
-  - ⚠ **OBSERVED, bench and panel:** `/console.html` renders `hiddenKey=-1` for a
-    `TuxedoProbe` session on both.
-  - ❔ **NOT ESTABLISHED:** that the panel bails for the same reason. The panel
-    was never traced — that needs qemu, and the panel does not run under it. The
-    `-1` in the page is *suggestive* but it is rendered by a different code path
-    from the handler's `r5 = -1`, so treating them as the same fact is an
-    inference, not a measurement. Do not repeat it as one.
+      Type=0  1  141  60000  65535   ->  200, 0 bytes, one identical sha1
+
+  `Type=60000` and `65535` are far outside the switch bound and would have to
+  reach the default arm if the dispatch were running at all. **The response body
+  is EMPTY**, which is the tell that was there all along: "400 requests, all
+  200" was 400 empty bodies.
+
+  ⚠ The `hiddenKey=-1` on `/console.html` is *consistent* with this but is not
+  the evidence — it is rendered by a different code path from the handler's
+  `r5 = -1`. The command-independence above is the measurement; cite that.
 
   `TuxedoProbe.login()` performs the real challenge/HMAC UI login, so being
   logged in is not sufficient on the bench. Registration goes through
