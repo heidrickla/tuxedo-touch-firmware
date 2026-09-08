@@ -21,14 +21,14 @@
 #
 # COMPLETE as of 2026-09-08, and this was EXECUTED, not asserted. A copy of the
 # genuine stock tree at /work/extracted/root_stock was patched with every row:
-# "266 sites: 0 already patched, 266 applied, 0 needing attention", and the
+# "284 sites: 0 already patched, 284 applied, 0 needing attention", and the
 # results matched byte-exactly. Re-run it any time; see below.
 #
-#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> 07987132a3dc2f088b6d67b002829ca0
+#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> 0066ad95d1a3a4b25e70e5ba24a1c3f3
 #   tuxedo     6f8055f5cadba9d0b1582297606427a8 -> 98370c310e709ba565abfce8ea0a3e17
 #   supervis   04386af2971fc29b63bd6f7a87f2b9e2 -> 6caac69eb46fb78447bcd3032078fa44
 #
-# The Barracuda target moved nine times on 2026-09-08. Written out because a
+# The Barracuda target moved ten times on 2026-09-08. Written out because a
 # stale md5 here is the file's most misleading possible defect -- it is the line
 # anyone checks first:
 #
@@ -40,7 +40,8 @@
 #   13f33352   + the 43 strip-result rows         (217)
 #   62ee361c   + the getEScenes rows              (228)
 #   5cdbb3f3   + the validatePageName tree row  (236)
-#   07987132   + the tokenkey as_string row     (246)  <- what the panel runs
+#   07987132   + the tokenkey as_string row     (246)
+#   0066ad95   + the editSceneDetails rows      (264)  <- what the panel runs
 #
 # ⚠ THIS HEADER WENT STALE TWICE, AND THE SECOND TIME WAS A SYNC, NOT AN EDIT.
 # /work/fwcheck/patches.tsv on the build VM kept an older header ("134 sites",
@@ -315,6 +316,22 @@ P15-leakfix-cave-695c4	/opt/webserver/Barracuda	0x615c4	44019f05	b589fe1b	blne j
 P15-leakfix-cave-695c8	/opt/webserver/Barracuda	0x615c8	1eff2f01	04009de5	ldr  r0, [sp, #4]
 P15-leakfix-cave-695cc	/opt/webserver/Barracuda	0x615cc	7d0f50e3	0e40bde8	pop  {r1, r2, r3, lr}
 P15-leakfix-cave-695d0	/opt/webserver/Barracuda	0x615d0	1600001a	1eff2fe1	bx   lr
+P15-leakfix-cave-695d4	/opt/webserver/Barracuda	0x615d4	130000ea	0040a0e1	mov  r4, r0
+P15-leakfix-cave-695d8	/opt/webserver/Barracuda	0x615d8	7e0f50e3	04009de5	ldr  r0, [sp, #4]
+P15-leakfix-cave-695dc	/opt/webserver/Barracuda	0x615dc	30019f05	000050e3	cmp  r0, #0
+P15-leakfix-cave-695e0	/opt/webserver/Barracuda	0x615e0	1eff2f01	da8afe1b	blne free
+P15-leakfix-cave-695e4	/opt/webserver/Barracuda	0x615e4	070000ca	0400a0e1	mov  r0, r4
+P15-leakfix-cave-695e8	/opt/webserver/Barracuda	0x615e8	28319fe5	0cd08de2	add  sp, sp, #12
+P15-leakfix-cave-695ec	/opt/webserver/Barracuda	0x615ec	030050e1	f085bde8	pop  {r4,r5,r6,r7,r8,sl,pc}
+P15-leakfix-cave-695f0	/opt/webserver/Barracuda	0x615f0	24019f05	0040a0e1	mov  r4, r0
+P15-leakfix-cave-695f4	/opt/webserver/Barracuda	0x615f4	1eff2f01	0700a0e1	mov  r0, r7
+P15-leakfix-cave-695f8	/opt/webserver/Barracuda	0x615f8	013083e2	000050e3	cmp  r0, #0
+P15-leakfix-cave-695fc	/opt/webserver/Barracuda	0x615fc	030050e1	0589fe1b	blne json_delete
+P15-leakfix-cave-69600	/opt/webserver/Barracuda	0x61600	0a00001a	0500a0e1	mov  r0, r5
+P15-leakfix-cave-69604	/opt/webserver/Barracuda	0x61604	1d0000ea	000050e3	cmp  r0, #0
+P15-leakfix-cave-69608	/opt/webserver/Barracuda	0x61608	10319fe5	0289fe1b	blne json_delete
+P15-leakfix-cave-6960c	/opt/webserver/Barracuda	0x6160c	030050e1	0400a0e1	mov  r0, r4
+P15-leakfix-cave-69610	/opt/webserver/Barracuda	0x61610	0c019f05	2a2effea	b    0x34ec0
 P15-leakfix-site-29088	/opt/webserver/Barracuda	0x21088	087093e5	83ef00ea	redirect into leak-fix stub
 P15-leakfix-site-1efa0	/opt/webserver/Barracuda	0x16fa0	0600a0e1	c31701ea	redirect into leak-fix stub
 P15-leakfix-site-47cc8	/opt/webserver/Barracuda	0x3fcc8	050000ea	607400ea	redirect into leak-fix stub
@@ -388,3 +405,5 @@ P15-leakfix-site-490b8	/opt/webserver/Barracuda	0x410b8	a60bffeb	0b8100eb	parse 
 P15-leakfix-site-165f8	/opt/webserver/Barracuda	0xe5f8	06d5ffeb	c44b01eb	getEScenes: free tree B and the Base64 buffer
 P15-leakfix-site-13b68	/opt/webserver/Barracuda	0xbb68	04d08de2	895601ea	validatePageName: json_delete the page-map tree
 P15-leakfix-site-3a44c	/opt/webserver/Barracuda	0x3244c	fb45ffeb	57bc00eb	strcmp then json_free the json_as_string result
+P15-leakfix-site-34ec0	/opt/webserver/Barracuda	0x2cec0	0cd08de2	c3d100ea	editSceneDetails: free the Base64Decode buffer
+P15-leakfix-site-34e00	/opt/webserver/Barracuda	0x2ce00	2e00000a	fad1000a	editSceneDetails: free both trees on the parse-failed exit

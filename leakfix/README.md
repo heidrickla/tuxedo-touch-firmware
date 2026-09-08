@@ -817,6 +817,40 @@ nothing was driven. An empty delta table looks exactly like a perfect fix.
 line. **Ten session slots, reaped only when the HttpSession dies: restart the
 server between measurement campaigns.**
 
+## ✅ `cmd=140` (editSceneDetails) ALSO LEAK-FREE — LEAKS 27 and 28, deployed
+
+`editSceneDetails` frees **nothing**: six allocations, one exit. Measured at
+~124 B/request, and it scaled properly (16 B `+873 → +2621`, 40 B `+300 → +898`
+from 300 to 900 requests), so it was a real rate.
+
+| | 16 B | 32 B | 40 B | 24 B | per request |
+|---|---|---|---|---|---|
+| before | +873 | +353 | +300 | +68 | ~124 B |
+| + LEAK 27 | +574 | +350 | +299 | +72 | ~114 B |
+| + LEAK 28 | **+31** | **+50** | **gone** | **+12** | **~0** |
+| same, N=900 | +37 | +52 | gone | +13 | flat → per-login |
+
+**LEAK 27** frees the `Base64Decode` buffer at the single exit — safe because it is
+a plain `malloc`'d string never pushed into a tree, and `Base64Decode` (0x33d98)
+is branch-free and always writes its out-param, so `[sp+4]` is never uninitialised
+stack.
+
+**LEAK 28** frees tree B and tree C on the **parse-failed** early exit. That is the
+path malformed input takes, so it was remotely reachable: a client POSTing
+unparseable `scenedata` leaked two trees per request.
+
+⚠ **The trees still leak on the FULL path and that is deliberate.** On the match
+branch `json_push_back(r7, r6)` pushes tree A *into* tree C, and the loop pushes
+tree B's nodes into tree C, so r5/r6/r7 share nodes and freeing any two
+double-frees. The early exits do not alias but converge on the same exit, which is
+why LEAK 28 hooks the `beq` at 0x34E00 instead. ⚠ **That site is conditional** —
+the redirect keeps cond EQ, because a plain `b` would free on every call and skip
+the rest of the function.
+
+Live on the panel as **`0066ad95`**, 273 verify checks passing, `patches.tsv` at
+284 sites re-verified from genuine stock. Scene databases byte-identical after
+2400 edit attempts.
+
 🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
 IS DEPLOYED.** The table's whole value is that it says what the panel runs;
 regenerating it now would make it describe a build that exists nowhere, which is

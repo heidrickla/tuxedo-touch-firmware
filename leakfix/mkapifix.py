@@ -761,6 +761,70 @@ VALIDPAGE_SITES = ((0x13B68, 0xE28DD004),)
 VALIDSTR_STUB = 0x695B0
 VALIDSTR_SITES = ((0x3A44C, 0xEBFF45FB),)   # 0x13B40 stays OFF: measured zero
 
+# LEAK 27 - editSceneDetails (cmd=140) frees NOTHING, and exactly one of its six
+# allocations can be freed without touching the aliasing hazard.
+#
+# Measured on cmd=140, and it SCALES with request count, so it is a real rate and
+# not a per-login constant: going from 300 to 900 requests took 16 B from +873 to
+# +2621 and 40 B from +300 to +898 -- about 124 B/request.
+#
+#   34dc4  Base64Decode(scenedata, &[sp+4]) -> [sp+4] = malloc'd buffer   LEAK
+#   34dcc  json_strip_white_space           -> already freed: 0x34DD0 is a LEAK 19 site
+#   34dd0  json_parse_unformatted           -> r6 = tree A                LEAK
+#   34de4  scene_getRootNodeOfObjects       -> r5 = tree B                LEAK
+#   34df0  json_new(4)                      -> r7 = tree C                LEAK
+#   34e34  json_as_string                   -> the scene name             LEAK
+#   34ec0  add sp,#12 ; pop                 the ONE exit, frees nothing
+#
+# ⚠ THE TREES CANNOT BE FREED AT THIS EXIT, and that is not timidity. On the match
+# branch `moveq r0,r7 ; moveq r1,r6 ; bl json_push_back` pushes tree A INTO tree C,
+# and the loop pushes nodes of tree B into tree C as well, so r5, r6 and r7 share
+# nodes on the full path and freeing any two double-frees. The early-exit paths do
+# not alias, but they converge on this same exit, which therefore cannot tell them
+# apart. Freeing the trees needs per-path stubs, not this one.
+#
+# ✅ The Base64Decode buffer has no such problem: a plain malloc'd string, never
+# pushed into any tree. And it is ALWAYS written -- Base64Decode (0x33d98) is
+# straight-line with no branches and stores to the out param at 0x33db0
+# unconditionally -- so [sp+4] is never uninitialised stack. NULL-guarded anyway,
+# since malloc can fail.
+#
+# r4 carries the return code across the free and is restored by the function's own
+# pop; lr is expendable for the same reason.
+EDITSCENE_STUB = 0x695D4
+EDITSCENE_SITES = ((0x34EC0, 0xE28DD00C),)
+
+# LEAK 28 - editSceneDetails' PARSE-FAILED early exit, where the trees are safe.
+#
+# LEAK 27 took the 16 B row from +873 to +574 per 300 requests, i.e. the one
+# malloc'd buffer. The 32 B (+350) and 40 B (+299) rows are the TREES, and the
+# shared exit cannot free them because the full path aliases them together.
+#
+# 🔑 But the aliasing only exists AFTER the loop, and the early exits happen
+# before it. On the r6 == NULL branch:
+#
+#   34df4  cmp r6, #0
+#   34dfc  moveq r0, #3
+#   34e00  beq 34ec0        <- taken when json_parse_unformatted returned NULL
+#
+# r5 (scene DB tree) and r7 (the json_new array) are both allocated, r6 is NULL by
+# the branch condition, and the loop has not run -- so nothing is shared and both
+# can be freed. This is the path malformed input takes, which makes it remotely
+# reachable: a client that repeatedly POSTs unparseable `scenedata` leaks two trees
+# per request. That is the one worth closing first.
+#
+# ⚠ CONDITIONAL SITE. 0x34E00 is `beq`, not `b`, and the stub must run only when
+# the branch is taken. The redirect keeps cond = EQ (0x0), the same technique the
+# IPC skip site uses for `bls` -- a plain `b` here would free on every call and
+# skip the rest of the function.
+#
+# The stub returns by branching to 0x34EC0, which is itself redirected to the
+# LEAK 27 stub, so the buffer free and the epilogue still happen exactly once.
+# r4 is unused on this path (it is first set at 0x34e40) and is restored by the
+# function's own pop.
+EDITEARLY_STUB = 0x695F0
+EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
+
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
     0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
@@ -1110,6 +1174,54 @@ def build_validstr_stub():
     ]
 
 
+def build_editscene_stub():
+    """free the Base64Decode buffer at editSceneDetails' single exit.
+
+    Reached by `b` from 0x34ec0, so it performs the displaced `add sp, sp, #12`
+    and then the function's own pop rather than returning. The buffer pointer is
+    read BEFORE that add, because the add is what invalidates the frame slot.
+    """
+    g = EDITSCENE_STUB
+    blne_free = (b_encode(g + 0x0C, FREE_PLT, link=True)
+                 & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE1A04000, "mov  r4, r0            @ the return code"),
+        (g + 0x04, 0xE59D0004, "ldr  r0, [sp, #4]      @ the Base64Decode buffer"),
+        (g + 0x08, 0xE3500000, "cmp  r0, #0            @ malloc can fail"),
+        (g + 0x0C, blne_free, "blne free              @ malloc'd, so plain free"),
+        (g + 0x10, 0xE1A00004, "mov  r0, r4            @ restore the return code"),
+        (g + 0x14, 0xE28DD00C, "add  sp, sp, #12       @ the displaced instruction"),
+        (g + 0x18, 0xE8BD85F0, "pop  {r4,r5,r6,r7,r8,sl,pc}  @ the epilogue"),
+    ]
+
+
+def build_editearly_stub():
+    """Free tree B and tree C on editSceneDetails' parse-failed exit.
+
+    Entered by a `beq` from 0x34e00, so it runs ONLY when json_parse_unformatted
+    returned NULL -- before the loop, so r5 and r7 share no nodes. Returns by
+    branching to 0x34ec0, which is redirected to the LEAK 27 stub, so the buffer
+    free and the epilogue still happen exactly once.
+    """
+    g = EDITEARLY_STUB
+    blne1 = (b_encode(g + 0x0C, JSON_DELETE_PLT, link=True)
+             & 0x0FFFFFFF) | 0x10000000
+    blne2 = (b_encode(g + 0x18, JSON_DELETE_PLT, link=True)
+             & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE1A04000, "mov  r4, r0            @ the return code, 3"),
+        (g + 0x04, 0xE1A00007, "mov  r0, r7            @ tree C, the json_new array"),
+        (g + 0x08, 0xE3500000, "cmp  r0, #0"),
+        (g + 0x0C, blne1, "blne json_delete"),
+        (g + 0x10, 0xE1A00005, "mov  r0, r5            @ tree B, the scene DB"),
+        (g + 0x14, 0xE3500000, "cmp  r0, #0"),
+        (g + 0x18, blne2, "blne json_delete"),
+        (g + 0x1C, 0xE1A00004, "mov  r0, r4            @ restore the return code"),
+        (g + 0x20, b_encode(g + 0x20, 0x34EC0),
+         "b    0x34ec0           @ the exit, itself redirected to LEAK 27"),
+    ]
+
+
 def build_escenes_str2_stub():
     """encrypt(...), then json_free the json_write result it consumed.
 
@@ -1390,12 +1502,18 @@ def main():
     checkscene_sites = () if args.without_ipc else CHECKSCENE_SITES
     validpage_sites = () if args.without_ipc else VALIDPAGE_SITES
     validstr_sites = () if args.without_ipc else VALIDSTR_SITES
+    editscene_sites = () if args.without_ipc else EDITSCENE_SITES
+    editearly_sites = () if args.without_ipc else EDITEARLY_SITES
     for site, want, what in ([(s, w, "bl json_delete in getEScenes")
                               for s, w in escenes_sites]
                              + [(s, w, "bl strlen in getEScenes")
                                 for s, w in str1_sites]
                              + [(s, w, "bl encrypt in getEScenes")
                                 for s, w in str2_sites]
+                             + [(s, w, "beq at editSceneDetails parse-failed exit")
+                                for s, w in editearly_sites]
+                             + [(s, w, "add sp at editSceneDetails exit")
+                                for s, w in editscene_sites]
                              + [(s, w, "bl strcmp consuming a json_as_string")
                                 for s, w in validstr_sites]
                              + [(s, w, "add sp at validatePageName exit")
@@ -1462,6 +1580,8 @@ def main():
     checkscene = build_checkscene_stub() if checkscene_sites else []
     validpage = build_validpage_stub() if validpage_sites else []
     validstr = build_validstr_stub() if validstr_sites else []
+    editscene = build_editscene_stub() if editscene_sites else []
+    editearly = build_editearly_stub() if editearly_sites else []
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -1671,7 +1791,8 @@ def main():
                                + ncmp + scmp + printf2 + ipcbuf
                                + ipcnewa + ipctree + ipcskip + ipctreea
                                + ipcerrnode + stripparse + escenes + escstr1 + escstr2
-                               + checkscene + validpage + validstr):
+                               + checkscene + validpage + validstr + editscene
+                               + editearly):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -1751,6 +1872,14 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, VALIDSTR_STUB, link=True),
                          "strcmp then json_free the json_as_string result"))
+        for site, _w in editscene_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, EDITSCENE_STUB),
+                         "editSceneDetails: free the Base64Decode buffer"))
+        for site, _w in editearly_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, EDITEARLY_STUB) & 0x0FFFFFFF,
+                         "editSceneDetails: free both trees on the parse-failed exit"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -1766,7 +1895,7 @@ def main():
                  + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
                  + ipcerrnode + stripparse + escenes + escstr1 + escstr2
-                 + checkscene + validpage + validstr)
+                 + checkscene + validpage + validstr + editscene + editearly)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -1794,6 +1923,7 @@ def main():
     site_writes += [(s, CHECKSCENE_STUB, False) for s, _ in checkscene_sites]
     site_writes += [(s, VALIDPAGE_STUB, False) for s, _ in validpage_sites]
     site_writes += [(s, VALIDSTR_STUB, True) for s, _ in validstr_sites]
+    site_writes += [(s, EDITSCENE_STUB, False) for s, _ in editscene_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:
@@ -1809,6 +1939,13 @@ def main():
         intended[IPC_SKIP_SITE] = ((b_encode(IPC_SKIP_SITE, IPC_SKIP_STUB)
                                     & 0x0FFFFFFF) | 0x90000000)
         intended[IPC_TREEA_SITE] = b_encode(IPC_TREEA_SITE, IPC_TREEA_STUB)
+    # 0x34E00 is a `beq`, and the stub must run ONLY when that branch is taken --
+    # a plain `b` would free the trees on every call and skip the rest of the
+    # function. cond EQ is 0x0, so masking the encoded branch is the whole edit.
+    # Spelled out here rather than folded into site_writes because the preserved
+    # condition is the load-bearing part.
+    for site, _w in editearly_sites:
+        intended[site] = b_encode(site, EDITEARLY_STUB) & 0x0FFFFFFF
     for va, word in intended.items():
         wr(va, word)
 
