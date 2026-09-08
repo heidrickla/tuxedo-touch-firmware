@@ -8,8 +8,16 @@
 # /Config and the 6800 listener were outstanding after both had shipped, because
 # nothing mechanical contradicted the prose.
 #
-# OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda the two differ
-# by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four bytes.
+# OFFSETS ARE FILE OFFSETS, NOT VIRTUAL ADDRESSES. For Barracuda's .text the two
+# differ by 0x8000 (VA 0x3b3b4 is file 0x333b4). Using a VA reads the wrong four
+# bytes.
+#
+# ⚠ THE DELTA IS NOT THE SAME FOR EVERY SECTION. `.data` is in the second LOAD
+# and differs by 0x10000, not 0x8000 -- P14-detach-block at VA 0x55a85c is file
+# 0x54a85c. Applying the .text delta there lands 0x8000 short, inside .rodata,
+# and would corrupt an unrelated 36 bytes. Resolve offsets through the section
+# headers rather than by subtracting a constant; the P14 rows were generated
+# that way rather than transcribed, for exactly this reason.
 #
 # COMPLETE as of 2026-09-08, and this was EXECUTED, not asserted. A copy of the
 # genuine stock tree at /work/extracted/root_stock was patched with every row:
@@ -70,10 +78,10 @@ P9-cam-listener	/supervis	0x45e8	b4f4ffeb	0100a0e3	remove the camera listener on
 P10-console-gate	/tuxedo	0x135a3c	0300000a	030000ea	console mode sends real display text instead of a canned placeholder
 P13-pushauth-hook	/opt/webserver/Barracuda	0x72420	47c4ffeb	26c9ffeb	push stream: EhDir_service auth call redirected into the P13 stub
 P13-pushauth-cave	/opt/webserver/Barracuda	0x648c0	30402de90050a0e104d04de2020000ead8ffffeb0400a0e11c7efeeb0500a0e16be9ffeb004050e2f8ffff1a020000ead0ffffeb0400a0e1147efeeb080085e263e9ffeb004050e2f8ffff1a030000eaa82095e54830a0e3912320e0	70402de90040a0e10150a0e11cfbffeb000050e37080bd0834309fe5030054e17080bd18080085e277e4ffeb000050e30100a0137080bd18b63bd5e1600085e210109fe5000053e361fcff0b0000a0e37080bde89cb5550091010000	SimpleDebugger.interface push stream now requires a logged-in session, else HTTP 401
-P14-detach-attr1	/opt/webserver/Barracuda	0x5908	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd94c (path A)
-P14-detach-attr2	/opt/webserver/Barracuda	0x593c	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd94c (path B)
-P14-detach-attr3	/opt/webserver/Barracuda	0x59a8	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd9f0 (path A)
+P14-detach-attr1	/opt/webserver/Barracuda	0x5908	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd94c (1 of 3 r1-setups reaching it)
+P14-detach-attr2	/opt/webserver/Barracuda	0x593c	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd94c (2 of 3, falls through)
+P14-detach-attr3	/opt/webserver/Barracuda	0x59a8	0010a0e3	071c40e2	thread leak: attr for the pthread_create at VA 0xd94c (3 of 3, joins via b 0xd94c)
 P14-detach-attr4	/opt/webserver/Barracuda	0x5ab0	0710a0e1	071c40e2	thread leak: attr for the pthread_create at VA 0xdab8
 P14-detach-hoist	/opt/webserver/Barracuda	0x59e4	0510a0e1	8c099fe5	thread leak: hoisted r0 load, freeing VA 0xd9ec for the attr setup
-P14-detach-attr5	/opt/webserver/Barracuda	0x59ec	84099fe5	071c40e2	thread leak: attr for the pthread_create at VA 0xd9f0 (path B)
+P14-detach-attr5	/opt/webserver/Barracuda	0x59ec	84099fe5	071c40e2	thread leak: attr for the pthread_create at VA 0xd9f0 (the only r1-setup reaching it)
 P14-detach-block	/opt/webserver/Barracuda	0x54a85c	000000000000000000000000000000000000000000000000000000000000000000000000	000000000000000001000000001000000000000000000000000000000000000000000000	thread leak: static pthread_attr_t, PTHREAD_CREATE_DETACHED, guardsize 4096
