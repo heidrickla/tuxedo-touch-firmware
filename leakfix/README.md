@@ -372,8 +372,47 @@ each leaks a parsed tree per operation.
   `addSessionItem` (0x2e868), called from `authPage_service`, `MyPage_service`,
   `LogOutPage_service` and `checkvalidSessions` — reached by tail-branch thunks,
   which is why a `bl` scan for `addCSRFTokenToSessionID` finds nothing and reads
-  as dead code. Which of those runs in the browser flow and not in the probe's is
-  the open question, and it is the whole blocker for the six leaks below.
+  as dead code.
+
+  ### How far the registration chase got — start here, do not redo it
+
+  ✅ **The registrar is `authPage_service`, bound to `authenticated/index.html`.**
+  `installVirtualDir` calls `HttpPage_constructor(page, 0x1418c, "index.html")`
+  into the dir named `authenticated` (0x546648).
+
+  ✅ **It needs a `url` QUERY PARAMETER, and without one it skips registration
+  entirely.** Traced:
+
+      141f0  bl   HttpRequest_getParameter(req, "url")
+      141f4  subs r6, r0, #0
+      141f8  beq  143c0        <- absent: jumps PAST the addSessionItem region
+      141fc  bl   validatePageName
+
+  With no `url`, the executed blocks go `0x1418c … 0x141f4 -> 0x143c0`, skipping
+  everything. **With `?url=home.html` the path instead runs
+  `0x1438c -> 0x14394 -> 0x14398 -> 0x143a8`** — the `bne` at 0x14390 not taken,
+  `clientEnter` called, and the block containing `bl addSessionItem` at 0x143a4
+  executed. So the call happens.
+
+  ✅ **Record layout**, from `addSessionItem1` (0x2b444):
+  `[0..3]` session id, `[4]` flag, `[5..]` a token string from
+  `random_string(32)` + `getKeyFromPassword`.
+
+  🔑 **A REAL CANDIDATE BUG, worth checking before anything else:**
+  `addSessionItem1` writes at `index * 40` with no lower bound, but
+  `getCSRFToken1` searches `i = 1 .. getNoOfUsers()` starting at `r4 = 40`.
+  **Index 0 is written but never searched.** If `authPage_service` passes 0 as
+  the index, the entry is stored somewhere the reader structurally cannot find,
+  and that alone would explain everything above.
+
+  ❔ **Still unresolved, and the last attempt was NOT conclusive.** Dumping the
+  table after a registering GET showed every record as `0xFF`, but that read
+  resolved the table address by "first delta that maps", which is exactly the
+  weak criterion that returned convincing garbage earlier today (guest VA vs the
+  second LOAD, +0x10000). **Do not treat that dump as evidence the write did not
+  land.** Resolve the mapping properly first — and confirm what index
+  `authPage_service` passes in `r8` at 0x14398, which is the value the candidate
+  bug above turns on.
 
   🔑 **The consequence reaches past the scene work: any `/handlerequest.html`
   number taken through console mode measured the bail-out.** Clean 200s with a
