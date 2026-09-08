@@ -39,7 +39,17 @@ author paths	[A-Za-z]:\\{1,2}(?:MyRepoDir|MyProjectsDir)\b
 # Bare `\bMyName\b` matched 69 times across 26 files here -- prose, docs,
 # quoted instructions -- and the name is public anyway through git authorship.
 # Drowning the one hit that matters is the failure the placeholder-MAC filter
-# exists to prevent. Scope it, then check it still fires on the real case:
-# the first scoped attempt was too tight and matched nothing at all, which
-# looked exactly like being clean.
-author accounts	(?i)\b(user|username|account|login|acct)\b[^\n]{0,24}["']MyName["']
+# exists to prevent.
+#
+# ⚠ BUT SCOPING IT WENT WRONG THREE TIMES, each version fitted to the instance
+# last found rather than to the class:
+#   v1  \bMyName\b                   unusable, all prose
+#   v2  quoted "MyName" after user=  missed `--user MyName`, unquoted
+#   v3  + `--user MyName`            missed `-u MyName`, the SHORT flag
+# v3 reported 0 hits while six `-u MyName` sat in tracked, published files.
+#
+# Enumerate the ways an account reaches a credential position -- short flag,
+# long flag, assignment, argparse default, positional into a client -- and TEST
+# the pattern against forms it must hit AND prose it must not, before trusting
+# it. A detector that cannot fire looks exactly like a clean repo.
+account in credential position	(?i)(?:(?:^|[\s;|&(])-u[= ]+|--user(?:name)?[= ]+|--(?:account|login)[= ]+|\b(?:user|username|account|login|acct)\b\s*[=:]\s*|--user(?:name)?\b[^\n]{0,24}?["']|TuxedoProbe\([^\n]{0,60}?)["']?MyName\b
