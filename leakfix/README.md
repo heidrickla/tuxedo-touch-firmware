@@ -491,6 +491,39 @@ each leaks a parsed tree per operation.
   `/eventhandler.html`, not the cookie's hex, and `tokenkey` is a required
   parameter that is `-1` precisely because of the bug above.
 
+  ### ✅ REPRODUCIBLE: session issuance stops after FOUR sessions
+
+  Twenty rounds of login + registering GET + three `handlerequest` calls, each a
+  separate login, reading `hidSession` back from `/eventhandler.html`:
+
+      round 1  hidSession=1777928950
+      round 2  hidSession=1797863368
+      round 3  hidSession=1200513841
+      round 4  hidSession=-1593037569
+      round 5  hidSession=0        <- and 0 for every round after
+      ... 20 rounds, server still answering
+
+  **Four sessions, then the panel stops issuing ids.** Nothing recovers it inside
+  the run. That is worth knowing before blaming a driver: past the fourth
+  concurrent session every scripted client gets `hidSession=0`, and any test that
+  logs in repeatedly is measuring an exhausted server from round 5 on. It also
+  explains why no amount of re-registering moved the index — after the fourth,
+  registration has nothing to register.
+
+  ⚠ **SEEN ONCE, NOT REPRODUCED: a segfault.** The first `fillslots` run left this
+  in `/tmp/barra.scenes.log`:
+
+      Barracuda g_mqSuperVisionIn sending mq 7
+      Barracuda g_mqSuperVisionIn sending mq 8
+      qemu: uncaught target signal 11 (Segmentation fault) - core dumped
+
+  messages 7 and 8 being `BARRACUDA_RECV_SIGABRT` and `_SIGSEGV`. **It has not
+  recurred**: 30 logins twice, each `handlerequest` variant on its own, and 20
+  full rounds all survived. So it is **one observation, not a result** — recorded
+  because a remote crash matters if it is real, and because on the panel each
+  crash posts BOTH messages, i.e. **two relaunch units of twenty-four**. Do not
+  chase it on the panel; it belongs on the bench.
+
   ⚠ Reading the table on the PANEL to settle it directly does not work either:
   `/proc/<pid>/mem` on 2.6.31 needs a ptrace attach, and attaching to Barracuda
   is not worth a relaunch unit.
