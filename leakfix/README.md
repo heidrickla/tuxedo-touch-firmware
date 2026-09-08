@@ -789,6 +789,34 @@ cannot disturb it. **Live on the panel as `07987132`**, 263 verify checks passin
 `RECV_SIGSEGV` one second apart, which is `sigHandler` faulting during its own
 cleanup — the documented two-for-one, seen live rather than inferred.
 
+## ✅ `cmd=141` IS NOW LEAK-FREE PER REQUEST — and the residual was the instrument
+
+The "~11 B/request" above is **not a per-request leak**. Same binary, fresh server
+each time, only the request count changed:
+
+    size    N=300   N=900        a per-request leak TRIPLES; this does not
+    32 B     +55     +55
+    16 B     +38     +37
+    24 B     +10     +17
+    40 B       0      +5
+
+**Growth is flat against request count, so it scales with LOGINS, not requests** —
+each measurement phase logs in once, and a login allocates. `balance.sh` says the
+same thing from the other side: `json_as_string` totals 72 calls over 10 requests
+and 71 over 100, i.e. essentially all of it is one-off session setup.
+
+So LEAK 24 + LEAK 26 took `cmd=141` from **~107 B/request to zero**, and the
+earlier "39" and "11 B/request" figures were partly a per-run constant divided by
+N. **Divide-by-N reports a constant as a rate.** Vary N before believing one.
+
+🚨 **A zero-delta table is NOT proof of a fix, and it fooled me once here.** Two
+runs reported no growing sizes at all — because `scenedrive` had correctly aborted
+on an exhausted session table and `sceneopmeasure` swallowed the message, so
+nothing was driven. An empty delta table looks exactly like a perfect fix.
+`sceneopmeasure.sh` now fails loudly when the driver produced no `body sizes`
+line. **Ten session slots, reaped only when the HttpSession dies: restart the
+server between measurement campaigns.**
+
 🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
 IS DEPLOYED.** The table's whole value is that it says what the panel runs;
 regenerating it now would make it describe a build that exists nowhere, which is
