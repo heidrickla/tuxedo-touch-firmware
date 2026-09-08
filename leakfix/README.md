@@ -727,11 +727,34 @@ the growth rate refuted the per-iteration theory before any stub was written.
 **When a per-iteration theory predicts N per request and the measurement says ~1,
 it is already refuted; check the rate against the theory before building.**
 
-❔ **So the remaining 39 B/request is still unidentified.** The 32-byte chunks hold
-**pointers, not text** — a `0x21` header then pointer pairs, the shape of an
-internal node — so they belong to some other structure abandoned once per request.
-`chunkdiff` named the first one from its text; this one will need the allocation
-traced instead, because its contents are addresses.
+### ✅ The residual's FAMILY is named: unfreed `json_as_string`
+
+The 32-byte chunks hold **pointers, not text** — a `0x21` glibc size field then
+pointer pairs — so `chunkdiff` cannot name this one from its contents the way it
+named the page map. A per-PLT allocation/free balance sheet does it instead
+(`leakfix/balance.sh`, 10 requests of `cmd=141` on `5cdbb3f3`):
+
+    json_as_string   7.20/req      json_free    2.00/req   -> ~5.2 UNFREED
+    json_new+new_a   4.50/req      json_delete  2.90/req   -> ~1.6 unfreed
+    malloc          63.50/req      free        63.40/req   -> balanced
+    new[]            1.00/req      delete[]     1.00/req   -> balanced
+
+**`malloc`/`free` and `new[]`/`delete[]` balance to within 0.1 per request**, which
+is the useful negative: the residual is not raw allocation, it is libjson
+ownership. `json_as_string` returns caller-owned memory needing `json_free`, and
+five of every seven results are dropped.
+
+⚠ **Candidate, NOT confirmed:** `readUserNamePasswordFromJSON` contains **7**
+`json_as_string` calls against a measured 7.20/request, which is a suspiciously
+exact fit — but the trace that would confirm it timed out and **has not been
+re-run**, so the match is arithmetic, not evidence. Other callers on this surface:
+`handlerequest_html076EF::service` itself (6), `WnmpDir_serviceField` (144, the
+largest in the image), `readCRCJSONFile` (45). **Confirm which of these runs per
+request before writing any stub** — LEAK 23 and LEAK 25 were both built on a
+plausible-looking site and both freed nothing.
+
+🔑 The balance sheet is the reusable part: it names the *family* without needing
+the site, and it did in one run what two failed stubs did not.
 
 🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
 IS DEPLOYED.** The table's whole value is that it says what the panel runs;
