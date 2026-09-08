@@ -503,6 +503,19 @@ and left sitting there saying the opposite of the truth.
   result against a second.** This one reached the file: an entry saying the
   block was "NOT evidence" stood over a decoded safety mechanism until it was
   caught.
+- **`E_SUPVTRD_FTPCLI_RESTART` every 10 minutes forever is EXPECTED. Do not
+  chase it.** `supervis` supervises `/ftpclient`, and that binary **has never
+  shipped** — absent from the extracted v12 and v13 rootfs and from every image
+  in `/work`. So `relaunchFtpCli` fires on its 600 s timer, the launch fails, and
+  it logs. Continuously, through all 18 logged boots.
+  ✅ **It costs nothing that matters, checked rather than assumed:**
+  `relaunchFtpCli` (0xc194) contains **no compare and no reference to the counter
+  at 0x16be0** — it calls `launchFtpCli`, formats, and logs. So it does **not**
+  spend the 24-relaunch budget; only Barracuda's three events do. And the log
+  growth is ~7.6 kB/day against 57 MB free on mtd17, which is about 20 years.
+  ⚠ `/vidrec` is missing too but does **not** loop — it is launched once at boot
+  with no retry timer. So "missing binary" alone does not predict the behaviour;
+  the retry timer does.
 - **DO NOT read the relaunch budget out of the running `supervis`.** The counter
   is at `0x16be0` in `.bss` and the process is non-PIE with that page mapped
   `rw`, so it is at a real fixed address and looks readable. Reading it on
