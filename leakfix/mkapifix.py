@@ -739,8 +739,27 @@ VALIDPAGE_SITES = ((0x13B68, 0xE28DD004),)
 # What the 32-byte chunks actually hold is POINTERS, not text - a 0x21 header then
 # pointer pairs, the shape of an internal node - so they belong to some other
 # structure abandoned once per request, still unidentified.
+# ✅ LEAK 26 - THE SAME STUB, ON A SITE THAT ACTUALLY RUNS: the tokenkey compare
+# in handlerequest_html076EF::service, once per request.
+#
+#   3a42c  bl json_get(r6, "...")   the CSRF token node
+#   3a430  bl json_as_string        -> r0, CALLER-OWNED, needs json_free
+#   3a438  mov r4, r0
+#   3a440  HttpRequest_getParameter -> the request's tokenkey
+#   3a44c  bl strcmp(r4, param)     <- consumed and DROPPED
+#   3a454  bne 3e86c                mismatch: json_delete(r6) there, string still dropped
+#   3a45c  bl json_delete(r6)       match: the TREE is freed, the STRING never is
+#
+# The tree is freed on both paths and the string on neither. Traced: 0x3a430 runs
+# 10 times for 10 requests, while the other five json_as_string sites in this
+# function run 0 times, so this is the live one.
+#
+# Same stub shape as the 0x13B40 attempt because the situation is identical - a
+# strcmp consuming a caller-owned string - and at 0x3a44c r0 already holds the
+# string and r1 the parameter. r1-r3 are dead after the compare (r0 is tested at
+# 0x3a450) and lr is restored, so the stub returns cleanly.
 VALIDSTR_STUB = 0x695B0
-VALIDSTR_SITES = ()              # was ((0x13B40, 0xEBFFE03E),)
+VALIDSTR_SITES = ((0x3A44C, 0xEBFF45FB),)   # 0x13B40 stays OFF: measured zero
 
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
@@ -1377,7 +1396,7 @@ def main():
                                 for s, w in str1_sites]
                              + [(s, w, "bl encrypt in getEScenes")
                                 for s, w in str2_sites]
-                             + [(s, w, "bl strcmp in validatePageName")
+                             + [(s, w, "bl strcmp consuming a json_as_string")
                                 for s, w in validstr_sites]
                              + [(s, w, "add sp at validatePageName exit")
                                 for s, w in validpage_sites]
@@ -1731,7 +1750,7 @@ def main():
         for site, _w in validstr_sites:
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, VALIDSTR_STUB, link=True),
-                         "validatePageName: strcmp then json_free the as_string"))
+                         "strcmp then json_free the json_as_string result"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:

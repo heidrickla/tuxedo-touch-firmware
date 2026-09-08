@@ -744,17 +744,50 @@ is the useful negative: the residual is not raw allocation, it is libjson
 ownership. `json_as_string` returns caller-owned memory needing `json_free`, and
 five of every seven results are dropped.
 
-⚠ **Candidate, NOT confirmed:** `readUserNamePasswordFromJSON` contains **7**
-`json_as_string` calls against a measured 7.20/request, which is a suspiciously
-exact fit — but the trace that would confirm it timed out and **has not been
-re-run**, so the match is arithmetic, not evidence. Other callers on this surface:
-`handlerequest_html076EF::service` itself (6), `WnmpDir_serviceField` (144, the
-largest in the image), `readCRCJSONFile` (45). **Confirm which of these runs per
-request before writing any stub** — LEAK 23 and LEAK 25 were both built on a
-plausible-looking site and both freed nothing.
-
 🔑 The balance sheet is the reusable part: it names the *family* without needing
-the site, and it did in one run what two failed stubs did not.
+the site, and it did in one run what two speculative stubs did not.
+
+⚠ **`readUserNamePasswordFromJSON` looked like the answer and is NOT.** It holds
+exactly 7 `json_as_string` calls against a measured 7.20/request — a fit so exact
+it was tempting. Traced: it runs **once per ten requests**. That is the login, not
+the request path. Arithmetic that good is still not evidence.
+
+## ✅ LEAK 26 SHIPPED AND DEPLOYED: the tokenkey compare, 39 -> ~11 B/request
+
+Found by tracing all six `json_as_string` sites inside the handler: **five run
+zero times per request and `0x3a430` runs exactly ten times for ten requests.**
+
+    3a42c  bl json_get(r6, ...)     the CSRF token node
+    3a430  bl json_as_string        -> r0, CALLER-OWNED, needs json_free
+    3a438  mov r4, r0
+    3a44c  bl strcmp(r4, tokenkey)  <- consumed and DROPPED
+    3a454  bne 3e86c                mismatch: tree freed there, string not
+    3a45c  bl json_delete(r6)       match: the TREE is freed, the STRING never is
+
+**The tree is freed on both paths and the string on neither.** Fixed with the same
+stub shape the 0x13B40 attempt used — the situation is identical, and at 0x3a44c
+r0 already holds the string and r1 the parameter.
+
+    size    62ee361c   +LEAK 24   +LEAK 26
+    40 B      +374       +294       gone
+    32 B      +361       +349       +55 / +50
+    24 B      +128        +32       +10 / +19
+    16 B       +75        +20       +38 / +28
+    total   ~107 B/req   39 B/req   ~11 B/req   (two runs)
+
+🚨 **This modifies an AUTHENTICATION comparison, so the rejection was tested, not
+assumed:**
+
+    correct tokenkey -> 200, 43 bytes   (dispatches)
+    wrong   tokenkey -> 200,  0 bytes   (rejected)
+
+The stub stashes the compare result on the stack precisely so freeing the string
+cannot disturb it. **Live on the panel as `07987132`**, 263 verify checks passing,
+`patches.tsv` regenerated to 266 sites and re-verified from genuine stock.
+
+⚠ The restart cost **two** budget units this time (2 → 4): `RECV_SIGABRT` and
+`RECV_SIGSEGV` one second apart, which is `sigHandler` faulting during its own
+cleanup — the documented two-for-one, seen live rather than inferred.
 
 🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
 IS DEPLOYED.** The table's whole value is that it says what the panel runs;

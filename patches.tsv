@@ -21,14 +21,14 @@
 #
 # COMPLETE as of 2026-09-08, and this was EXECUTED, not asserted. A copy of the
 # genuine stock tree at /work/extracted/root_stock was patched with every row:
-# "256 sites: 0 already patched, 256 applied, 0 needing attention", and the
+# "266 sites: 0 already patched, 266 applied, 0 needing attention", and the
 # results matched byte-exactly. Re-run it any time; see below.
 #
-#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> 5cdbb3f301b28c60f0f4e3acd3f3c918
+#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> 07987132a3dc2f088b6d67b002829ca0
 #   tuxedo     6f8055f5cadba9d0b1582297606427a8 -> 98370c310e709ba565abfce8ea0a3e17
 #   supervis   04386af2971fc29b63bd6f7a87f2b9e2 -> 6caac69eb46fb78447bcd3032078fa44
 #
-# The Barracuda target moved eight times on 2026-09-08. Written out because a
+# The Barracuda target moved nine times on 2026-09-08. Written out because a
 # stale md5 here is the file's most misleading possible defect -- it is the line
 # anyone checks first:
 #
@@ -39,7 +39,8 @@
 #   ab630511   + the six IPC-path rows            (165)
 #   13f33352   + the 43 strip-result rows         (217)
 #   62ee361c   + the getEScenes rows              (228)
-#   5cdbb3f3   + the validatePageName tree row  (236)  <- what the panel runs
+#   5cdbb3f3   + the validatePageName tree row  (236)
+#   07987132   + the tokenkey as_string row     (246)  <- what the panel runs
 #
 # ⚠ THIS HEADER WENT STALE TWICE, AND THE SECOND TIME WAS A SYNC, NOT AN EDIT.
 # /work/fwcheck/patches.tsv on the build VM kept an older header ("134 sites",
@@ -305,6 +306,15 @@ P15-leakfix-cave-695a0	/opt/webserver/Barracuda	0x615a0	0c0000ca	1c89fe1b	blne j
 P15-leakfix-cave-695a4	/opt/webserver/Barracuda	0x615a4	563043e2	0400a0e1	mov  r0, r4
 P15-leakfix-cave-695a8	/opt/webserver/Barracuda	0x615a8	030050e1	04d08de2	add  sp, sp, #4
 P15-leakfix-cave-695ac	/opt/webserver/Barracuda	0x615ac	54019f05	f080bde8	pop  {r4,r5,r6,r7,pc}
+P15-leakfix-cave-695b0	/opt/webserver/Barracuda	0x615b0	1eff2f01	07402de9	push {r0, r1, r2, lr}
+P15-leakfix-cave-695b4	/opt/webserver/Barracuda	0x615b4	50019fb5	a189feeb	bl   strcmp
+P15-leakfix-cave-695b8	/opt/webserver/Barracuda	0x615b8	1eff2fb1	04008de5	str  r0, [sp, #4]
+P15-leakfix-cave-695bc	/opt/webserver/Barracuda	0x615bc	083083e2	00009de5	ldr  r0, [sp]
+P15-leakfix-cave-695c0	/opt/webserver/Barracuda	0x615c0	030050e1	000050e3	cmp  r0, #0
+P15-leakfix-cave-695c4	/opt/webserver/Barracuda	0x615c4	44019f05	b589fe1b	blne json_free
+P15-leakfix-cave-695c8	/opt/webserver/Barracuda	0x615c8	1eff2f01	04009de5	ldr  r0, [sp, #4]
+P15-leakfix-cave-695cc	/opt/webserver/Barracuda	0x615cc	7d0f50e3	0e40bde8	pop  {r1, r2, r3, lr}
+P15-leakfix-cave-695d0	/opt/webserver/Barracuda	0x615d0	1600001a	1eff2fe1	bx   lr
 P15-leakfix-site-29088	/opt/webserver/Barracuda	0x21088	087093e5	83ef00ea	redirect into leak-fix stub
 P15-leakfix-site-1efa0	/opt/webserver/Barracuda	0x16fa0	0600a0e1	c31701ea	redirect into leak-fix stub
 P15-leakfix-site-47cc8	/opt/webserver/Barracuda	0x3fcc8	050000ea	607400ea	redirect into leak-fix stub
@@ -377,3 +387,4 @@ P15-leakfix-site-46e1c	/opt/webserver/Barracuda	0x3ee1c	4d14ffeb	b28900eb	parse 
 P15-leakfix-site-490b8	/opt/webserver/Barracuda	0x410b8	a60bffeb	0b8100eb	parse then json_free the strip_white_space result
 P15-leakfix-site-165f8	/opt/webserver/Barracuda	0xe5f8	06d5ffeb	c44b01eb	getEScenes: free tree B and the Base64 buffer
 P15-leakfix-site-13b68	/opt/webserver/Barracuda	0xbb68	04d08de2	895601ea	validatePageName: json_delete the page-map tree
+P15-leakfix-site-3a44c	/opt/webserver/Barracuda	0x3244c	fb45ffeb	57bc00eb	strcmp then json_free the json_as_string result
