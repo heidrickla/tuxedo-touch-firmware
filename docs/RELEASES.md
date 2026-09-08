@@ -116,11 +116,22 @@ old claim came from enumerating the dispatch chain's equality comparisons; type
 sufficient for the display path and **console mode needs no Barracuda change** —
 see `TUXEDO-FIX-STATUS.md` for the trace and the control that proves it.
 
-### Staged, NOT yet on the live panel: `tz`
+### `tz` — APPLIED to the live panel 2026-09-08, active at the next boot
 
-`export TZ="CST6CDT,M3.2.0/2,M11.1.0/2"` appended to `/etc/rc.d/rc.conf` in
-`/work/v13/root`. **Staged in the image only** — the same edit to the running
-panel was refused by the permission classifier and is the owner's to approve.
+`export TZ="CST6CDT,M3.2.0/2,M11.1.0/2"` appended to `/etc/rc.d/rc.conf`, on the
+panel (line 42, backup at `/etc/rc.d/rc.conf.pre-tz`) **and** in `/work/v13/root`
+so a reflash keeps it. Owner-approved.
+
+**Inert until the next boot, and verified as effective without one.** `rcS`
+sources `rc.conf` at its line 7; sourcing it by hand gives
+
+    TZ=[CST6CDT,M3.2.0/2,M11.1.0/2]
+    date -s "2026-09-08 13:45:00" would set epoch  1788893100   (13:45 CDT = 18:45 UTC)
+    the same string with no TZ sets               1788875100   (18000 s low)
+
+which is precisely the correction needed. The running system is untouched —
+`date` still prints `13:45 UTC` and `TZ` is unset in an ordinary shell, because
+nothing re-reads `rc.conf` until boot.
 
 **The clock is 5 h out and a timezone is genuinely the fix, but the naive form of
 it makes things worse.** Measured 2026-09-08:
