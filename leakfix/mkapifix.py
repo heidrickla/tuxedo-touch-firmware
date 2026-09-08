@@ -890,7 +890,7 @@ EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 # Next attempt: read WnmpModule_printFieldControl (0x1e48c) first, since it is the
 # function that consumes the slot and therefore the one that probably owns it.
 WNMPGET_STUB = 0x69614
-WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES
+WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both allocators
 
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
@@ -1298,13 +1298,18 @@ def build_wnmpget_stub():
     function is enormous and a wrong assumption about it is expensive.
     """
     g = WNMPGET_STUB
-    blne_free = (b_encode(g + 0x0C, JSON_FREE_PLT, link=True)
+    # Plain `free`, not json_free. The first attempt used json_free and glibc
+    # reported an invalid pointer at 0x40bddcd8 -- an address far outside the heap
+    # region heapwalk walks, which points at the wrong ALLOCATOR rather than the
+    # wrong slot. The vendor's own sibling path frees its equivalent string with
+    # plain free at 0x2903c, so match that.
+    blne_free = (b_encode(g + 0x0C, FREE_PLT, link=True)
                  & 0x0FFFFFFF) | 0x10000000
     return [
         (g + 0x00, 0xE92D4000, "push {lr}"),
         (g + 0x04, 0xE51B0364, "ldr  r0, [fp, #-868]   @ the module get out slot"),
         (g + 0x08, 0xE3500000, "cmp  r0, #0            @ zeroed at 0x2908c"),
-        (g + 0x0C, blne_free, "blne json_free         @ a json_write_formatted result"),
+        (g + 0x0C, blne_free, "blne free              @ see the note above"),
         (g + 0x10, 0xE8BD4000, "pop  {lr}"),
         (g + 0x14, 0xE5974004, "ldr  r4, [r7, #4]      @ the displaced instruction"),
         (g + 0x18, b_encode(g + 0x18, 0x29100),

@@ -277,8 +277,23 @@ EVERY API endpoint, so on the panel this would have corrupted the heap on the
 first API request and cost two relaunch units per crash. The panel never saw it —
 it stayed on `0066ad95` throughout, with zero glibc errors in its log.
 
-**Next attempt starts at `WnmpModule_printFieldControl` (0x1e48c)**, the function
-that consumes the slot and therefore probably owns it.
+**Both allocators were tried and both crash.** `json_free` first, then plain
+`free` to match the vendor's sibling — same result. So the slot at `[fp-868]` is
+simply not a pointer this code may release, and the site is dead as a candidate.
+
+⚠ **`WnmpModule_printFieldControl` (0x1e48c) does not free it either** — 600 lines,
+**zero** `free`/`json_free`/`json_delete` calls, checked. So neither the dispatcher
+nor its callee releases the slot, yet releasing it is invalid. Something upstream
+already owns and frees that pointer, or the slot does not hold the string by the
+time 0x290fc runs.
+
+🔑 **Where the next attempt should start, given all of the above:** stop reasoning
+about who *should* free it and read what the slot actually contains at 0x290fc.
+The crash address `0x40bddcd8` is far outside the heap `heapwalk` walks
+(0x56b000-0x5f5000), so the value there is probably not the response string at all
+— which would mean the whole `[fp-868]` premise is wrong rather than the free
+being mistimed. `leakfix/findsession.py` shows the technique: search guest memory
+for a value you already know, instead of computing where it ought to be.
 
 ⚠ **And it revises the note below.** "Freeing STRING 1 and STRING 2 changed
 nothing" was measured with the RSS slope, which cannot resolve anything under
