@@ -350,13 +350,25 @@ each leaks a parsed tree per operation.
   gate and not a per-command quirk. `handlerequest_mobile_html076EF` calls
   `getCSRFToken1` too, so it is not a way around.
 
-  ⚠ **Not a bench artefact.** `/console.html` renders `hiddenKey=-1` — the same
-  `-1` the bail path sets — for a `TuxedoProbe` session on **the live panel as
-  well as the bench**. `TuxedoProbe.login()` performs the real challenge/HMAC UI
-  login, so being logged in is not sufficient; something in the browser flow
-  registers the token and the probe does not reproduce it.
-  `addCSRFTokenToSessionID` (0x2e1ac) is a thunk nothing in the binary calls, so
-  where registration happens is still open.
+  **Be exact about what is measured here, because the two halves have different
+  strength:**
+
+  - ✅ **MEASURED, bench:** the trace above. Four `cmd` values, same last block.
+  - ⚠ **OBSERVED, bench and panel:** `/console.html` renders `hiddenKey=-1` for a
+    `TuxedoProbe` session on both.
+  - ❔ **NOT ESTABLISHED:** that the panel bails for the same reason. The panel
+    was never traced — that needs qemu, and the panel does not run under it. The
+    `-1` in the page is *suggestive* but it is rendered by a different code path
+    from the handler's `r5 = -1`, so treating them as the same fact is an
+    inference, not a measurement. Do not repeat it as one.
+
+  `TuxedoProbe.login()` performs the real challenge/HMAC UI login, so being
+  logged in is not sufficient on the bench. Registration goes through
+  `addSessionItem` (0x2e868), called from `authPage_service`, `MyPage_service`,
+  `LogOutPage_service` and `checkvalidSessions` — reached by tail-branch thunks,
+  which is why a `bl` scan for `addCSRFTokenToSessionID` finds nothing and reads
+  as dead code. Which of those runs in the browser flow and not in the probe's is
+  the open question, and it is the whole blocker for the six leaks below.
 
   🔑 **The consequence reaches past the scene work: any `/handlerequest.html`
   number taken through console mode measured the bail-out.** Clean 200s with a
