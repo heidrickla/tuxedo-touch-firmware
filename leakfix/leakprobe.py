@@ -23,7 +23,9 @@ import time
 import urllib.parse
 from collections import Counter
 
-from tuxedo_status_probe import API_BASE_PATH, TuxedoProbe, hmac_hex
+# The probe lives in the repo root, one level up from here.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tuxedo_status_probe import API_BASE_PATH, TuxedoProbe, hmac_hex  # noqa: E402
 
 HANDLEREQUEST = "/handlerequest.html"
 

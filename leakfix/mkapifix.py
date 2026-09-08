@@ -301,6 +301,47 @@ HTTPRESP_PRINTF = 0x6B678
 PRINTF2_STUB = 0x6941C
 PRINTF2_SITES = ((0x47C94, 0xEB008E77),)
 
+# LEAK 13 - THE IPC PATH, and it dwarfs every HTTP leak here.
+#
+# gettuxedoIPCCommFunc -> pushSecurityStatus -> pushEventsToClientsDevAdded ->
+# registeredClients -> scene_getRootNodeOfObjects. Measured ~38.5 kB PER IPC
+# STATUS MESSAGE under emulation via emu/pushdriver.py, strictly linear across
+# three batches of 200 and never returned. The panel drives this constantly;
+# HTTP-only testing never touches it.
+#
+# scene_getRootNodeOfObjects (0x347f8) reads the registered-device file:
+#
+#   348f8  operator new[](len+1) -> r7    the raw file buffer
+#   34924  fread into r7
+#   3495c  mov r0, r7
+#   34960  bl json_strip_white_space      returns a NEW string
+#   34964  bl json_parse_unformatted      parses it; r0 becomes the tree
+#   3496c  mov r0, r4 ; pop               returns the tree
+#
+# The tree is returned and the caller does free it. The `new[]` buffer is not:
+# zero delete[], zero json_free, zero json_delete in the whole function. It
+# holds the entire registry file, which is exactly what the leaked chunks
+# contained.
+#
+# PATCHED AT 0x34964, NOT AT THE EPILOGUE. 0x3496c and 0x34968 are both branch
+# targets from error paths (0x348c8 and 0x34840) taken BEFORE `new[]` runs, so
+# freeing r7 there would hand uninitialised stack to delete[]. Nothing branches
+# to 0x34964 and r7 is written exactly once, at 0x34900, so the pointer is
+# always the live buffer here.
+#
+# `operator new[]` pairs with `operator delete[]` (_ZdaPv, 0xc168) - not free,
+# not json_free. Three different release functions are in play on this path and
+# using the wrong one corrupts the heap rather than leaking.
+#
+# The json_strip_white_space result is ALSO leaked and is deliberately left for
+# now: its pointer is consumed by the parse whose return overwrites r0, and
+# freeing it depends on whether libjson's parser copies its input. Unverified,
+# so untouched.
+DELETE_ARRAY_PLT = 0xC168
+JSON_PARSE_PLT = 0xBF58
+IPC_BUF_STUB = 0x69444
+IPC_BUF_SITES = ((0x34964, 0xEBFF5D7B),)
+
 
 def b_encode(at, target, link=False):
     """ARM B/BL: offset counts from pc+8, in words, 24-bit signed."""
@@ -488,6 +529,31 @@ def build_cmpfree_stub(at, plt, label):
     ]
 
 
+def build_ipc_buf_stub():
+    """json_parse_unformatted(strip_result), then delete[] the new[] file buffer.
+
+    Called with `bl` and returns via `lr`. r7 still holds the buffer here and is
+    saved so the stub can read it after the parse clobbers r0-r3; the parse
+    result is stashed on the stack across the delete[] for the same reason.
+    Four registers keeps sp 8-byte aligned.
+    """
+    s = IPC_BUF_STUB
+    blne = (b_encode(s + 0x14, DELETE_ARRAY_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (s + 0x00, 0xE92D4083, "push {r0, r1, r7, lr}  @ strip result, pad, buffer, lr"),
+        (s + 0x04, b_encode(s + 0x04, JSON_PARSE_PLT, link=True),
+         "bl   json_parse_unformatted"),
+        (s + 0x08, 0xE58D0000, "str  r0, [sp]          @ stash the parsed tree"),
+        (s + 0x0C, 0xE59D0008, "ldr  r0, [sp, #8]      @ the new[] file buffer"),
+        (s + 0x10, 0xE3500000, "cmp  r0, #0"),
+        (s + 0x14, blne, "blne operator delete[]"),
+        (s + 0x18, 0xE59D0000, "ldr  r0, [sp]          @ tree back"),
+        (s + 0x1C, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
+        (s + 0x20, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
 def build_printf2_stub():
     """HttpResponse_printf(resp, fmt, s1, s2) then json_free(s1), json_free(s2).
 
@@ -598,7 +664,7 @@ def main():
             sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, expected "
                      f"0x{want:08x} (bl strcpy after json_as_string)")
     freestr = build_freestr_stub()
-    for site, want in STRNCMP_SITES + STRCMP_SITES + PRINTF2_SITES:
+    for site, want in STRNCMP_SITES + STRCMP_SITES + PRINTF2_SITES + IPC_BUF_SITES:
         got = rd(site)
         if got != want:
             sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, expected "
@@ -608,6 +674,11 @@ def main():
     if ncmp[-1][0] + 4 > FREE_STRCMP_STUB:
         sys.exit("REFUSING: the two cmp stubs overlap")
     printf2 = build_printf2_stub()
+    ipcbuf = build_ipc_buf_stub()
+    if printf2[-1][0] + 4 > IPC_BUF_STUB:
+        sys.exit("REFUSING: printf2 and ipc stubs overlap")
+    if ipcbuf[-1][0] + 4 > CMPFREE_CAVE_END:
+        sys.exit("REFUSING: ipc stub overruns its dead region")
     if scmp[-1][0] + 4 > PRINTF2_STUB:
         sys.exit("REFUSING: cmp stubs and printf2 stub overlap")
     if printf2[-1][0] + 4 > CMPFREE_CAVE_END:
@@ -703,12 +774,18 @@ def main():
         print(f"    0x{va:08x}  {word:08x}   {note}")
     for site, _w in PRINTF2_SITES:
         print(f"  site 0x{site:08x} -> 0x{b_encode(site, PRINTF2_STUB, link=True):08x}")
+    print()
+    print("LEAK 13 - IPC path: the registry file buffer (~38.5 kB per message)")
+    for va, word, note in ipcbuf:
+        print(f"    0x{va:08x}  {word:08x}   {note}")
+    for site, _w in IPC_BUF_SITES:
+        print(f"  site 0x{site:08x} -> 0x{b_encode(site, IPC_BUF_STUB, link=True):08x}")
 
     if args.tsv:
         rows = []
         for va, word, note in (cave + cave2 + cave3 + cave4 + cave5 + cave6
                                + cave7 + cave8 + cave9 + cave10 + freestr
-                               + ncmp + scmp + printf2):
+                               + ncmp + scmp + printf2 + ipcbuf):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -734,6 +811,10 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, PRINTF2_STUB, link=True),
                          "printf + json_free x2 stub"))
+        for site, _w in IPC_BUF_SITES:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, IPC_BUF_STUB, link=True),
+                         "IPC: parse then delete[] the registry file buffer"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -745,27 +826,56 @@ def main():
         print("check-only: nothing written")
         return
 
-    for va, word, _ in (cave + cave2 + cave3 + cave4 + cave5 + cave6 + cave7
-                        + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2):
+    all_stubs = (cave + cave2 + cave3 + cave4 + cave5 + cave6 + cave7
+                 + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
+                 + ipcbuf)
+    # ONE list drives both the writes and the self-check below. They cannot
+    # diverge, which is the failure this structure exists to prevent: the write
+    # list was once edited on one line while it spanned two, silently dropping a
+    # whole stub while the site that branches into it was still redirected.
+    site_writes = [
+        (PATCH_SITE, CAVE, False), (PATCH2_SITE, CAVE2, False),
+        (PATCH3_SITE, CAVE3, False), (PATCH4_SITE, CAVE4, False),
+        (PATCH5_SITE, CAVE5, False), (PATCH6_SITE, CAVE6, False),
+        (PATCH7_SITE, CAVE7, False), (PATCH8_SITE, CAVE8, False),
+        (PATCH9_SITE, CAVE9, False), (PATCH10_SITE, CAVE10, False),
+    ]
+    site_writes += [(s, FREESTR_STUB, True) for s, _ in STRCPY_SITES]
+    site_writes += [(s, FREE_STRNCMP_STUB, True) for s, _ in STRNCMP_SITES]
+    site_writes += [(s, FREE_STRCMP_STUB, True) for s, _ in STRCMP_SITES]
+    site_writes += [(s, PRINTF2_STUB, True) for s, _ in PRINTF2_SITES]
+    site_writes += [(s, IPC_BUF_STUB, True) for s, _ in IPC_BUF_SITES]
+
+    intended = {va: word for va, word, _ in all_stubs}
+    for site, target, linked in site_writes:
+        intended[site] = b_encode(site, target, link=linked)
+    for va, word in intended.items():
         wr(va, word)
-    wr(PATCH8_SITE, b_encode(PATCH8_SITE, CAVE8))
-    wr(PATCH9_SITE, b_encode(PATCH9_SITE, CAVE9))
-    wr(PATCH10_SITE, b_encode(PATCH10_SITE, CAVE10))
-    for site, _w in STRCPY_SITES:
-        wr(site, b_encode(site, FREESTR_STUB, link=True))
-    for site, _w in STRNCMP_SITES:
-        wr(site, b_encode(site, FREE_STRNCMP_STUB, link=True))
-    for site, _w in STRCMP_SITES:
-        wr(site, b_encode(site, FREE_STRCMP_STUB, link=True))
-    for site, _w in PRINTF2_SITES:
-        wr(site, b_encode(site, PRINTF2_STUB, link=True))
-    wr(PATCH_SITE, b_encode(PATCH_SITE, CAVE))
-    wr(PATCH2_SITE, b_encode(PATCH2_SITE, CAVE2))
-    wr(PATCH3_SITE, b_encode(PATCH3_SITE, CAVE3))
-    wr(PATCH4_SITE, b_encode(PATCH4_SITE, CAVE4))
-    wr(PATCH5_SITE, b_encode(PATCH5_SITE, CAVE5))
-    wr(PATCH6_SITE, b_encode(PATCH6_SITE, CAVE6))
-    wr(PATCH7_SITE, b_encode(PATCH7_SITE, CAVE7))
+
+    # SELF-CHECK, and it exists because the tool once silently emitted a binary
+    # with the call sites redirected but the STUBS MISSING. A two-line write
+    # list lost a term to a one-line edit, the build succeeded, the dry-run
+    # printed the stub it had not written, and the result was a `bl` into the
+    # middle of an unrelated live function. It reached the panel.
+    #
+    # Every word this run intends to change is read back from the produced
+    # image and compared. A mismatch is fatal, not a warning.
+    orig = open(args.binary, "rb").read()
+    bad = []
+    for va, want in intended.items():
+        got = struct.unpack_from("<I", data, va - TEXT_BIAS)[0]
+        if got != want:
+            bad.append(f"0x{va:x}: wrote 0x{got:08x}, intended 0x{want:08x}")
+    if bad:
+        sys.exit("REFUSING: produced image does not match intent:\n  "
+                 + "\n  ".join(bad))
+    changed = sum(1 for i in range(0, len(data), 4)
+                  if data[i:i + 4] != orig[i:i + 4])
+    if changed != len(intended):
+        sys.exit(f"REFUSING: {changed} words differ from the input but "
+                 f"{len(intended)} were intended - the image has changes this "
+                 f"run did not make, or is missing some it did")
+    print(f"  self-check: {len(intended)} words, all present and correct")
 
     with open(args.out, "wb") as fh:
         fh.write(data)
