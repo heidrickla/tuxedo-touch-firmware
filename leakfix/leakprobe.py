@@ -56,7 +56,7 @@ def rss_kb(pid):
     raise RuntimeError("no VmRSS")
 
 
-def request_url(probe, cmd):
+def request_url(probe, cmd, extra=""):
     params = {
         "cmd": str(cmd),
         "Type": str(cmd),
@@ -67,6 +67,12 @@ def request_url(probe, cmd):
         "index": "0",
         "tarTemp": "0",
     }
+    # `extra` is parsed rather than concatenated, so a caller passing a name
+    # the base set already holds overrides it instead of sending it twice --
+    # a duplicate parameter is read by the vendor as the FIRST occurrence,
+    # which would silently ignore the override.
+    for key, value in urllib.parse.parse_qsl(extra, keep_blank_values=True):
+        params[key] = value
     return f"{probe.base}{HANDLEREQUEST}?" + urllib.parse.urlencode(params)
 
 
@@ -102,6 +108,13 @@ def main():
                          "defaulted, for the reason above.")
     ap.add_argument("--cmd", default="0")
     ap.add_argument("--path", default="", help="console mode: GET this path instead of handlerequest")
+    ap.add_argument("--extra", default="",
+                    help="console mode: extra query parameters appended to the "
+                         "handlerequest URL, e.g. 'sceneid=1' for cmd 141 or "
+                         "'scenedata=...' for cmd 140. The scene handlers read "
+                         "their operand from a NAMED parameter and answer "
+                         "immediately when it is absent, so without this a run "
+                         "returns 200s that executed nothing.")
     ap.add_argument("--endpoint", default="/GetSecurityStatus",
                     help="api mode: which /system_http_api/API_REV01 endpoint")
     ap.add_argument("--plain", default="operation=get",
@@ -172,7 +185,7 @@ def main():
             sizes["resp_body"] = len(body) if body else 0
     else:
         url = (f"{probe.base}{args.path}" if args.path
-               else request_url(probe, args.cmd))
+               else request_url(probe, args.cmd, args.extra))
         print(f"  GET {url}")
 
         def one():

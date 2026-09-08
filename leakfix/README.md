@@ -327,9 +327,42 @@ each leaks a parsed tree per operation.
 
 **Deliberately not patched, and the reasons are per-function:**
 
-- **They cannot be driven on this bench.** No scene endpoint is wired into
-  `leakprobe.py`, so a fix could not be verified — which is exactly how the
-  first IPC attempt went wrong. Build a driver first, then patch.
+- **They cannot be driven on this bench — but NOT for the reason recorded here
+  originally.** The endpoints are identified and wired up now; the blocker moved
+  to a CSRF gate. `handlerequest_html076EF7::service` dispatches on
+  `U32_atoi(getParameter("Type"))`, and two arms reach these functions:
+
+      cmd 140  ->  editSceneDetails(getParameter("scenedata"))
+      cmd 141  ->  deleteExistngScene(atoi(getParameter("sceneid")))
+
+  `leakprobe.py` now takes `--extra` so console mode can carry those operands,
+  and `sceneopleak.sh` drives them.
+
+  🚨 **BUT EVERY CONSOLE-MODE REQUEST ANSWERS 200 AND DISPATCHES NOTHING.** The
+  handler gates on a CSRF token *before* the switch:
+
+      3a3c0  bl   getCSRFToken1([sp,#120])   <- keyed on the SESSION's own field
+      3a3c4  subs r6, r0, #0                    [r7,#8], NOT on ?sessionid=
+      3a3c8  beq  3e858                       <- no token: bail out, r5 = -1
+
+  Traced with `-dfilter 0x3a2a0..0x3a730`, the last block executed is **`0x3a3c4`
+  for `cmd` 0, 1, 140 and 141 alike** — four values, one stop, so this is the
+  gate and not a per-command quirk. `handlerequest_mobile_html076EF` calls
+  `getCSRFToken1` too, so it is not a way around.
+
+  ⚠ **Not a bench artefact.** `/console.html` renders `hiddenKey=-1` — the same
+  `-1` the bail path sets — for a `TuxedoProbe` session on **the live panel as
+  well as the bench**. `TuxedoProbe.login()` performs the real challenge/HMAC UI
+  login, so being logged in is not sufficient; something in the browser flow
+  registers the token and the probe does not reproduce it.
+  `addCSRFTokenToSessionID` (0x2e1ac) is a thunk nothing in the binary calls, so
+  where registration happens is still open.
+
+  🔑 **The consequence reaches past the scene work: any `/handlerequest.html`
+  number taken through console mode measured the bail-out.** Clean 200s with a
+  flat RSS is exactly what a gate that dispatches nothing produces, and at the
+  HTTP layer it is indistinguishable from "this endpoint does not leak". Settle
+  the token before trusting a console-mode measurement.
 - **`deleteExistngScene` has a node-aliasing hazard.** It does
   `json_push_back(newArray, json_at(tree, i))`, so the two trees may share
   nodes; freeing both could double-free and freeing one could leave the other
@@ -346,6 +379,32 @@ is unambiguously safe. Nothing derived from the tree escapes — the loop uses
 `json_as_int`, which returns a value — and both exits converge on `mov r0, r5`
 at **0x34c50**, where a NULL-guarded `json_delete(r6)` fits. r6 is NULL exactly
 on the branch that skips the loop, so the guard covers it.
+
+🔑 **It leaks on EVERY call, not only when the scene exists** — worth stating
+because it changes what a driver has to arrange. The tree is parsed before the
+id is ever compared:
+
+    34c00  bl   scene_getRootNodeOfObjects  -> r6 = parsed tree
+    34c04  subs r6, r0, #0 ; beq 34c50      -> NULL only if the parse failed
+    34c24  loop: json_at / json_get / json_as_int, r5 = 1 on a match
+    34c50  mov  r0, r5                      <- returns an INT; the tree is dropped
+
+So a database of placeholder scenes still leaks a tree per call, and
+`deleteExistngScene` calls it at `0x34c68` **before** its own early return at
+`0x34c70` — meaning cmd 141 leaks even though the delete itself does nothing and
+writes nothing. That makes it the safest possible driver for this fix, once a
+request can get past the CSRF gate above.
+
+The stub is five words and needs no stack: `json_delete` clobbers `lr`, but the
+function returns through `pop {r4,r5,r6,r7,r8,pc}` off the frame it pushed at
+0x34bf0, so `lr` is dead. r5 and r6 are callee-saved and survive the call.
+
+    mov r0, r6 ; cmp r0, #0 ; blne json_delete ; mov r0, r5 ; pop {r4,r5,r6,r7,r8,pc}
+
+⚠ **Not written yet, deliberately.** An unverifiable free is what the two
+withheld `getEScenes` string stubs were about, and the same rule applies here:
+the CSRF gate means a fix cannot yet be measured, and shipping it would be
+reasoning, not evidence.
 
 ## The defect
 

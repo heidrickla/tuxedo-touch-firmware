@@ -44,6 +44,19 @@ and left sitting there saying the opposite of the truth.
 - **A check that can pass for the wrong reason is not a check.**
   `len(body) > 0` is true of a 401 error body, so it reported a gated panel as
   "delivers frames with no credential".
+- 🚨 **HTTP 200 IS NOT EVIDENCE THE HANDLER RAN.** `/handlerequest.html` gates on
+  a CSRF token *before* its dispatch — `getCSRFToken1` at `0x3a3c0`, `beq 3e858`
+  at `0x3a3c8` when it returns NULL — and the bail-out answers **200** like a
+  success. `leakprobe.py --mode console` never carries a token, so every request
+  it has ever sent to that endpoint returned 200, left RSS flat, and **executed
+  nothing past `0x3a3c4`**. Confirmed by trace for `cmd` 0, 1, 140 and 141: four
+  values, identical last block. A flat RSS over clean 200s is precisely what a
+  gate produces, so "no leak here" and "this code never ran" are the same
+  reading at the HTTP layer. **Trace one request, or assert a side effect, before
+  believing any endpoint measurement.** `/console.html` renders `hiddenKey=-1`
+  for such a session on the PANEL as well as the bench, so it is not an
+  emulation artefact — and `TuxedoProbe.login()` does the genuine challenge/HMAC
+  UI login, so being properly logged in does not imply a dispatchable session.
 - **A CHECK MUST DISTINGUISH "RAN AND PASSED" FROM "DID NOT RUN".** Deciding a
   verdict by searching a command's output for a failure word conflates them,
   because the absence of that word is produced by success and by absence alike.
