@@ -7,6 +7,7 @@ several shapes and report which answers.
 
 Read-only: 5002 is the display poll the page itself issues. No keystroke is sent.
 """
+import os
 import re
 import sys
 import urllib.parse
@@ -15,7 +16,12 @@ sys.path.insert(0, "/work/fwcheck")
 from leakprobe import TuxedoProbe
 
 pw = open("/tmp/pw").read().strip()
-p = TuxedoProbe("127.0.0.1", "Lewis", pw, scheme="http")
+# The panel account name is deliberately kept OUT of this repo -- aff1f99
+# removed it from leakprobe.py and gave pubscan a detector for it. Pass it in.
+user = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("TUXEDO_USER")
+if not user:
+    raise SystemExit("usage: probe5002.py <panel-user>   (or set TUXEDO_USER)")
+p = TuxedoProbe("127.0.0.1", user, pw, scheme="http")
 p.login()
 ck = {"Cookie": p.session_cookie}
 

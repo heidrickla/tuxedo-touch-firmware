@@ -29,6 +29,10 @@ set -u
 CMD="${1:-141}"
 EXTRA="${2:-sceneid=1}"
 N="${3:-300}"
+# The panel account name is deliberately not in this repo; pass it in.
+PANEL_USER="${PANEL_USER:-${TUXEDO_USER:-}}"
+CREDS="${CREDS:-/tmp/pw.txt}"
+[ -z "$PANEL_USER" ] && { echo "ABORT: set PANEL_USER (the panel web account)"; exit 1; }
 cd /work/fwcheck
 
 PID=$(sudo ss -lntp 2>/dev/null | grep ":80 " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
@@ -38,7 +42,7 @@ echo -n "  binary: "; sudo md5sum "$(sudo readlink /proc/$PID/root)/opt/webserve
 
 echo "=== warm $N, so the startup ramp is not counted as the leak ==="
 sudo timeout 900 python3 leakprobe.py --host 127.0.0.1 --mode console \
-    --cmd "$CMD" --extra "$EXTRA" --user Lewis --creds /tmp/pw.txt \
+    --cmd "$CMD" --extra "$EXTRA" --user "$PANEL_USER" --creds "$CREDS" \
     --warmup "$N" --n 10 --every 10 2>&1 \
     | grep -E "measured statuses|GET " | sed 's/^/  /'
 
@@ -47,7 +51,7 @@ sudo python3 heapwalk.py --pid "$PID" --save /tmp/so.before.json 2>&1 | tail -2 
 
 echo "=== driving $N ==="
 sudo timeout 900 python3 leakprobe.py --host 127.0.0.1 --mode console \
-    --cmd "$CMD" --extra "$EXTRA" --user Lewis --creds /tmp/pw.txt \
+    --cmd "$CMD" --extra "$EXTRA" --user "$PANEL_USER" --creds "$CREDS" \
     --warmup 0 --n "$N" --every 100 2>&1 \
     | grep -E "measured statuses|slope|rss" | sed 's/^/  /'
 

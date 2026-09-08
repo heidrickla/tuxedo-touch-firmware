@@ -279,7 +279,16 @@ def main():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from tuxedo_status_probe import TuxedoProbe
         line = open(args.creds, encoding="utf-8").read().strip().splitlines()[0]
-        user, pw = line.split(":", 1) if ":" in line else ("lewis", line)
+        # user:password, or a bare password with the account name supplied by
+        # the environment. The panel account name is deliberately kept out of
+        # this repo -- aff1f99 removed it from leakprobe.py for the same reason.
+        if ":" in line:
+            user, pw = line.split(":", 1)
+        else:
+            user, pw = os.environ.get("TUXEDO_USER", ""), line
+            if not user:
+                sys.exit("creds file holds a bare password; set TUXEDO_USER "
+                         "or use user:password")
         probe = TuxedoProbe(args.host, user, pw, scheme="https")
         probe.login()
         cookie = probe.session_cookie

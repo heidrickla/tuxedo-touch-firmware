@@ -6,6 +6,7 @@ without a display feed, so their absence would be a SEPARATE defect and the
 type-20 work alone would not fix what Lewis saw. If the page builds its keypad
 only after a feed arrives, type 20 is the whole story.
 """
+import os
 import re
 import sys
 
@@ -13,7 +14,12 @@ sys.path.insert(0, "/work/fwcheck")
 from leakprobe import TuxedoProbe
 
 pw = open("/tmp/pw").read().strip()
-p = TuxedoProbe("127.0.0.1", "Lewis", pw, scheme="http")
+# The panel account name is deliberately kept OUT of this repo -- aff1f99
+# removed it from leakprobe.py and gave pubscan a detector for it. Pass it in.
+user = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("TUXEDO_USER")
+if not user:
+    raise SystemExit("usage: consolepage.py <panel-user>   (or set TUXEDO_USER)")
+p = TuxedoProbe("127.0.0.1", user, pw, scheme="http")
 p.login()
 
 PATTERNS = (

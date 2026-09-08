@@ -14,6 +14,7 @@ one jar across login, the registering GET and the commands.
 
 Verdict is command-independence, not hiddenKey: the bail precedes the switch.
 """
+import os
 import hashlib
 import http.cookiejar
 import sys
@@ -24,7 +25,12 @@ sys.path.insert(0, "/work/fwcheck")
 from tuxedo_status_probe import hmac_hex  # noqa: E402
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-USER = sys.argv[2] if len(sys.argv) > 2 else "Lewis"
+# The panel account name is deliberately kept OUT of this repo -- aff1f99
+# removed it from leakprobe.py and gave pubscan a detector for it. Pass it in.
+USER = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("TUXEDO_USER", "")
+if not USER:
+    raise SystemExit("usage: %s <host> <panel-user> [creds]  (or set TUXEDO_USER)"
+                     % sys.argv[0])
 password = open("/tmp/pw.txt", encoding="utf-8").read().strip()
 import ssl
 SCHEME = sys.argv[3] if len(sys.argv) > 3 else "http"

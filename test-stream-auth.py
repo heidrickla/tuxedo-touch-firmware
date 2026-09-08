@@ -168,7 +168,15 @@ def main():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from tuxedo_status_probe import TuxedoProbe
         raw = open(args.creds, encoding="utf-8").read().strip().splitlines()[0]
-        user, pw = raw.split(":", 1) if ":" in raw else ("Lewis", raw)
+        # user:pass, or a bare password with the account name from the
+        # environment. The panel account name is deliberately not in this repo.
+        if ":" in raw:
+            user, pw = raw.split(":", 1)
+        else:
+            user, pw = os.environ.get("TUXEDO_USER", ""), raw
+            if not user:
+                sys.exit("creds file holds a bare password; set TUXEDO_USER "
+                         "or use user:password")
         try:
             p = TuxedoProbe(args.host, user, pw, scheme="https")
             p.login()   # one SUCCESSFUL login; a wrong one is never attempted
