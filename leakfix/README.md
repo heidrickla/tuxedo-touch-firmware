@@ -477,14 +477,36 @@ each leaks a parsed tree per operation.
   is the USER count, not the session-list length. Whenever the session list is
   longer than the number of web accounts, registration lands out of range.
 
-  ⚠ **Not yet explained: why the browser works anyway.** `group_configuration.js`
-  calls `sendCommand(6293/6295, …)`, and `httpRequest.js` builds
+  🚨 **Not explained: the browser DOES dispatch, and that is now verified from an
+  artifact rather than from a report.** Lewis created a group in the web UI on
+  2026-09-08 at 13:00; the panel holds
+
+      /opt/tuxedo/configuration/hagroupdb.json   78 B, mtime Sep 8 13:00
+      [{"u8GrpId":1,"enmGrpType":0,"grpName":"Test","voiceCommand":"","NodeID":[]}]
+
+  `group_configuration.js` writes that through `sendCommand(6293, …)`, and
+  `httpRequest.js` builds it as
   `/handlerequest.html?cmd=…&sessionid=<hidSession>&tokenkey=<hiddenKey>&sid=<rand>`
-  — the same gated endpoint. Either Lewis's session landed at a low index, or the
-  group write reached the panel by another route. **Do not assume the UI is
-  exempt** until that is measured; the peer found arm/disarm goes to
-  `/AdvancedSecurity/*` on the API surface instead, so a second route plainly
-  exists.
+  — the same gated endpoint that answers a scripted client 200-with-no-body. So
+  the gate passes for a browser and not for the probe, and **the index model
+  above is incomplete rather than wrong**: it explains why the scripted session
+  fails, not why the browser succeeds.
+
+  **Candidates NOT yet eliminated**, for whoever picks this up:
+  - **Slot ordering over time.** The writer takes the highest free slot, so the
+    index falls as sessions accumulate. Lewis logged in among a day of scripted
+    logins; his may have landed at ≤ getNoOfUsers() where mine did not.
+  - **A different auth route for LAN clients.** `getLocalLoginStatus` /
+    "Authentication for web server local access" means local access may not run
+    `FormAuthenticator` at all, so a browser session can be created by a path the
+    probe's challenge/HMAC login never takes.
+  - **The four-session ceiling below.** Past four sessions `hidSession` is 0, so
+    a probe that has logged in repeatedly is not in the same state as a browser
+    that logged in once.
+
+  ⚠ The peer found arm/disarm going to `/AdvancedSecurity/*` on the API surface,
+  so a second route exists for *some* commands — but not for this one: the group
+  write is `cmd=6293` on `handlerequest`, and it landed.
 
   ✅ **What this hands the next attempt:** the scripted request shape is now
   known exactly — `sessionid` is the NUMERIC `hidSession` from
