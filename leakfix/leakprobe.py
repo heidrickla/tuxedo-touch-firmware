@@ -89,8 +89,15 @@ def main():
                     help="console = /handlerequest.html; api = GetSecurityStatus, "
                          "which is what Home Assistant actually polls")
     ap.add_argument("--scheme", default="")
-    ap.add_argument("--user", default="Lewis")
-    ap.add_argument("--creds", default="/tmp/pw")
+    # No default account name. A real one is an author identifier and this file
+    # is published; it also logs in for real, so a wrong default SPENDS a login
+    # attempt -- and three failures disable every web account on stock firmware.
+    # Same reasoning panelleak.py already applies to --creds.
+    ap.add_argument("--user", required=True,
+                    help="panel web account to log in as")
+    ap.add_argument("--creds", required=True,
+                    help="file holding the panel password. Required rather than "
+                         "defaulted, for the reason above.")
     ap.add_argument("--cmd", default="0")
     ap.add_argument("--path", default="", help="console mode: GET this path instead of handlerequest")
     ap.add_argument("--endpoint", default="/GetSecurityStatus",

@@ -29,3 +29,17 @@
 author hostnames	\b(my-workstation|my-forge-host)\b
 author domains	\b[a-z0-9-]+\.(?:example|example-two)\.com\b
 author paths	[A-Za-z]:\\{1,2}(?:MyRepoDir|MyProjectsDir)\b
+
+# ACCOUNT NAMES, and scope them to login position rather than matching bare.
+# A tool shipped `--user default="MyName"` into a commit staged for a public
+# push and every structural detector passed it: an account name is not an
+# address, a MAC, a path, a hostname or an email. On a device it is half a
+# credential.
+#
+# Bare `\bMyName\b` matched 69 times across 26 files here -- prose, docs,
+# quoted instructions -- and the name is public anyway through git authorship.
+# Drowning the one hit that matters is the failure the placeholder-MAC filter
+# exists to prevent. Scope it, then check it still fires on the real case:
+# the first scoped attempt was too tight and matched nothing at all, which
+# looked exactly like being clean.
+author accounts	(?i)\b(user|username|account|login|acct)\b[^\n]{0,24}["']MyName["']
