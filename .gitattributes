@@ -9,6 +9,15 @@
 *.md            text eol=lf
 rc.local        text eol=lf
 tuxedo-upload.sh text eol=lf
+# patches.tsv was NOT covered, and it is the file that can least afford it. Its
+# parser is field-and-whitespace sensitive, and apply-patches.py and
+# verify-panel.sh both read it -- a trailing CR lands in the last field of every
+# row. The committed blob has always been LF, so nothing was ever published
+# wrong; but `git checkout` on Windows rewrote the working copy as CRLF and
+# ci/checks.sh then reported "FAIL patch table well formed" with
+# offset-not-hex, not-lowercase-hex and stock-equals-patched, on a table that
+# had not changed. A checkout broke the check, not an edit.
+*.tsv           text eol=lf
 
 # Firmware images and binaries.
 *.hdr           binary
