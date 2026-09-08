@@ -617,7 +617,15 @@ Ranked by what actually touches attacker-influenced input on Lewis's LAN.
    stream is read-only — it carries no code and accepts no commands — so this
    is a disclosure, not a control path. Not fixed: per Lewis, security work is
    deferred until the firmware is stable, and this does not block any feature.
-2. **OQ-2 — Is `BARRACUDA[0].LocalLogin` set to 1 on Lewis's unit?** (b-5.) `Tuxedo.json` was not in the carve. If it is 0, a large chunk of section (b) is live today rather than theoretical.
+2. ✅ **OQ-2 — ANSWERED 2026-09-08: `LocalLogin` is `1`.** Read from
+   `/opt/tuxedo/configuration/Tuxedo.json` on the panel (the file the carve
+   lacked): `"BARRACUDA":[{"PORT_NUMBER":6280,"HTTPS":1,"LocalLogin":1}]`. So
+   local LAN access **does** run the form authenticator, and the section (b)
+   material that depended on `LocalLogin = 0` stays theoretical on this unit
+   rather than being live. ⚠ This is a *config* value: it can be changed from the
+   panel UI, so re-read it rather than trusting this line after any settings
+   work. Confirmed independently by behaviour — an unauthenticated LAN fetch of
+   `/home.html` returns the 6311-byte login page, not the page.
 3. **OQ-3 — Is the plain-HTTP listener reachable on Lewis's LAN, and is the web UI actually being used over it?** (b-1.) Determines whether the user code is on the wire in cleartext.
 4. **OQ-4 — Does the local touchscreen's web-user editor rewrite `status:1`?** (a-1.) This is the difference between "recoverable from the panel" and "recoverable only by editing encrypted JSON off-box."
 5. **OQ-5 — What is the state of the SharkSSL listener?** Version, cipher suites, certificate. It is the recommended mitigation for b-1 and **nobody looked at it.**

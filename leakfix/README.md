@@ -451,7 +451,35 @@ each leaks a parsed tree per operation.
   2026-09-08 while the scripted session was bailing, so this is a difference
   between the two clients and not a dead endpoint.
 
-  ## ✅ ROOT CAUSE: the session is registered OUTSIDE the range the reader scans
+  ## 🚨 RETRACTED ROOT CAUSE — and the real one, which the repo already had
+
+  ✅ **THE ENDPOINT DISPATCHES. One login is all it ever needed:**
+
+      hiddenKey  = c0386cff1a1aadaa88d49dcfaeb586a   31 hex, not -1
+      hidSession == int(cookie[0:8], 16)             PASS
+      Type 0 / 141 / 65535 -> bodies of 38 and 43 B  DISPATCHES
+
+  🚨 **The cause was my own driver, not a vendor bug.**
+  `docs/TUXEDO-AUDIT-BUGS.md` §2.4 says `No_Of_Users` = **10 concurrent
+  sessions**, reaped only when the `HttpSession` dies (`Session_Timer` = 10 min),
+  and warns in as many words: *"do not re-login per poll … a client that re-logs
+  every 30 s will exhaust the table."* §2.6 lists the symptom outright:
+  **`hiddenKey == "-1"` → session has no slot, re-login.** Every test above
+  logged in afresh — dozens of times — so from the eleventh onward there was no
+  slot, and `-1` was the table saying so.
+
+  ⚠ **So the analysis below is WRONG where it concludes "index 10 is outside the
+  search".** `getCSRFToken1` scans `i = 1..getNoOfUsers()`, and `getNoOfUsers()`
+  returns `No_Of_Users` from `/root/Settings/WebConfig.conf` — **10 on this unit,
+  verified** — not the 5 web accounts I assumed. Index 10 is *inside* the range.
+  The record being at 10 was the last free slot, exactly as designed.
+
+  🔑 **The mechanism notes that follow are still accurate and worth keeping** —
+  the record layout, the `url` parameter requirement, the highest-free-slot
+  choice. Only the conclusion drawn from them was wrong, and it was wrong because
+  I supplied `getNoOfUsers()` from a guess instead of reading it.
+
+  ### What the reading below was, and where it went wrong
 
   Found by searching guest memory for a value the server itself had rendered,
   rather than by address arithmetic — `/eventhandler.html` carries
@@ -465,17 +493,18 @@ each leaks a parsed tree per operation.
                             token='7c17e0518d3c7a1c41894ce458...'
       slots 1..9:           0xFFFFFFFF, i.e. FREE
 
-  So `addSessionItem` writes correctly — and `getCSRFToken1` scans
-  **`i = 1 .. getNoOfUsers()`** from `r4 = 40`. This unit has **5 web accounts**
-  (`UserNamesFile.txt`), so the reader looks at indices 1–5 and the record at 10
-  is structurally invisible to it. `getCSRFToken1` returns NULL, `0x3a3c8`
-  branches to the bail, and the request answers 200 with an empty body.
+  `addSessionItem` writes correctly, and `getCSRFToken1` scans
+  **`i = 1 .. getNoOfUsers()`** from `r4 = 40`. ⚠ **I read `getNoOfUsers()` as the
+  5 web accounts in `UserNamesFile.txt` and concluded index 10 was out of range.
+  That was a guess and it was wrong** — it returns `No_Of_Users` from
+  `/root/Settings/WebConfig.conf`, which is **10** here, so index 10 is the last
+  valid slot rather than one past the end.
 
-  🔑 **The writer picks the LAST free slot, the reader only checks the first few.**
-  `mov r8, r6` at 0x1431c runs on *every* empty slot the scan passes, so `r8`
-  ends as the highest index examined, not the lowest — while the reader's bound
-  is the USER count, not the session-list length. Whenever the session list is
-  longer than the number of web accounts, registration lands out of range.
+  🔑 **The writer picks the LAST free slot** — `mov r8, r6` at 0x1431c runs on
+  every empty slot the scan passes, so `r8` ends as the highest free index. With
+  ten slots and one session that is index 10, which is correct behaviour and not
+  a bug. It only *looked* like one because the table was already full of my own
+  abandoned sessions.
 
   🚨 **Not explained: the browser DOES dispatch, and that is now verified from an
   artifact rather than from a report.** Lewis created a group in the web UI on
