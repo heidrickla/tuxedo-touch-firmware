@@ -662,11 +662,40 @@ request path evidently reaches too. The 0x29 word at +4 is a libjson node header
 and the `inc` fragments are the tail of libjson's own `Children is null inc`
 error string, the same one that turned up in the `/GetSceneList` residual.
 
-⚠ **Named, not yet located.** The contents identify *what* leaks; the call site
-that parses it on this path still has to be found before a stub can wrap it. Trace
-`json_parse`/`json_new` inside the `cmd=141` arm with `serve-traced.sh` to get the
-site — the driver and the measurement are both in place now, so that is a bounded
-job rather than the afternoon this took to become measurable at all.
+✅ **LOCATED: `validatePageName` (0x13afc), and it leaks TWICE per call.** The map
+is a string literal at guest VA `0x86168` — the 29-entry
+`[{"1":"zwavedevicelist.html"},…,{"29":"treeview.html"}]` array — and `0x13b70`,
+the only reference to it in the image, is `validatePageName`'s literal pool.
+
+    13b08  r0 = the page-map literal
+    13b0c  bl json_strip_white_space   -> ALREADY FIXED: 0x13B10 is the first
+    13b10  bl json_parse_unformatted      entry in STRIP_PARSE_SITES (LEAK 19)
+    13b14  subs r6, r0, #0 ; beq 13b64 -> r6 = the parsed tree
+    13b1c  json_size, then the loop:
+    13b2c    json_at / json_at
+    13b38    json_as_string           -> LEAK 2: consumed by strcmp at 0x13b40
+    13b40    strcmp                      and dropped, ONCE PER ITERATION
+    13b64  mov r0, #0                 (no-match path, falls through)
+    13b68  add sp, #4 ; pop {r4,r5,r6,r7,pc}   <- LEAK 1: r6 never json_delete'd
+
+**Two leaks, and the second scales with the map.** The tree is one allocation per
+call; the `json_as_string` results are one per iteration, up to 29 before a match
+— which is why the 40- and 32-byte rows grow at ~1.2 per request rather than
+exactly 1.
+
+✅ **The exit is a single convergence at 0x13b68** — 0x13b64 falls through to it —
+so one stub covers both paths. `lr` is expendable (the function returns through
+`pop {…,pc}`), and `r4` is restored by that same pop, so it is free to hold the
+return value across a `bl`:
+
+    mov r4, r0 ; mov r0, r6 ; cmp r0,#0 ; blne json_delete ;
+    mov r0, r4 ; add sp,sp,#4 ; pop {r4,r5,r6,r7,pc}
+
+⚠ **Fix the tree first and measure before touching the loop.** The per-iteration
+`json_as_string` free is the more delicate of the two, and LEAK 23 is a fresh
+reminder that a correct-looking free can move nothing at all. Both callers are
+`MyPage_service` and `authPage_service`, so this is on the page path generally,
+not only `cmd=141`.
 
 ✅ **Re-enable LEAK 23 the moment `hascenedb.json` is non-empty** — i.e. once real
 Z-Wave scenes exist. Then the tree is real, the leak is real, and the stub frees
