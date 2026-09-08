@@ -333,14 +333,180 @@ PRINTF2_SITES = ((0x47C94, 0xEB008E77),)
 # not json_free. Three different release functions are in play on this path and
 # using the wrong one corrupts the heap rather than leaking.
 #
-# The json_strip_white_space result is ALSO leaked and is deliberately left for
-# now: its pointer is consumed by the parse whose return overwrites r0, and
-# freeing it depends on whether libjson's parser copies its input. Unverified,
-# so untouched.
+# The json_strip_white_space result is ALSO leaked, and is now freed too.
+#
+# ✅ OWNERSHIP VERIFIED IN libjson.so.7.6.1 RATHER THAN ASSUMED - this was the
+# open question that kept it untouched, and freeing wrongly here corrupts the
+# heap instead of leaking:
+#
+#   json_strip_white_space -> JSONWorker::RemoveWhiteSpaceAndCommentsC(
+#                                 std::string const&, bool)
+#       takes its input BY std::string, so the result is a fresh buffer.
+#   json_parse_unformatted -> JSONWorker::parse_unformatted(std::string const&)
+#       ALSO takes std::string, so the tree holds copies and retains NO pointer
+#       into the buffer it parsed. Freeing the strip result the moment the parse
+#       returns is therefore safe.
+#   json_free itself contains a `free@plt`, so it is the right deallocator for
+#   a libjson-allocated string.
 DELETE_ARRAY_PLT = 0xC168
 JSON_PARSE_PLT = 0xBF58
+JSON_STRIP_PLT = 0xC2AC
 IPC_BUF_STUB = 0x69444
 IPC_BUF_SITES = ((0x34964, 0xEBFF5D7B),)
+
+# LEAK 14 and 15 - registeredClients (0x34980), the BULK of the IPC leak.
+#
+#   r8 = scene_getRootNodeOfObjects(file)   the parsed registry tree
+#   r7 = json_size(r8);  r6 = 0
+#   while r6 < r7:
+#       r5 = json_new()                     one object per entry
+#       r4 = json_at(r8, r6++)              a node INSIDE r8
+#       if json_size(r4) <= 4: continue
+#       4 x { json_get(r4,key); json_as_string(); json_new_a(name,str);
+#             json_push_back(r5, node) }
+#       json_push_back(sl, r5)              into the CALLER's array
+#   return 5                                a CONSTANT, never the tree
+#
+# LEAK 14: the four json_as_string results leak once PER ENTRY - eight per
+# message with the registry's two entries. Measured as 57x16 B + 56x40 B +
+# 40x32 B and friends, ~4.4 kB per message, the largest single item on the path.
+#
+# LEAK 15: r8 is never freed. No json_delete appears anywhere in the function,
+# and the tree is not returned, so on return it is unreachable.
+#
+# 🔑 BOTH FREES ARE SAFE FOR THE SAME VERIFIED REASON: json_new_a reaches
+# JSONNode::JSONNode(std::string const&, std::string const&), so it COPIES the
+# value. Only copies are pushed into the caller's array, and json_at returns a
+# node inside r8 that is used solely within its own loop iteration. Nothing
+# outside the function points into r8 or at the strings.
+#
+# The tree stub must restore r0 = 5: `mov r0,#5` is set at 0x34a84 inside the
+# loop-condition block and json_delete clobbers r0. 0x34a8c is reached ONLY by
+# falling through from 0x34a88 (the `bls` at 0x349d8 targets 0x34a80), so
+# nothing branches into the displaced instruction.
+JSON_NEW_A_PLT = 0xBFE8
+IPC_NEWA_STUB = 0x69474
+IPC_TREE_STUB = 0x69498
+IPC_NEWA_SITES = (
+    (0x349EC, 0xEBFF5D7D),
+    (0x34A14, 0xEBFF5D73),
+    (0x34A3C, 0xEBFF5D69),
+    (0x34A64, 0xEBFF5D5F),
+)
+IPC_TREE_SITE = 0x34A8C
+IPC_TREE_ORIG = 0xE28DD004    # add sp, sp, #4
+IPC_TREE_RETURN = 0x34A90
+
+# LEAK 16 - registeredClients abandons an EMPTY object per SKIPPED entry.
+#
+#   349ac  r5 = json_new()          <-- allocated BEFORE the entry is vetted
+#   349bc  r4 = json_at(r8, r6++)
+#   349c4  json_size(r4)
+#   349d8  bls 34a80                <-- skip: r5 is never pushed and never freed
+#
+# The object is created before the `json_size(r4) > 4` test that decides whether
+# it will be used, so every skipped entry leaks one. MEASURED: the registry
+# parses to SIX entries and the trace takes this branch for ALL SIX, so this
+# fires 6 times per message and 0 entries ever reach the four json_as_string
+# calls below it.
+#
+# Freed on the skip branch itself. json_delete preserves r4-r8 and sl (callee
+# -saved), which is everything 0x34a80 needs, and r0 is reloaded with #5 at
+# 0x34a84 immediately after the join. r5 is always initialised here: it is set
+# at 0x349b4, before this branch.
+IPC_SKIP_STUB = 0x694B0
+IPC_SKIP_SITE = 0x349D8
+IPC_SKIP_ORIG = 0x9A000028    # bls 0x34a80
+IPC_SKIP_RETURN = 0x34A80
+
+# LEAK 17 - pushEventsToClientsDevAdded never frees TREE A.
+#
+#   13260  r7 = json_new()      the event payload, built up over 4 nodes
+#   13394  json_delete(r5)      only the registeredClients ARRAY is freed
+#   13398  add sp, sp, #260     r7 abandoned
+#
+# r7 is not returned and nothing outside holds it: json_write(r7) appears only
+# inside the per-client loop, which is empty here. Freed at the epilogue.
+# 0x13398 is reached only by falling through from 0x13394 (0x13390 is the
+# branch target), and the existing code already lets json_delete clobber r0,
+# so no return value is disturbed.
+#
+# ⚠ NOT PATCHED, DELIBERATELY: the three per-client leaks inside that loop -
+# json_as_string 0x13314, json_write 0x13350, curl_easy_escape 0x13360. The
+# loop body executes ZERO times (measured: 0x132fc runs 0 times over 3
+# messages) because registeredClients pushes nothing, so patching them would
+# ship code no test on this rig can exercise. That is exactly the mistake this
+# file already records once. They are real defects; leave them until a registry
+# with a >4-field entry exists to drive them.
+# ⚠ Same caveat applies to LEAK 14 above, which is already built: correct by
+# construction but never executed on this bench.
+IPC_TREEA_STUB = 0x694C0
+IPC_TREEA_SITE = 0x13398
+IPC_TREEA_ORIG = 0xE28DDF41   # add sp, sp, #260
+IPC_TREEA_RETURN = 0x1339C
+
+# LEAK 18 - scene_getRootNodeOfObjects discards a getErrorNode result.
+#
+#   34954  movne r0, sl          sl = 0
+#   34958  bl getErrorNode       builds a node and returns it
+#   3495c  mov r0, r7            <-- the node pointer is overwritten HERE
+#   34960  bl json_strip_white_space
+#
+# On the SUCCESS path the vendor calls getErrorNode(0) and throws the result
+# away on the very next instruction. getErrorNode does json_new + json_new_a +
+# json_push_back, so that is one abandoned node per message.
+#
+# This is the safest free on the whole path: the value is provably dead one
+# instruction later, in the original code, on every path that reaches it.
+# Nothing branches to 0x34958 - it is fall-through only from 0x34950/0x34954 -
+# and the OTHER two getErrorNode calls (0x3483c, 0x348b8) keep their results,
+# so only this site is redirected.
+GET_ERROR_NODE = 0x338E8
+IPC_ERRNODE_STUB = 0x694D4
+IPC_ERRNODE_SITES = ((0x34958, 0xEBFFFBE2),)
+
+# LEAK 19 - EVERY json_strip_white_space RESULT IN THE IMAGE IS LEAKED.
+#
+# The image makes 44 json_strip_white_space calls and ALL 44 are immediately
+# followed by `bl json_parse_unformatted` - adjacent, no exceptions:
+#
+#   3fdec  bl json_strip_white_space   -> r0 = a fresh stripped copy
+#   3fdf0  bl json_parse_unformatted   -> r0 OVERWRITTEN by the tree
+#
+# so the only pointer to the copy is destroyed by the very call that consumes
+# it. Same shape as the parameter tree at 0x29088 and the two json_write
+# results in getPartitionStatus: destroyed at birth.
+#
+# FOUND BY MEASUREMENT, NOT BY READING: /scene_configuration.html leaked 727.9
+# then 726.7 B/request (two runs agreeing, with /tuxedoapi.html reading 0.0 in
+# the same session as a negative control). heapwalk pinned it to ONE 648-byte
+# chunk per request, and chunkdiff dumped the contents - the voice-command
+# vocabulary. voicecommandglobal.json is exactly 640 bytes, and 640 + 8 = 648.
+#
+# WHY ONE SHARED STUB IS SAFE AT ALL 43 SITES, with no per-site analysis:
+#   * the two calls are ADJACENT at every site, so r0 on entry to the parse is
+#     always the strip result - there is no site where it is something else;
+#   * json_parse_unformatted reaches JSONWorker::parse_unformatted(std::string
+#     const&), so the tree holds copies and retains no pointer into the input
+#     (verified in libjson.so.7.6.1, see LEAK 13);
+#   * the original code already lets the parse's return value destroy the
+#     pointer, so nothing downstream can be using it;
+#   * json_free is libjson's deallocator (it contains a free@plt), which is the
+#     right one for a libjson-allocated string - NOT plain free.
+# The stub returns via lr, so one 36-byte stub serves every site regardless of
+# location, exactly like the strcpy/strcmp free stubs above.
+#
+# 0x34964 is EXCLUDED: it is already redirected to IPC_BUF_STUB, which frees
+# this same string AND the operator new[] buffer that only that site has.
+STRIP_PARSE_STUB = 0x694EC
+STRIP_PARSE_SITES = (
+    0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
+    0x1A1D4, 0x1A544, 0x1A720, 0x1A8FC, 0x1B754, 0x1BE74, 0x1C050, 0x1C22C,
+    0x1C6D8, 0x2FD78, 0x33A18, 0x34DD0, 0x35000, 0x35754, 0x357E4, 0x35AFC,
+    0x35B9C, 0x363EC, 0x3647C, 0x36804, 0x36894, 0x36DA0, 0x36E34, 0x372CC,
+    0x37358, 0x3C78C, 0x3DEC0, 0x3FDF0, 0x3FF28, 0x407D4, 0x40FEC, 0x42F3C,
+    0x46D68, 0x46E1C, 0x490B8,
+)
 
 
 def b_encode(at, target, link=False):
@@ -538,19 +704,149 @@ def build_ipc_buf_stub():
     Four registers keeps sp 8-byte aligned.
     """
     s = IPC_BUF_STUB
-    blne = (b_encode(s + 0x14, DELETE_ARRAY_PLT, link=True)
-            & 0x0FFFFFFF) | 0x10000000
+    blne_del = (b_encode(s + 0x14, DELETE_ARRAY_PLT, link=True)
+                & 0x0FFFFFFF) | 0x10000000
+    blne_free = (b_encode(s + 0x20, JSON_FREE_PLT, link=True)
+                 & 0x0FFFFFFF) | 0x10000000
     return [
         (s + 0x00, 0xE92D4083, "push {r0, r1, r7, lr}  @ strip result, pad, buffer, lr"),
         (s + 0x04, b_encode(s + 0x04, JSON_PARSE_PLT, link=True),
          "bl   json_parse_unformatted"),
-        (s + 0x08, 0xE58D0000, "str  r0, [sp]          @ stash the parsed tree"),
+        # The tree goes in the PAD slot, not slot 0: slot 0 must keep holding
+        # the strip result so it can be freed below.
+        (s + 0x08, 0xE58D0004, "str  r0, [sp, #4]      @ stash the parsed tree"),
         (s + 0x0C, 0xE59D0008, "ldr  r0, [sp, #8]      @ the new[] file buffer"),
         (s + 0x10, 0xE3500000, "cmp  r0, #0"),
-        (s + 0x14, blne, "blne operator delete[]"),
-        (s + 0x18, 0xE59D0000, "ldr  r0, [sp]          @ tree back"),
-        (s + 0x1C, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
-        (s + 0x20, 0xE12FFF1E, "bx   lr"),
+        (s + 0x14, blne_del, "blne operator delete[]"),
+        (s + 0x18, 0xE59D0000, "ldr  r0, [sp]          @ the strip result"),
+        (s + 0x1C, 0xE3500000, "cmp  r0, #0"),
+        (s + 0x20, blne_free, "blne json_free         @ NOT free: libjson owns it"),
+        (s + 0x24, 0xE59D0004, "ldr  r0, [sp, #4]      @ tree back"),
+        (s + 0x28, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
+        (s + 0x2C, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
+def build_ipc_newa_stub():
+    """json_new_a(name, str), then json_free the string it just copied.
+
+    Shared by all four registeredClients sites: called with `bl` and returning
+    via `lr`, so one stub serves every site with no per-site cave and no return
+    address baked in. r1 holds the json_as_string result on entry and is dead
+    the moment json_new_a returns, because the node holds a COPY.
+    """
+    t = IPC_NEWA_STUB
+    blne = (b_encode(t + 0x14, JSON_FREE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (t + 0x00, 0xE92D400E, "push {r1, r2, r3, lr}  @ the string, pad, pad, lr"),
+        (t + 0x04, b_encode(t + 0x04, JSON_NEW_A_PLT, link=True),
+         "bl   json_new_a        @ copies the string into the node"),
+        (t + 0x08, 0xE58D0004, "str  r0, [sp, #4]      @ stash the new node"),
+        (t + 0x0C, 0xE59D0000, "ldr  r0, [sp]          @ the json_as_string result"),
+        (t + 0x10, 0xE3500000, "cmp  r0, #0"),
+        (t + 0x14, blne, "blne json_free"),
+        (t + 0x18, 0xE59D0004, "ldr  r0, [sp, #4]      @ node back"),
+        (t + 0x1C, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
+        (t + 0x20, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
+def build_strip_parse_stub():
+    """json_parse_unformatted(strip_result), then json_free the strip result.
+
+    Shared by all 43 sites: called with `bl` and returning via `lr`, so one stub
+    serves every site with no per-site cave and no return address baked in. r0
+    on entry is the strip result at every site because the two calls are
+    adjacent everywhere in the image.
+    """
+    n = STRIP_PARSE_STUB
+    blne = (b_encode(n + 0x14, JSON_FREE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (n + 0x00, 0xE92D4007, "push {r0, r1, r2, lr}  @ strip result, pad, pad, lr"),
+        (n + 0x04, b_encode(n + 0x04, JSON_PARSE_PLT, link=True),
+         "bl   json_parse_unformatted"),
+        (n + 0x08, 0xE58D0004, "str  r0, [sp, #4]      @ stash the parsed tree"),
+        (n + 0x0C, 0xE59D0000, "ldr  r0, [sp]          @ the strip result"),
+        (n + 0x10, 0xE3500000, "cmp  r0, #0"),
+        (n + 0x14, blne, "blne json_free         @ NOT free: libjson owns it"),
+        (n + 0x18, 0xE59D0004, "ldr  r0, [sp, #4]      @ tree back"),
+        (n + 0x1C, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
+        (n + 0x20, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
+def build_ipc_errnode_stub():
+    """getErrorNode(...), then json_delete the node the caller throws away.
+
+    Called with `bl` and returning via `lr`. r0's value on return is irrelevant:
+    the instruction after the call site is `mov r0, r7`.
+    """
+    p = IPC_ERRNODE_STUB
+    blne = (b_encode(p + 0x0C, JSON_DELETE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (p + 0x00, 0xE92D400E, "push {r1, r2, r3, lr}"),
+        (p + 0x04, b_encode(p + 0x04, GET_ERROR_NODE, link=True),
+         "bl   getErrorNode"),
+        (p + 0x08, 0xE3500000, "cmp  r0, #0"),
+        (p + 0x0C, blne, "blne json_delete       @ the caller discards it"),
+        (p + 0x10, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
+        (p + 0x14, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
+def build_ipc_skip_stub():
+    """json_delete the object registeredClients abandons on a skipped entry.
+
+    Entered by the `bls` itself, so it runs ONLY on the skip path, and rejoins
+    at 0x34a80. json_delete clobbers r0-r3 and r12; r4-r8 and sl survive, which
+    is all the loop condition reads, and r0 is set to #5 at 0x34a84.
+    """
+    z = IPC_SKIP_STUB
+    blne = (b_encode(z + 0x08, JSON_DELETE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (z + 0x00, 0xE1A00005, "mov  r0, r5            @ the abandoned object"),
+        (z + 0x04, 0xE3500000, "cmp  r0, #0"),
+        (z + 0x08, blne, "blne json_delete"),
+        (z + 0x0C, b_encode(z + 0x0C, IPC_SKIP_RETURN), "b    0x34a80"),
+    ]
+
+
+def build_ipc_treea_stub():
+    """json_delete tree A at pushEventsToClientsDevAdded's epilogue."""
+    y = IPC_TREEA_STUB
+    blne = (b_encode(y + 0x08, JSON_DELETE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (y + 0x00, 0xE1A00007, "mov  r0, r7            @ tree A, the event payload"),
+        (y + 0x04, 0xE3500000, "cmp  r0, #0"),
+        (y + 0x08, blne, "blne json_delete"),
+        (y + 0x0C, IPC_TREEA_ORIG, "add  sp, sp, #260      @ the displaced instruction"),
+        (y + 0x10, b_encode(y + 0x10, IPC_TREEA_RETURN), "b    0x1339c"),
+    ]
+
+
+def build_ipc_tree_stub():
+    """json_delete the parsed registry tree at registeredClients' epilogue.
+
+    Reached by `b` from 0x34a8c, performs the displaced `add sp,sp,#4` and
+    branches back to the pop. r0 must be restored to 5, the function's constant
+    return value, because json_delete clobbers it. lr is dead here: the epilogue
+    restores pc from the stack.
+    """
+    u = IPC_TREE_STUB
+    blne = (b_encode(u + 0x08, JSON_DELETE_PLT, link=True)
+            & 0x0FFFFFFF) | 0x10000000
+    return [
+        (u + 0x00, 0xE1A00008, "mov  r0, r8            @ the parsed registry tree"),
+        (u + 0x04, 0xE3500000, "cmp  r0, #0"),
+        (u + 0x08, blne, "blne json_delete"),
+        (u + 0x0C, 0xE3A00005, "mov  r0, #5            @ restore the return value"),
+        (u + 0x10, IPC_TREE_ORIG, "add  sp, sp, #4        @ the displaced instruction"),
+        (u + 0x14, b_encode(u + 0x14, IPC_TREE_RETURN), "b    0x34a90"),
     ]
 
 
@@ -581,13 +877,26 @@ def build_printf2_stub():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("binary")
-    ap.add_argument("--out", required=True)
+    # NOT required: --tsv and --check-only write no binary, and demanding --out
+    # for them made `mkapifix.py IMG --tsv` exit through argparse. With stderr
+    # redirected that produced ZERO rows and no error, which reads as "there is
+    # nothing to add to the patch table" -- the same silent-empty-result failure
+    # this tool's self-check exists to prevent.
+    ap.add_argument("--out")
     ap.add_argument("--check-only", action="store_true")
+    ap.add_argument("--without-ipc", action="store_true",
+                    help="omit LEAK 13 (the IPC registry-file buffer). Produces "
+                         "the binary that is LIVE on the panel, a84c220a, which "
+                         "is the control the IPC candidate must be measured "
+                         "against. LEAK 13 is the only patch here whose effect "
+                         "has never been observed on a path the bench reaches.")
     ap.add_argument("--tsv", action="store_true",
                     help="emit patches.tsv rows instead of writing a binary, so "
                          "a reflash keeps these fixes. Offsets are FILE offsets "
                          "(VA - 0x8000), matching the rest of the table.")
     args = ap.parse_args()
+    if not args.out and not (args.tsv or args.check_only):
+        ap.error("--out is required unless --tsv or --check-only is given")
 
     data = bytearray(open(args.binary, "rb").read())
 
@@ -664,7 +973,40 @@ def main():
             sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, expected "
                      f"0x{want:08x} (bl strcpy after json_as_string)")
     freestr = build_freestr_stub()
-    for site, want in STRNCMP_SITES + STRCMP_SITES + PRINTF2_SITES + IPC_BUF_SITES:
+    ipc_sites = () if args.without_ipc else IPC_BUF_SITES
+    ipc_newa_sites = () if args.without_ipc else IPC_NEWA_SITES
+    ipc_errnode_sites = () if args.without_ipc else IPC_ERRNODE_SITES
+    strip_sites = () if args.without_ipc else STRIP_PARSE_SITES
+    # Each site must currently hold a `bl json_parse_unformatted`. Computing the
+    # expected word rather than listing 43 of them keeps the check honest: it
+    # still refuses on a different build or an already-patched image, and it
+    # cannot drift out of step with the address list.
+    for site in strip_sites:
+        want = b_encode(site, JSON_PARSE_PLT, link=True)
+        got = rd(site)
+        if got != want:
+            sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, expected "
+                     f"0x{want:08x} (bl json_parse_unformatted)")
+        # and the instruction BEFORE it must be the strip call, which is what
+        # makes r0 the strip result and the shared stub safe here.
+        pwant = b_encode(site - 4, JSON_STRIP_PLT, link=True)
+        pgot = rd(site - 4)
+        if pgot != pwant:
+            sys.exit(f"REFUSING: 0x{site - 4:x} holds 0x{pgot:08x}, expected "
+                     f"0x{pwant:08x} (bl json_strip_white_space)")
+    if 0x34964 in strip_sites:
+        sys.exit("REFUSING: 0x34964 is already redirected to IPC_BUF_STUB")
+    if not args.without_ipc:
+        for site, want, name in ((IPC_TREE_SITE, IPC_TREE_ORIG, "add sp,sp,#4"),
+                                 (IPC_SKIP_SITE, IPC_SKIP_ORIG, "bls 0x34a80"),
+                                 (IPC_TREEA_SITE, IPC_TREEA_ORIG,
+                                  "add sp,sp,#260")):
+            got = rd(site)
+            if got != want:
+                sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, "
+                         f"expected 0x{want:08x} ({name})")
+    for site, want in (STRNCMP_SITES + STRCMP_SITES + PRINTF2_SITES
+                       + ipc_sites + ipc_newa_sites + ipc_errnode_sites):
         got = rd(site)
         if got != want:
             sys.exit(f"REFUSING: 0x{site:x} holds 0x{got:08x}, expected "
@@ -674,11 +1016,30 @@ def main():
     if ncmp[-1][0] + 4 > FREE_STRCMP_STUB:
         sys.exit("REFUSING: the two cmp stubs overlap")
     printf2 = build_printf2_stub()
-    ipcbuf = build_ipc_buf_stub()
-    if printf2[-1][0] + 4 > IPC_BUF_STUB:
-        sys.exit("REFUSING: printf2 and ipc stubs overlap")
-    if ipcbuf[-1][0] + 4 > CMPFREE_CAVE_END:
-        sys.exit("REFUSING: ipc stub overruns its dead region")
+    ipcbuf = [] if args.without_ipc else build_ipc_buf_stub()
+    ipcnewa = [] if args.without_ipc else build_ipc_newa_stub()
+    ipctree = [] if args.without_ipc else build_ipc_tree_stub()
+    ipcskip = [] if args.without_ipc else build_ipc_skip_stub()
+    ipctreea = [] if args.without_ipc else build_ipc_treea_stub()
+    ipcerrnode = [] if args.without_ipc else build_ipc_errnode_stub()
+    stripparse = [] if args.without_ipc else build_strip_parse_stub()
+    if ipcbuf:
+        if printf2[-1][0] + 4 > IPC_BUF_STUB:
+            sys.exit("REFUSING: printf2 and ipc stubs overlap")
+        if ipcbuf[-1][0] + 4 > IPC_NEWA_STUB:
+            sys.exit("REFUSING: the ipc buffer and json_new_a stubs overlap")
+        if ipcnewa[-1][0] + 4 > IPC_TREE_STUB:
+            sys.exit("REFUSING: the ipc json_new_a and tree stubs overlap")
+        if ipctree[-1][0] + 4 > IPC_SKIP_STUB:
+            sys.exit("REFUSING: the ipc tree and skip stubs overlap")
+        if ipcskip[-1][0] + 4 > IPC_TREEA_STUB:
+            sys.exit("REFUSING: the ipc skip and tree-A stubs overlap")
+        if ipctreea[-1][0] + 4 > IPC_ERRNODE_STUB:
+            sys.exit("REFUSING: the ipc tree-A and errnode stubs overlap")
+        if ipcerrnode[-1][0] + 4 > STRIP_PARSE_STUB:
+            sys.exit("REFUSING: the errnode and strip-parse stubs overlap")
+        if stripparse[-1][0] + 4 > CMPFREE_CAVE_END:
+            sys.exit("REFUSING: ipc stubs overrun their dead region")
     if scmp[-1][0] + 4 > PRINTF2_STUB:
         sys.exit("REFUSING: cmp stubs and printf2 stub overlap")
     if printf2[-1][0] + 4 > CMPFREE_CAVE_END:
@@ -775,17 +1136,66 @@ def main():
     for site, _w in PRINTF2_SITES:
         print(f"  site 0x{site:08x} -> 0x{b_encode(site, PRINTF2_STUB, link=True):08x}")
     print()
-    print("LEAK 13 - IPC path: the registry file buffer (~38.5 kB per message)")
-    for va, word, note in ipcbuf:
-        print(f"    0x{va:08x}  {word:08x}   {note}")
-    for site, _w in IPC_BUF_SITES:
-        print(f"  site 0x{site:08x} -> 0x{b_encode(site, IPC_BUF_STUB, link=True):08x}")
+    if args.without_ipc:
+        print("LEAK 13 - IPC path: OMITTED (--without-ipc), this is the live "
+              "a84c220a control")
+    else:
+        print("LEAK 13 - IPC path: the registry file buffer + the strip result")
+        for va, word, note in ipcbuf:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        for site, _w in ipc_sites:
+            print(f"  site 0x{site:08x} -> "
+                  f"0x{b_encode(site, IPC_BUF_STUB, link=True):08x}")
+        print()
+        print("LEAK 14 - registeredClients: json_as_string x4 per registry ENTRY")
+        for va, word, note in ipcnewa:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        for site, _w in ipc_newa_sites:
+            print(f"  site 0x{site:08x} -> "
+                  f"0x{b_encode(site, IPC_NEWA_STUB, link=True):08x}")
+        print()
+        print("LEAK 15 - registeredClients: the parsed registry tree is abandoned")
+        for va, word, note in ipctree:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        print(f"  site 0x{IPC_TREE_SITE:08x}  0x{rd(IPC_TREE_SITE):08x} -> "
+              f"0x{b_encode(IPC_TREE_SITE, IPC_TREE_STUB):08x}  "
+              f"(b 0x{IPC_TREE_STUB:x})")
+        print()
+        print("LEAK 16 - registeredClients: an empty object per SKIPPED entry "
+              "(6 per message)")
+        for va, word, note in ipcskip:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        print(f"  site 0x{IPC_SKIP_SITE:08x}  0x{rd(IPC_SKIP_SITE):08x} -> "
+              f"0x{((b_encode(IPC_SKIP_SITE, IPC_SKIP_STUB) & 0x0FFFFFFF) | 0x90000000):08x}"
+              f"  (bls 0x{IPC_SKIP_STUB:x}, condition preserved)")
+        print()
+        print("LEAK 17 - pushEventsToClientsDevAdded: tree A never freed")
+        for va, word, note in ipctreea:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        print(f"  site 0x{IPC_TREEA_SITE:08x}  0x{rd(IPC_TREEA_SITE):08x} -> "
+              f"0x{b_encode(IPC_TREEA_SITE, IPC_TREEA_STUB):08x}  "
+              f"(b 0x{IPC_TREEA_STUB:x})")
+        print()
+        print("LEAK 18 - a getErrorNode result the caller overwrites immediately")
+        for va, word, note in ipcerrnode:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        for site, _w in ipc_errnode_sites:
+            print(f"  site 0x{site:08x} -> "
+                  f"0x{b_encode(site, IPC_ERRNODE_STUB, link=True):08x}")
+        print()
+        print(f"LEAK 19 - every json_strip_white_space result in the image "
+              f"({len(strip_sites)} sites, 1 stub)")
+        for va, word, note in stripparse:
+            print(f"    0x{va:08x}  {word:08x}   {note}")
+        print("  sites: " + " ".join(f"0x{s:x}" for s in strip_sites))
 
     if args.tsv:
         rows = []
         for va, word, note in (cave + cave2 + cave3 + cave4 + cave5 + cave6
                                + cave7 + cave8 + cave9 + cave10 + freestr
-                               + ncmp + scmp + printf2 + ipcbuf):
+                               + ncmp + scmp + printf2 + ipcbuf
+                               + ipcnewa + ipctree + ipcskip + ipctreea
+                               + ipcerrnode + stripparse):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -811,10 +1221,36 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, PRINTF2_STUB, link=True),
                          "printf + json_free x2 stub"))
-        for site, _w in IPC_BUF_SITES:
+        for site, _w in ipc_sites:
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, IPC_BUF_STUB, link=True),
-                         "IPC: parse then delete[] the registry file buffer"))
+                         "IPC: parse, delete[] the file buffer, free the strip"))
+        for site, _w in ipc_newa_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, IPC_NEWA_STUB, link=True),
+                         "IPC: json_new_a then json_free the copied string"))
+        if ipctree:
+            rows.append((f"P15-leakfix-site-{IPC_TREE_SITE:x}", IPC_TREE_SITE,
+                         rd(IPC_TREE_SITE),
+                         b_encode(IPC_TREE_SITE, IPC_TREE_STUB),
+                         "IPC: json_delete the abandoned registry tree"))
+            rows.append((f"P15-leakfix-site-{IPC_SKIP_SITE:x}", IPC_SKIP_SITE,
+                         rd(IPC_SKIP_SITE),
+                         (b_encode(IPC_SKIP_SITE, IPC_SKIP_STUB) & 0x0FFFFFFF)
+                         | 0x90000000,
+                         "IPC: free the object abandoned on a skipped entry"))
+            rows.append((f"P15-leakfix-site-{IPC_TREEA_SITE:x}", IPC_TREEA_SITE,
+                         rd(IPC_TREEA_SITE),
+                         b_encode(IPC_TREEA_SITE, IPC_TREEA_STUB),
+                         "IPC: json_delete tree A in pushEventsToClients"))
+        for site, _w in ipc_errnode_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, IPC_ERRNODE_STUB, link=True),
+                         "IPC: free the discarded getErrorNode result"))
+        for site in strip_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, STRIP_PARSE_STUB, link=True),
+                         "parse then json_free the strip_white_space result"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -828,7 +1264,8 @@ def main():
 
     all_stubs = (cave + cave2 + cave3 + cave4 + cave5 + cave6 + cave7
                  + cave8 + cave9 + cave10 + freestr + ncmp + scmp + printf2
-                 + ipcbuf)
+                 + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
+                 + ipcerrnode + stripparse)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -844,11 +1281,25 @@ def main():
     site_writes += [(s, FREE_STRNCMP_STUB, True) for s, _ in STRNCMP_SITES]
     site_writes += [(s, FREE_STRCMP_STUB, True) for s, _ in STRCMP_SITES]
     site_writes += [(s, PRINTF2_STUB, True) for s, _ in PRINTF2_SITES]
-    site_writes += [(s, IPC_BUF_STUB, True) for s, _ in IPC_BUF_SITES]
+    site_writes += [(s, IPC_BUF_STUB, True) for s, _ in ipc_sites]
+    site_writes += [(s, IPC_NEWA_STUB, True) for s, _ in ipc_newa_sites]
+    site_writes += [(s, IPC_ERRNODE_STUB, True) for s, _ in ipc_errnode_sites]
+    site_writes += [(s, STRIP_PARSE_STUB, True) for s in strip_sites]
+    # `b`, not `bl`: the tree stub performs the displaced instruction and
+    # branches back rather than returning through lr.
+    if ipctree:
+        site_writes += [(IPC_TREE_SITE, IPC_TREE_STUB, False)]
 
     intended = {va: word for va, word, _ in all_stubs}
     for site, target, linked in site_writes:
         intended[site] = b_encode(site, target, link=linked)
+    if ipcskip:
+        # The skip site keeps its ORIGINAL condition code: cond=LS (0x9), not
+        # AL. The stub must run only when the entry is actually skipped, so
+        # this is a `bls` into the stub, not a `b`.
+        intended[IPC_SKIP_SITE] = ((b_encode(IPC_SKIP_SITE, IPC_SKIP_STUB)
+                                    & 0x0FFFFFFF) | 0x90000000)
+        intended[IPC_TREEA_SITE] = b_encode(IPC_TREEA_SITE, IPC_TREEA_STUB)
     for va, word in intended.items():
         wr(va, word)
 

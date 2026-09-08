@@ -21,21 +21,23 @@
 #
 # COMPLETE as of 2026-09-08, and this was EXECUTED, not asserted. A copy of the
 # genuine stock tree at /work/extracted/root_stock was patched with every row:
-# "134 sites: 0 already patched, 134 applied, 0 needing attention", and the
+# "237 sites: 0 already patched, 237 applied, 0 needing attention", and the
 # results matched byte-exactly. Re-run it any time; see below.
 #
-#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> a84c220a8dd4d315559d65b238b7e8a0
+#   Barracuda  324209e1fdfe2d61925a1bb4a7115452 -> 13f33352e5867237cb5be1c0ece9f8ba
 #   tuxedo     6f8055f5cadba9d0b1582297606427a8 -> 98370c310e709ba565abfce8ea0a3e17
 #   supervis   04386af2971fc29b63bd6f7a87f2b9e2 -> 6caac69eb46fb78447bcd3032078fa44
 #
-# The Barracuda target moved four times on 2026-09-08. Written out because a
+# The Barracuda target moved six times on 2026-09-08. Written out because a
 # stale md5 here is the file's most misleading possible defect -- it is the line
 # anyone checks first:
 #
 #   c8971027   v12, 11 rows
 #   55448f05   + the two P13 push-auth rows
 #   3463efcc   + the seven P14 thread-detach rows
-#   a84c220a   + the P15 heap-leak rows          <- what the panel runs
+#   a84c220a   + the P15 HTTP heap-leak rows (114)
+#   ab630511   + the six IPC-path rows            (165)
+#   13f33352   + the 43 strip-result rows         (217)  <- what the panel runs
 #
 # ⚠ THIS HEADER WAS STALE ONCE ALREADY. When the P15 rows landed it still read
 # "20 sites" and "-> 3463efcc", so the table's headline contradicted the table.
@@ -96,14 +98,37 @@ P14-detach-hoist	/opt/webserver/Barracuda	0x59e4	0510a0e1	8c099fe5	thread leak: 
 P14-detach-attr5	/opt/webserver/Barracuda	0x59ec	84099fe5	071c40e2	thread leak: attr for the pthread_create at VA 0xd9f0 (the only r1-setup reaching it)
 P14-detach-block	/opt/webserver/Barracuda	0x54a85c	000000000000000000000000000000000000000000000000000000000000000000000000	000000000000000001000000001000000000000000000000000000000000000000000000	thread leak: static pthread_attr_t, PTHREAD_CREATE_DETACHED, guardsize 4096
 
-# P15-leakfix: 18 heap-leak sites in the vendor webserver, applied to the live
-# panel 2026-09-08. ALL are vendor defects present in unmodified 324209e1 - none
-# was introduced by our patches (verified: each site byte-identical in stock and
-# v13, none inside any patches.tsv range). Root cause is that libjson
-# json_as_string/json_write results are caller-owned and need json_free: the
-# image makes 391 + 521 such calls against 28 json_free.
+# P15-leakfix: three classes of heap leak in the vendor webserver, all applied to
+# the live panel 2026-09-08. ALL are vendor defects present in unmodified
+# 324209e1 - none was introduced by our patches (verified: each site
+# byte-identical in stock and v13, none inside any patches.tsv range).
 #
-# Measured under emulation: API 1488 -> 0 B/request, /tuxedoapi.html 7537 -> 0.
+#   LEAKS 1-12   18 HTTP request-path sites. Root cause: libjson
+#                json_as_string/json_write results are caller-owned and need
+#                json_free; the image makes 391 + 521 such calls against 28.
+#   LEAKS 13-18  the IPC status path, 10880 B per status message. The largest was
+#                registeredClients parsing the registered-device file and never
+#                freeing the tree. Two of the six are correct but INERT: the
+#                registry has six entries of exactly four fields each and the
+#                vendor keeps an entry only when json_size(entry) > 4.
+#   LEAK 19      43 sites, one shared stub. EVERY json_strip_white_space call in
+#                the image is immediately followed by bl json_parse_unformatted,
+#                whose return value overwrites the only pointer to the stripped
+#                copy. Safe at every site without per-site analysis because the
+#                two calls are adjacent everywhere and the parse takes
+#                std::string const&, so the tree holds copies.
+#
+# Measured under emulation, each with a negative control reading 0.0 in the same
+# session: API 1488 -> 0 B/request, /tuxedoapi.html 7537 -> 0,
+# /scene_configuration.html 727 -> 0, /groups.html 704 -> 0,
+# /devicelist.html 213 -> 0, IPC 10880 -> 0 B/message.
+#
+# Still open, deliberately, so they are not assumed closed: /GetSceneList leaks
+# ~780 B/request (drivable, handler not yet attributed); six scene/camera
+# functions abandon their parsed tree (latent, not on the periodic path); and
+# /zwavedevicelist.html wedges the webserver under ~200 requests, which is
+# pre-existing and reproduces on the unpatched build. See leakfix/README.md.
+#
 # The cave rows are stubs placed in verified-dead functions (0 b/bl callers AND
 # every image reference in the symtab tail).
 P15-leakfix-cave-64e9c	/opt/webserver/Barracuda	0x5ce9c	0830b0e5	0e402de9	push {r1, r2, r3, lr}
@@ -202,6 +227,57 @@ P15-leakfix-cave-69434	/opt/webserver/Barracuda	0x61434	1eff2f01	000050e3	cmp  r
 P15-leakfix-cave-69438	/opt/webserver/Barracuda	0x61438	c90050e3	188afe1b	blne json_free
 P15-leakfix-cave-6943c	/opt/webserver/Barracuda	0x6143c	7b00001a	0e40bde8	pop  {r1, r2, r3, lr}
 P15-leakfix-cave-69440	/opt/webserver/Barracuda	0x61440	7e0000ea	1eff2fe1	bx   lr
+P15-leakfix-cave-69444	/opt/webserver/Barracuda	0x61444	cc0050e3	83402de9	push {r0, r1, r7, lr}
+P15-leakfix-cave-69448	/opt/webserver/Barracuda	0x61448	58029f05	c28afeeb	bl   json_parse_unformatted
+P15-leakfix-cave-6944c	/opt/webserver/Barracuda	0x6144c	1eff2f01	04008de5	str  r0, [sp, #4]
+P15-leakfix-cave-69450	/opt/webserver/Barracuda	0x61450	54029fb5	08009de5	ldr  r0, [sp, #8]
+P15-leakfix-cave-69454	/opt/webserver/Barracuda	0x61454	1eff2fb1	000050e3	cmp  r0, #0
+P15-leakfix-cave-69458	/opt/webserver/Barracuda	0x61458	cd0050e3	428bfe1b	blne operator delete[]
+P15-leakfix-cave-6945c	/opt/webserver/Barracuda	0x6145c	4c029f05	00009de5	ldr  r0, [sp]
+P15-leakfix-cave-69460	/opt/webserver/Barracuda	0x61460	1eff2f01	000050e3	cmp  r0, #0
+P15-leakfix-cave-69464	/opt/webserver/Barracuda	0x61464	ce0050e3	0d8afe1b	blne json_free
+P15-leakfix-cave-69468	/opt/webserver/Barracuda	0x61468	7000001a	04009de5	ldr  r0, [sp, #4]
+P15-leakfix-cave-6946c	/opt/webserver/Barracuda	0x6146c	750000ea	0e40bde8	pop  {r1, r2, r3, lr}
+P15-leakfix-cave-69470	/opt/webserver/Barracuda	0x61470	130e50e3	1eff2fe1	bx   lr
+P15-leakfix-cave-69474	/opt/webserver/Barracuda	0x61474	38029f05	0e402de9	push {r1, r2, r3, lr}
+P15-leakfix-cave-69478	/opt/webserver/Barracuda	0x61478	1eff2f01	da8afeeb	bl   json_new_a
+P15-leakfix-cave-6947c	/opt/webserver/Barracuda	0x6147c	0f0000ca	04008de5	str  r0, [sp, #4]
+P15-leakfix-cave-69480	/opt/webserver/Barracuda	0x61480	30329fe5	00009de5	ldr  r0, [sp]
+P15-leakfix-cave-69484	/opt/webserver/Barracuda	0x61484	030050e1	000050e3	cmp  r0, #0
+P15-leakfix-cave-69488	/opt/webserver/Barracuda	0x61488	2c029f05	048afe1b	blne json_free
+P15-leakfix-cave-6948c	/opt/webserver/Barracuda	0x6148c	1eff2f01	04009de5	ldr  r0, [sp, #4]
+P15-leakfix-cave-69490	/opt/webserver/Barracuda	0x61490	020000ca	0e40bde8	pop  {r1, r2, r3, lr}
+P15-leakfix-cave-69494	/opt/webserver/Barracuda	0x61494	4b0f50e3	1eff2fe1	bx   lr
+P15-leakfix-cave-69498	/opt/webserver/Barracuda	0x61498	6400001a	0800a0e1	mov  r0, r8
+P15-leakfix-cave-6949c	/opt/webserver/Barracuda	0x6149c	6b0000ea	000050e3	cmp  r0, #0
+P15-leakfix-cave-694a0	/opt/webserver/Barracuda	0x614a0	18329fe5	5c89fe1b	blne json_delete
+P15-leakfix-cave-694a4	/opt/webserver/Barracuda	0x614a4	030050e1	0500a0e3	mov  r0, #5
+P15-leakfix-cave-694a8	/opt/webserver/Barracuda	0x614a8	14029f05	04d08de2	add  sp, sp, #4
+P15-leakfix-cave-694ac	/opt/webserver/Barracuda	0x614ac	1eff2f01	772dffea	b    0x34a90
+P15-leakfix-cave-694b0	/opt/webserver/Barracuda	0x614b0	013083e2	0500a0e1	mov  r0, r5
+P15-leakfix-cave-694b4	/opt/webserver/Barracuda	0x614b4	030050e1	000050e3	cmp  r0, #0
+P15-leakfix-cave-694b8	/opt/webserver/Barracuda	0x614b8	5c00001a	5689fe1b	blne json_delete
+P15-leakfix-cave-694bc	/opt/webserver/Barracuda	0x614bc	650000ea	6f2dffea	b    0x34a80
+P15-leakfix-cave-694c0	/opt/webserver/Barracuda	0x614c0	190e50e3	0700a0e1	mov  r0, r7
+P15-leakfix-cave-694c4	/opt/webserver/Barracuda	0x614c4	fc019f05	000050e3	cmp  r0, #0
+P15-leakfix-cave-694c8	/opt/webserver/Barracuda	0x614c8	1eff2f01	5289fe1b	blne json_delete
+P15-leakfix-cave-694cc	/opt/webserver/Barracuda	0x614cc	030000ca	41df8de2	add  sp, sp, #260
+P15-leakfix-cave-694d0	/opt/webserver/Barracuda	0x614d0	f4319fe5	b1a7feea	b    0x1339c
+P15-leakfix-cave-694d4	/opt/webserver/Barracuda	0x614d4	030050e1	0e402de9	push {r1, r2, r3, lr}
+P15-leakfix-cave-694d8	/opt/webserver/Barracuda	0x614d8	5400001a	0229ffeb	bl   getErrorNode
+P15-leakfix-cave-694dc	/opt/webserver/Barracuda	0x614dc	5f0000ea	000050e3	cmp  r0, #0
+P15-leakfix-cave-694e0	/opt/webserver/Barracuda	0x614e0	e8319fe5	4c89fe1b	blne json_delete
+P15-leakfix-cave-694e4	/opt/webserver/Barracuda	0x614e4	030050e1	0e40bde8	pop  {r1, r2, r3, lr}
+P15-leakfix-cave-694e8	/opt/webserver/Barracuda	0x614e8	e4019f05	1eff2fe1	bx   lr
+P15-leakfix-cave-694ec	/opt/webserver/Barracuda	0x614ec	1eff2f01	07402de9	push {r0, r1, r2, lr}
+P15-leakfix-cave-694f0	/opt/webserver/Barracuda	0x614f0	013083e2	988afeeb	bl   json_parse_unformatted
+P15-leakfix-cave-694f4	/opt/webserver/Barracuda	0x614f4	030050e1	04008de5	str  r0, [sp, #4]
+P15-leakfix-cave-694f8	/opt/webserver/Barracuda	0x614f8	4c00001a	00009de5	ldr  r0, [sp]
+P15-leakfix-cave-694fc	/opt/webserver/Barracuda	0x614fc	590000ea	000050e3	cmp  r0, #0
+P15-leakfix-cave-69500	/opt/webserver/Barracuda	0x61500	d0319fe5	e689fe1b	blne json_free
+P15-leakfix-cave-69504	/opt/webserver/Barracuda	0x61504	030050e1	04009de5	ldr  r0, [sp, #4]
+P15-leakfix-cave-69508	/opt/webserver/Barracuda	0x61508	cc019f05	0e40bde8	pop  {r1, r2, r3, lr}
+P15-leakfix-cave-6950c	/opt/webserver/Barracuda	0x6150c	1eff2f01	1eff2fe1	bx   lr
 P15-leakfix-site-29088	/opt/webserver/Barracuda	0x21088	087093e5	83ef00ea	redirect into leak-fix stub
 P15-leakfix-site-1efa0	/opt/webserver/Barracuda	0x16fa0	0600a0e1	c31701ea	redirect into leak-fix stub
 P15-leakfix-site-47cc8	/opt/webserver/Barracuda	0x3fcc8	050000ea	607400ea	redirect into leak-fix stub
@@ -220,3 +296,55 @@ P15-leakfix-site-29bbc	/opt/webserver/Barracuda	0x21bbc	1f88ffeb	0efe00eb	strcmp
 P15-leakfix-site-29e84	/opt/webserver/Barracuda	0x21e84	6d87ffeb	5cfd00eb	strcmp + json_free stub
 P15-leakfix-site-47c44	/opt/webserver/Barracuda	0x3fc44	fd0fffeb	ec8500eb	strcmp + json_free stub
 P15-leakfix-site-47c94	/opt/webserver/Barracuda	0x3fc94	778e00eb	e08500eb	printf + json_free x2 stub
+P15-leakfix-site-34964	/opt/webserver/Barracuda	0x2c964	7b5dffeb	b6d200eb	IPC: parse, delete[] the file buffer, free the strip
+P15-leakfix-site-349ec	/opt/webserver/Barracuda	0x2c9ec	7d5dffeb	a0d200eb	IPC: json_new_a then json_free the copied string
+P15-leakfix-site-34a14	/opt/webserver/Barracuda	0x2ca14	735dffeb	96d200eb	IPC: json_new_a then json_free the copied string
+P15-leakfix-site-34a3c	/opt/webserver/Barracuda	0x2ca3c	695dffeb	8cd200eb	IPC: json_new_a then json_free the copied string
+P15-leakfix-site-34a64	/opt/webserver/Barracuda	0x2ca64	5f5dffeb	82d200eb	IPC: json_new_a then json_free the copied string
+P15-leakfix-site-34a8c	/opt/webserver/Barracuda	0x2ca8c	04d08de2	81d200ea	IPC: json_delete the abandoned registry tree
+P15-leakfix-site-349d8	/opt/webserver/Barracuda	0x2c9d8	2800009a	b4d2009a	IPC: free the object abandoned on a skipped entry
+P15-leakfix-site-13398	/opt/webserver/Barracuda	0xb398	41df8de2	485801ea	IPC: json_delete tree A in pushEventsToClients
+P15-leakfix-site-34958	/opt/webserver/Barracuda	0x2c958	e2fbffeb	ddd200eb	IPC: free the discarded getErrorNode result
+P15-leakfix-site-13b10	/opt/webserver/Barracuda	0xbb10	10e1ffeb	755601eb	parse then json_free the strip_white_space result
+P15-leakfix-site-16200	/opt/webserver/Barracuda	0xe200	54d7ffeb	b94c01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-166e8	/opt/webserver/Barracuda	0xe6e8	1ad6ffeb	7f4b01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-16954	/opt/webserver/Barracuda	0xe954	7fd5ffeb	e44a01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1712c	/opt/webserver/Barracuda	0xf12c	89d3ffeb	ee4801eb	parse then json_free the strip_white_space result
+P15-leakfix-site-19fcc	/opt/webserver/Barracuda	0x11fcc	e1c7ffeb	463d01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1a010	/opt/webserver/Barracuda	0x12010	d0c7ffeb	353d01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1a054	/opt/webserver/Barracuda	0x12054	bfc7ffeb	243d01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1a1d4	/opt/webserver/Barracuda	0x121d4	5fc7ffeb	c43c01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1a544	/opt/webserver/Barracuda	0x12544	83c6ffeb	e83b01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1a720	/opt/webserver/Barracuda	0x12720	0cc6ffeb	713b01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1a8fc	/opt/webserver/Barracuda	0x128fc	95c5ffeb	fa3a01eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1b754	/opt/webserver/Barracuda	0x13754	ffc1ffeb	643701eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1be74	/opt/webserver/Barracuda	0x13e74	37c0ffeb	9c3501eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1c050	/opt/webserver/Barracuda	0x14050	c0bfffeb	253501eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1c22c	/opt/webserver/Barracuda	0x1422c	49bfffeb	ae3401eb	parse then json_free the strip_white_space result
+P15-leakfix-site-1c6d8	/opt/webserver/Barracuda	0x146d8	1ebeffeb	833301eb	parse then json_free the strip_white_space result
+P15-leakfix-site-2fd78	/opt/webserver/Barracuda	0x27d78	7670ffeb	dbe500eb	parse then json_free the strip_white_space result
+P15-leakfix-site-33a18	/opt/webserver/Barracuda	0x2ba18	4e61ffeb	b3d600eb	parse then json_free the strip_white_space result
+P15-leakfix-site-34dd0	/opt/webserver/Barracuda	0x2cdd0	605cffeb	c5d100eb	parse then json_free the strip_white_space result
+P15-leakfix-site-35000	/opt/webserver/Barracuda	0x2d000	d45bffeb	39d100eb	parse then json_free the strip_white_space result
+P15-leakfix-site-35754	/opt/webserver/Barracuda	0x2d754	ff59ffeb	64cf00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-357e4	/opt/webserver/Barracuda	0x2d7e4	db59ffeb	40cf00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-35afc	/opt/webserver/Barracuda	0x2dafc	1559ffeb	7ace00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-35b9c	/opt/webserver/Barracuda	0x2db9c	ed58ffeb	52ce00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-363ec	/opt/webserver/Barracuda	0x2e3ec	d956ffeb	3ecc00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-3647c	/opt/webserver/Barracuda	0x2e47c	b556ffeb	1acc00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-36804	/opt/webserver/Barracuda	0x2e804	d355ffeb	38cb00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-36894	/opt/webserver/Barracuda	0x2e894	af55ffeb	14cb00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-36da0	/opt/webserver/Barracuda	0x2eda0	6c54ffeb	d1c900eb	parse then json_free the strip_white_space result
+P15-leakfix-site-36e34	/opt/webserver/Barracuda	0x2ee34	4754ffeb	acc900eb	parse then json_free the strip_white_space result
+P15-leakfix-site-372cc	/opt/webserver/Barracuda	0x2f2cc	2153ffeb	86c800eb	parse then json_free the strip_white_space result
+P15-leakfix-site-37358	/opt/webserver/Barracuda	0x2f358	fe52ffeb	63c800eb	parse then json_free the strip_white_space result
+P15-leakfix-site-3c78c	/opt/webserver/Barracuda	0x3478c	f13dffeb	56b300eb	parse then json_free the strip_white_space result
+P15-leakfix-site-3dec0	/opt/webserver/Barracuda	0x35ec0	2438ffeb	89ad00eb	parse then json_free the strip_white_space result
+P15-leakfix-site-3fdf0	/opt/webserver/Barracuda	0x37df0	5830ffeb	bda500eb	parse then json_free the strip_white_space result
+P15-leakfix-site-3ff28	/opt/webserver/Barracuda	0x37f28	0a30ffeb	6fa500eb	parse then json_free the strip_white_space result
+P15-leakfix-site-407d4	/opt/webserver/Barracuda	0x387d4	df2dffeb	44a300eb	parse then json_free the strip_white_space result
+P15-leakfix-site-40fec	/opt/webserver/Barracuda	0x38fec	d92bffeb	3ea100eb	parse then json_free the strip_white_space result
+P15-leakfix-site-42f3c	/opt/webserver/Barracuda	0x3af3c	0524ffeb	6a9900eb	parse then json_free the strip_white_space result
+P15-leakfix-site-46d68	/opt/webserver/Barracuda	0x3ed68	7a14ffeb	df8900eb	parse then json_free the strip_white_space result
+P15-leakfix-site-46e1c	/opt/webserver/Barracuda	0x3ee1c	4d14ffeb	b28900eb	parse then json_free the strip_white_space result
+P15-leakfix-site-490b8	/opt/webserver/Barracuda	0x410b8	a60bffeb	0b8100eb	parse then json_free the strip_white_space result
