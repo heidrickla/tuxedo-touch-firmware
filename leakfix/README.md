@@ -644,10 +644,29 @@ is **0 bytes** on the panel and the bench. Not `hatcscenedb.json`, the 3182-byte
 TC scene file the rest of the scene code reads. An empty file parses to NULL, so
 `scene_getRootNodeOfObjects` allocates nothing and there is nothing to free.
 
-⚠ **So the ~107 B/request measured on `cmd=141` is real but comes from elsewhere
-in that handler**, not from this tree. That is the next thing to chase, and
-`chunkdiff.py` on the 40- and 32-byte sizes will name it, the way it named the IPC
-buffers.
+✅ **So the ~107 B/request on `cmd=141` is real but comes from elsewhere — and
+`chunkdiff.py` has now NAMED IT BY CONTENTS**, the way it named the IPC registry
+buffers. `leakfix/sceneopdump.sh`, 200 requests, the 40-byte size:
+
+    +010  00 79 5c 00 bc c8 5c 00 ...  "10":"home.
+    +020  68 74 6d 6c 22 7d 00 00      html"}
+    ...
+    +010  00 00 00 00 00 22 39 22 ...  "9":"mobile
+    +020  76 69 65 77 2e 68 74 6d      view.htm
+    ...                          l"}
+
+**It is a page-ID → page-name JSON map** — `{"9":"mobileview.html","10":"home.html",…}`
+— parsed per request and abandoned. That is the document `validatePageName`
+(0x13afc) works on, which `authPage_service` calls at 0x141fc and which the
+request path evidently reaches too. The 0x29 word at +4 is a libjson node header,
+and the `inc` fragments are the tail of libjson's own `Children is null inc`
+error string, the same one that turned up in the `/GetSceneList` residual.
+
+⚠ **Named, not yet located.** The contents identify *what* leaks; the call site
+that parses it on this path still has to be found before a stub can wrap it. Trace
+`json_parse`/`json_new` inside the `cmd=141` arm with `serve-traced.sh` to get the
+site — the driver and the measurement are both in place now, so that is a bounded
+job rather than the afternoon this took to become measurable at all.
 
 ✅ **Re-enable LEAK 23 the moment `hascenedb.json` is non-empty** — i.e. once real
 Z-Wave scenes exist. Then the tree is real, the leak is real, and the stub frees
