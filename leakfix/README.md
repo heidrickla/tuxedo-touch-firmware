@@ -428,10 +428,29 @@ each leaks a parsed tree per operation.
   during the GET is not the id looked up during the `/handlerequest.html` call,
   and both halves are individually correct.
 
-  ⚠ The cookie test that was supposed to settle this **had a bug**: the jar was
-  built with `re.findall(r"([^,;\s]+)=([^,;\s]+)")` over `Set-Cookie`, which
-  swallows attributes — it produced a cookie literally named `path`. Redo it with
-  `http.cookiejar` before concluding anything about cookies.
+  **Eliminated, so nobody spends the afternoon on them again.** Each was tested
+  by command-independence, on the bench unless noted:
+
+  | candidate | result |
+  | --- | --- |
+  | no `url` parameter on the registering GET | **this one was real** — without it the registration region is skipped entirely |
+  | login target (`?url=` = tuxedoapi/home/console/index/absent) | all five bail |
+  | GETting the landing pages after login | bails; `hiddenKey` stays `-1` |
+  | repeating the registering GET up to 6 times | bails every time |
+  | a real `http.cookiejar` keeping `_zFL` across the flow | bails |
+  | HTTPS instead of HTTP (needs `OP_LEGACY_SERVER_CONNECT`) | bails |
+  | client-list saturation from many logins | refuted: a freshly restarted server with ONE login bails |
+  | the table being empty (tested on the panel with a real browser session live) | bails |
+
+  ⚠ The first cookie attempt had a bug worth not repeating: the jar was built
+  with `re.findall(r"([^,;\s]+)=([^,;\s]+)")` over `Set-Cookie`, which swallows
+  attributes and produced a cookie literally named `path`. The table row above is
+  the corrected `http.cookiejar` run.
+
+  🔑 **And a browser DOES work** — Lewis created a group through the web UI on
+  2026-09-08 while the scripted session was bailing, so this is a difference
+  between the two clients and not a dead endpoint. Whatever it is, it is not in
+  the list above.
 
   ⚠ Reading the table on the PANEL to settle it directly does not work either:
   `/proc/<pid>/mem` on 2.6.31 needs a ptrace attach, and attaching to Barracuda
