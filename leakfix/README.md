@@ -1478,13 +1478,42 @@ implemented; a vendor endpoint list is not evidence of implementation. The endpo
 was picked off a help string in the binary, which is a vendor list by another name.
 
 **What it would take to measure the family.** The handlers are real and are called —
-`setAddIPURL` from `set` @`0x15e20`, `setUpdateIPURL` @`0x15e44` — but `set` is the
-**WNMP field-service** method, reached through the module's `+16` slot at `0x29018`,
-not through `/system_http_api`. So the family needs driving through the WNMP URL
-space, and the first thing to establish there is which URL reaches `set` with a field
-name that dispatches to one of these. Until then the family's per-call cost is
-unmeasured, and the static prediction (two roots, two strings, a Base64 buffer)
-stands unconfirmed rather than refuted.
+`setAddIPURL` from `set` @`0x15e20`, `setUpdateIPURL` @`0x15e44` — and `set` is the
+WNMP module's `+16` method, invoked at exactly one place, `0x29018` in
+`WnmpDir_serviceField`. Four traced facts narrow where that is reachable from, each
+with the `HttpResponse_printf` positive control re-run under the identical request
+(5972 bytes, so the zeros below are absence of execution, not absence of tracing):
+
+| filter | over | traced |
+|---|---|---|
+| `0x18ffc..0x19390` (`setAddIPURL`) | 200 calls | **0** |
+| `0x29000..0x29060` (`set` arm + the `free`) | 30 calls | **0** |
+| `0x1eedc..0x1f120` (`serviceField` prologue) | 30 calls | **0** |
+| `0x6b678..0x6b780` (`HttpResponse_printf`) | 30 calls | 5972 B |
+
+So **`WnmpDir_serviceField` does not run at all** for `/system_http_api/API_REV01/…`.
+That is the surprise, because the WNMP directory's own HTTP name IS `system_http_api`
+— `WnmpDir_constructor` @`0x1edec` calls `HttpDir_constructor(dir, "system_http_api",
+1)` and then `HttpDir_overloadService(dir, 0x29978)`. The `/API_REV01` surface is
+served inside `WnmpDir_service` @`0x29978` itself, which calls `serviceField` at three
+sites (`0x29ecc`, `0x2a788`, `0x2a810`) that this URL shape does not reach.
+
+`operation=set` is not the missing key either, though it looked like it: `0x1f0f0`
+compares the request's `operation` field against `"set"` (literals `0x8d46c` and
+`0x549eac`), and the vendor's own URL template at `0x85cd4` reads
+`…/ZwaveSync/AddNewDeviceRemote?devicenode=&operation=set`. Sending it changes
+nothing — rows 1 and 2 above were measured with `operation=set`.
+
+**So the open question is narrower than "which URL":** it is which of
+`WnmpDir_service`'s three `serviceField` call sites is live, and what request shape
+reaches it. Until that is answered the family's per-call cost is unmeasured, and the
+static prediction (two roots, two strings, a Base64 buffer) stands unconfirmed rather
+than refuted.
+
+This also retracts a claim made earlier in this section's own history: that the reply
+string is freed at `0x2903c` on the path these requests take. It is not — that site is
+on the field-service path, which they never enter. Where an `/API_REV01` reply string
+is released is not established.
 
 Method notes worth keeping. Arms are serial by necessity -- one process, one global
 registry, so driving two endpoints at once attributes each one's allocations to the
