@@ -2408,9 +2408,26 @@ Expect only the relayed set unless keys are pressed that exercise more: the
 captures so far carry 18, 21 and 504.
 
 The runbook is `emu/stage6-panel.sh`, split into phases so the booked window
-holds only the part that needs someone at the panel. `phase0` is read-only,
-can be run days early, and already passes on the live panel except for the
-staged binary.
+holds only the part that needs someone at the panel.
+
+#### Everything except the window is now done, 2026-09-09 on v14
+
+| step | state |
+|---|---|
+| `phase0` pre-flight | **READY** on the live panel. Its gap was the staged binary: `STAGED` is `/tmp/tuxweb-stage6` and `/tmp` is tmpfs, so the v14 flash reboot wiped it. Re-staged, md5 `ca450c37c0948eae3296a9ebad5b907e`, and that build's eleven source files plus `Cargo.toml` hash identically to the repo. |
+| safety scaffolding | **PASSES** under `emu/cutover-test.sh`: sole-reader read-only open, four injected replies decoded and kept raw, **the deadman fired and handed the panel back by `execve`**, a missing vendor refused to start at all, a missing queue handed back rather than creating one. |
+| `phase1` passthrough | **PASSES on v14 and reverted.** `comm` stayed `Barracuda`, `cmdline` stayed `/opt/webserver/Barracuda`, and `exe` read `/opt/webserver/vendor/Barracuda` — the execve happened and everything `supervis` inspects was unchanged. 4/4 listeners, HTTP 302, and the P13 gate still returned 401 on `:80`, `:443` and `:9443` through the passthrough. |
+| revert | clean. Vendor md5 back to `0066ad95`, `vendor/` gone, marker absent, and `verify-panel.sh` 291 checks 0 failures afterwards. |
+| relaunch budget | **0 of 24 used**, so a window costing three is affordable. |
+
+`phase1` was reverted deliberately rather than left installed. It gains nothing until
+`phase2`, and leaving a modified boot path on a live alarm panel with no window
+booked is risk without benefit.
+
+**So the only thing left is `phase2`, and the only thing it needs is someone at the
+touchscreen.** The window is 900 s absolute from the moment the cutover starts,
+unextendable from inside, after which the deadman returns the panel to the vendor by
+itself.
 
 #### The shim CANNOT be served from queue replies alone — corrected 2026-09-07
 
