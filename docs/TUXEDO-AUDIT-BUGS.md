@@ -376,7 +376,15 @@ Everything else survived its own refutation attempt and is kept.
 
 ## (a) Affects him today
 
-### a-1. Three failed logins permanently disable **every** web account — **SEVERITY: HIGH · CONFIRMED**
+### a-1. Three failed logins permanently disable **every** web account — **SEVERITY: HIGH · CONFIRMED · FIXED IN FIRMWARE (P1)**
+
+> **FIXED — shipped since v11, current in the v14 image flashed 2026-09-09.**
+> `P1-lockout` (`0xd5fc`) turns the fall-through at VA `0x155fc` into a branch over the
+> `json_new_i("status", 0)` block, so the unconditional all-accounts write never runs;
+> `P1a`/`P1b` (`0xba68`, `0xba7c`) NOP the two stock `bl`s, and the `P1c` stub gives 5
+> attempts with a 300 s self-clearing lock that writes nothing to disk. Everything
+> below describes **stock TUXW_V5.3.21.0**, not the running panel, and is kept because
+> the repo also targets unpatched panels.
 
 `updateLoginFailureCount` @0x1537c (Barracuda), called from `LoginTrackerIntf_LoginFailed_func` @0x13a24 on each failed login. It increments that user's `accLockedCount`, then guards a second loop with `cmp r6,#1 / ble` — so from the **3rd failure onward** it walks **all five** WEBUSERS slots. Inside that loop, `cmp r0,#3 / bne 0x155fc` sets `accountLocked=1` only for entries at count 3 — but the `bne` **jumps into** the next block, so `json_pop_back("status"); json_new_i("status", 0)` executes **unconditionally for every account**. Raw bytes verified: 0x155cc `030050e3`, 0x155d8 `0700001a`, 0x1560c `0010a0e3`.
 
@@ -384,11 +392,11 @@ Everything else survived its own refutation attempt and is kept.
 
 **The recovery path is asymmetric and that is the killer.** `resetLoginFailureCount1` @0x136d4 rewrites `accLockedCount`, `accLockedTime` and `accountLocked` — and **never touches `status`**. A whole-binary scan for the `"status"` key literal @0x8d768 returns exactly five sites: one reader in the auth path, one writer (this one, value 0), and three unrelated readers. **No function in Barracuda ever writes `status=1`.** The result is AES-encrypted and installed over the real file via `validateCRCFileOnFileWrite` — **persistent across reboot**.
 
-**Impact:** three typos on one account locks Lewis out of his own panel's web interface permanently. A successful login can never happen again to clear it. Reboot does not help.
+**Impact (stock):** three typos on one account lock the owner out of his own panel's web interface permanently. A successful login can never happen again to clear it. Reboot does not help. **Not this panel** — see the P1 banner above.
 
 **Refutation (thorough):** the finder initially assumed the `status=0` write was inside the `count==3` branch and corrected himself from raw bytes. He looked for a time-based auto-unlock (`accLockedTime` has no reader anywhere — no expiry). **Partly corrected 2026-09-05:** the on-disk `accLockedTime` claim is untouched, but there IS a time-based auto-unlock on the *in-memory* path — `resetLoginFailureCount` @`0x15074`, the LoginTracker `Validate` callback, expires a lockout after 300 s and clears the counter with it. It was missed because it is reached by a tail-call thunk. See TUXEDO-LOCKOUT-PATCH.md. He confirmed `status` means "account enabled" from the filter chain. He found `resetLoginFailureCount` (no trailing 1) has zero callers and also doesn't write status. He checked the trigger is the 3rd failure, not the 1st, so as not to overstate. **Could not determine:** whether the tuxedo local touchscreen UI rewrites this JSON with `status=1` when a web user is edited — no reference to the `WEBUSERS`/`accountLocked` literals was found from tuxedo code, so the local repair path is unverified.
 
-**Fix:** no client-side workaround. Recovery = decrypt `/opt/tuxedo/configuration/webuseraccountsenc.json`, set `status:1 / accLockedCount:0 / accountLocked:0`, re-encrypt, fix the CRC sidecar `webuseraccountsenc_sec.json`. Or try re-creating web users from the touchscreen (unverified). **Mitigation available right now: use a password manager for the panel and never hand-type it.**
+**Fix: DONE IN FIRMWARE — P1/P1a/P1b/P1c, shipped in v14.** No client-side workaround exists, which is why it was fixed in the binary. On a stock panel, recovery = decrypt `/opt/tuxedo/configuration/webuseraccountsenc.json`, set `status:1 / accLockedCount:0 / accountLocked:0`, re-encrypt, fix the CRC sidecar `webuseraccountsenc_sec.json`; or re-create web users from the touchscreen (unverified). The stock mitigation — use a password manager and never hand-type the panel password — applies only to unpatched panels.
 
 ### a-2. First visit to the web keypad kills Back and Home **forever** — **SEVERITY: MEDIUM · CONFIRMED**
 
@@ -646,7 +654,7 @@ Ranked by what actually touches attacker-influenced input on Lewis's LAN.
 7. **Then add the push channel for latency**, seeding state from 5001/`curStatus` on every connect (there is no backlog — §1.2), discarding `-1` filler frames, decoding latin-1, and parsing from the right.
 8. **Harvest sub-id 7 records via `Type=5`** for real per-partition HA entities. (d-1.) Free capability the vendor UI throws away.
 9. **Send `Type=1126` once per keypad-page visit** from your client to keep Back/Home working. (a-2.) One line.
-10. **Prepare, but do not yet execute, the a-1 lockout recovery**: know how to decrypt `webuseraccountsenc.json`, set `status:1`, re-encrypt and fix the CRC sidecar — **before** you need it. Meanwhile, never hand-type the panel password.
+10. **DONE — a-1 lockout recovery is no longer a contingency.** P1/P1a/P1b/P1c shipped in v14, so a failed login never disables an account: five attempts cost a 300 s self-clearing lock, and hand-typing the panel password is no longer a hazard. The decrypt / re-encrypt / CRC-sidecar procedure survives as the recovery for a stock panel.
 11. **Assess SharkSSL** (OQ-5) before relying on HTTPS as the mitigation for b-1.
 12. **Optional, low priority:** resolve OQ-6 (`Type=17`) and OQ-7 (dispatch completeness). Only OQ-7 could overturn the zone negative, and neither blocks the integration.
 

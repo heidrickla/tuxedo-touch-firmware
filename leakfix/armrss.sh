@@ -21,8 +21,9 @@
 # identical work. The difference is mostly this panel's post-restart heap ramp, which
 # run 1 started inside of. Do not quote this script's number.
 #
-# Every arm and disarm uses the real code. No wrong code is ever sent: three
-# failures permanently disable every web account (TRAPS §6).
+# Every arm and disarm uses the real code. No wrong code is ever sent. On stock
+# firmware three failures permanently disable every web account; this panel runs
+# v14, where P1 makes that 5 attempts and a 300 s self-clearing lock (TRAPS §6).
 set -u
 CYCLES="${1:-12}"
 PANEL="${PANEL:-203.0.113.5}"   # the real address is not in this repo

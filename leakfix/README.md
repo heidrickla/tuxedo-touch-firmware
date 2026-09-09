@@ -1312,10 +1312,10 @@ here, which matters because not every module method need return a registered str
     from   bl free
     to     bl json_free
 
-**Not yet built or applied, and now a low-value fix.** `patches.tsv` has no entry at `0x2103c`; the nearest is
+**Not yet built or applied.** `patches.tsv` has no entry at `0x2103c`; the nearest is
 `P15-leakfix-site-29088`, which fixes a leaked *tree* on the `get` path and does not
-touch this. Proving it needs the REST write path exercised under emulation, which is
-blocked on the bench credentials described below.
+touch this. It is now measurable: the five non-alarm-bus family members are
+hammerable on the bench, and the measured per-call cost is below.
 
 This is the security-operation path. Home Assistant arms and disarms through it, so
 it runs on every alarm state change, not only when someone opens a web page.
@@ -1404,25 +1404,51 @@ returned, and the `Base64Encode` buffer. Its first root pointer is overwritten b
 later assignment before the function returns, so that tree is unreachable, not merely
 unfreed.
 
-### How to get an exact number
+### MEASURED: 3 strings and 1 tree per call, identical across three handlers
 
 The arm path cannot be counted on the bench (alarm bus) or on the panel (ESRCH), but
 **five family members never touch the alarm bus**: `setAddIPURL`, `setUpdateIPURL`,
 `setViewIPURL`, `setAddDevMAC`, `setClientUnregister`. Those are hammerable under
 emulation with `jsoncount.py`, which counts libjson's registries exactly instead of
-inferring from 4 kB pages.
+inferring from 4 kB pages. `leakfix/famcount2.sh`, 200 requests per arm, each arm
+warmed with 200 first:
 
-`setViewIPURL` (endpoint `ViewIPURL`) is the one to use: it is read-only — it calls
-`getRegisteredDevNodes()`, iterates, builds a reply, and writes nothing — whereas the
-other four mutate persistent config. Its own `getRegisteredDevNodes()` result tree is
-never freed either, so the measurement covers that as well. (An earlier draft of this
-section claimed `getRegisteredDevNodes` also reaches `readCRCJSONFile`; it does not —
-see the `readCRCJSONFile` section below.)
+| arm | endpoint | strings/call | trees/call |
+|---|---|---|---|
+| control A | `/GetSceneList` | +2.19 | **+1.0000** |
+| control B | `/GetSecurityStatus` | +0.19 | **+0.0000** |
+| family | `ViewIPURL` | +3.19 | +1.0000 |
+| family | `AddIPURL` | +3.19 | +1.0000 |
+| family | `UpdateIPURL` | +3.19 | +1.0000 |
 
-Blocked on credentials: `/tmp/pw.txt` on the bench is empty, so `leakprobe.py` cannot
-authenticate, and unauthenticated requests are rejected at the auth gate — which is
-what made an earlier raw-HTTP attempt return 0.000 per call against a control known
-to be 1.0000.
+The +0.19 is constant in every arm including the one that leaks nothing, so it is
+background, not per-call. Subtracting it: **the family leaks 3 strings and 1 tree per
+call**, and three different handlers agree to four decimals — which is what you expect
+from one code shape, and is the evidence that this is a family rather than three
+coincidences. Control A reproduces its documented 1.0000 trees per request exactly,
+which is the instrument check; run 1 and run 2 of `famcount.sh` also agreed to four
+decimals at completely different registry occupancies (812 -> 1250 and 3086 -> 3524).
+
+**Two things this refutes.**
+
+*The static count over-predicted the trees.* This file said "two roots leak per call".
+Only **one** does. Six nodes created and four absorbed by `push_back` leaves two
+roots, but the measurement says one, so one of them is released on a path the reading
+did not follow.
+
+*"1.0000 trees per request" is per-PATH, not per-request.* Control B is a request, and
+it leaks zero trees and zero strings. Some API endpoints leak nothing at all, so
+LEAK 30's rate cannot be multiplied by a request count to get a panel-wide figure.
+
+Method notes, because each cost a run. The handler must be proved to have RUN, not
+merely answered: `ViewIPURL` returns `{"Result":"<base64>"}`, which is exactly the
+shape `setViewIPURL` builds (`json_new` root, `json_new_a("Result", …)`,
+`json_push_back`, `json_write`), so a rejection at parameter validation would look
+different. Arms are serial by necessity -- one process, one global registry, so
+driving two endpoints at once attributes each one's allocations to the other. And the
+mutating handlers run last, because `AddIPURL`/`UpdateIPURL` write the
+registered-device list that `getRegisteredDevNodes` walks; they are safe on the bench
+only because `emu/serve.sh` re-seeds the config from `/work/panel-config` every start.
 
 ### readCRCJSONFile @`0x32280` — 45 strings per IPC message type 154
 

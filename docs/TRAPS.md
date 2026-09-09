@@ -439,8 +439,10 @@ and left sitting there saying the opposite of the truth.
 ## 6. Panel safety
 
 - **Never submit a wrong password.** On stock, three failures permanently
-  disable every web account and the count survives a reflash. Exclude the path
-  by construction, not by remembering.
+  disable every web account and the count survives a reflash. This panel runs
+  v14, where P1 makes that 5 attempts and a 300 s self-clearing lock, so it is
+  recoverable here — still exclude the path by construction, not by
+  remembering, because the repo also targets stock panels.
 - **Leave the panel disarmed.** Arming and disarming are authorised and fast —
   just do it, do not ask. Scripted so the API call is never re-derived again:
   `python D:/temp/tux-arm.py [stay|away|night]` and

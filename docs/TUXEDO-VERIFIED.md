@@ -31,13 +31,22 @@ Below, the login-lockout finding leads by instruction. Everything after it is ra
 "Three failed web logins **permanently** disable **every** web user account; `status=0` is written to all WEBUSERS entries and nothing ever writes it back to 1 — the accounts must be rebuilt."
 
 ### The corrected claim
+
+> **STOCK 5.3.21.0 ONLY — THIS IS NOT WHAT THIS PANEL DOES.** Everything in this
+> section describes unpatched firmware. `P1-lockout` (VA `0x155fc`, file `0xd5fc`)
+> branches past the mass `status=0` write, and with `P1a`/`P1b`/`P1c` the behaviour is
+> 5 attempts then a 300 s self-clearing lock that writes nothing to disk. All of it is
+> in `patches.tsv` and in the v14 image flashed 2026-09-09. Kept because the repo also
+> targets stock panels, and because the on-disk contract below is still how the
+> touchscreen app and `tuxedo` share that field. See `TUXEDO-LOCKOUT-PATCH.md`.
+
 Three *consecutive* failed logins against **one existing, currently-enabled** web username do write `status=0` into **all five** WEBUSERS entries (plus `accountLocked=1` for the offending user), and `status==1` is a hard gate on web login — so yes, **every web account stops working at once**.
 
 But it is **not permanent and nothing has to be rebuilt.** The touchscreen app writes `status` back to 1. `CAccountsSetup` (Settings → user account setup) loads `status` from the file, renders each user's button as "Enabled"/"Disabled" from it, offers per-user reset buttons **and an "Enable All" button**, and on Apply writes `status=1`, `accountLocked=0`, `accLockedCount=0` for every row not showing "Disabled". Usernames and passwords are reloaded from the same file — nothing is retyped.
 
-**Accurate one-liner: three failed web logins disable every web account until someone clears it at the panel's touchscreen.**
+**Accurate one-liner, stock 5.3.21.0: three failed web logins disable every web account until someone clears it at the panel's touchscreen.** On this panel, running v14: five failures arm a 300 s self-clearing lock and nothing is written to disk.
 
-Why the original was wrong: its own test — "decode every writer to that field" — was applied only to Barracuda. Barracuda genuinely never writes `status=1` (proved exhaustively: the string "status" appears exactly once in the binary, at `0x8d768`, with five references, all decoded). But `status` is a shared on-disk contract with the touchscreen app, and `tuxedo` does a full read-modify-write of the same file. That path is live, shipped and user-reachable — unlike Barracuda's own `resetLoginFailureCount` at `0x15074`. **Correction 2026-09-05: that function is NOT dead code.** It is the LoginTracker `Validate` callback, installed by `installVirtualDir` and reached through a tail-call thunk at `0x13af0`, which a BL-only caller scan cannot see. It enforces a 5-failure / 300-second self-expiring lockout. See TUXEDO-LOCKOUT-PATCH.md. The `status=1` reasoning in this section is unaffected -- that is the separate on-disk path.
+Why the original was wrong: its own test — "decode every writer to that field" — was applied only to Barracuda. Barracuda genuinely never writes `status=1` (proved exhaustively: the string "status" appears exactly once in the binary, at `0x8d768`, with five references, all decoded). But `status` is a shared on-disk contract with the touchscreen app, and `tuxedo` does a full read-modify-write of the same file. That path is live, shipped and user-reachable — unlike Barracuda's own `resetLoginFailureCount` at `0x15074`. **Correction 2026-09-05: that function is NOT dead code.** It is the LoginTracker `Validate` callback, installed by `installVirtualDir` and reached through a tail-call thunk at `0x13af0`, which a BL-only caller scan cannot see. It enforces a 5-failure / 300-second self-expiring lockout. See TUXEDO-LOCKOUT-PATCH.md. **Further correction 2026-09-09:** the sentence that used to end this paragraph — "the `status=1` reasoning in this section is unaffected, that is the separate on-disk path" — is backwards. P1 targets exactly that on-disk path: it branches over the mass `status=0` write, so on v14 the reasoning above holds only for stock.
 
 ### Preconditions
 1. Web form login must actually be exercised. LAN browsing only authenticates if "Authentication for web server local access" is enabled (see finding 7). With it off, no failures can be generated at all.
@@ -49,12 +58,12 @@ Why the original was wrong: its own test — "decode every writer to that field"
 There is **no** self-healing: `accLockedTime` is written by three functions and read by none, and no boot script or init path re-enables anything. Once locked, further attempts keep re-writing `status=0` (the failure counter does not check `status`), which is why it *feels* permanent from the network side.
 
 ### Owner action
-- **Preventively: nothing.** There is nothing to install, patch or configure.
+- **Preventively, on stock: nothing.** There was nothing to install, patch or configure. **Fixed in v14:** P1/P1a/P1b plus the P1c stub branch over the all-accounts `status=0` write and give 5 attempts with a 300 s self-clearing lock.
 - **If it happens:** at the panel → Settings → user account setup → press **"Enable All"** (or flip the individual Disabled button to Enabled) → **Apply**. Do **not** press Apply while a row still reads "Disabled" — that row gets `status=0` written.
-- **Operational caution that actually matters to you:** if you script, fuzz or replay against `/login.shtml`, **three wrong passwords for a real username take the entire web interface offline for all five accounts** until you walk to the panel. Do that testing only with the panel physically in reach.
+- **Operational caution, stock only:** on stock firmware, scripting, fuzzing or replaying against `/login.shtml` meant **three wrong passwords for a real username took the entire web interface offline for all five accounts** until you walked to the panel. **v14 removes that** — the limit is 5 attempts, then a 300 s self-clearing lock, so the same testing costs time rather than a trip to the panel. The stock rule still applies to any unpatched panel.
 - Do not try to hand-restore `webuseraccountsenc.json` as a backup path — it is AES-OFB encrypted and CRC-tracked. The touchscreen reset is the intended and only supported recovery.
 
-**Real-risk rank on your LAN: low.** It is a self-inflicted nuisance with a two-minute fix, not an exposure. It appears first only because you need to know it before you next mistype a password.
+**Real-risk rank on your LAN: low — and on v14, gone.** Everything above is stock 5.3.21.0. P1 ships in v14 and branches over the mass `status=0` write, so a mistyped password costs at most a 300 s self-clearing lock after five attempts, with no touchscreen visit. The Enable All recovery applies only to a config already locked before the patch.
 
 ---
 
@@ -698,7 +707,7 @@ python annot.py 4b9 51c      # the hardware init routine, word addresses in hex
 1. **Check the router's port-forward table.** Nothing to 80, 443, 6280, 9443 or the configured Barracuda port. This single change is the mitigation for findings 1, 2, 3, 4, 5, 6 and 8 simultaneously. *(Everything else is secondary to this.)*
 2. **At the panel: confirm "Authentication for web server local access" is ticked.** One read. Settles finding 7. If you unticked it for `ha-tuxedo-touch`, re-tick it — it never helped.
 3. **`curl -sS http://<tuxedo-ip>/Config/panelinfo.txt` from another LAN host.** Field 7 is the installer code or `0000`. This is the single highest-value read in the whole document — it converts finding 1 from "confirmed in bytes" to "confirmed on your hardware", and it decides whether you need to change the installer code.
-4. **Note the lockout rule** and don't password-fuzz `/login.shtml` unless you're standing at the panel.
+4. **Note the rate limit.** v14 patches out the stock three-strikes permanent all-accounts disable, so password-fuzzing `/login.shtml` costs 5 attempts and a 300 s self-clearing lock rather than a trip to the panel. The stock rule in the LEAD FINDING still applies to unpatched panels.
 
 **Tier 1 — decide and configure (one deliberate flash write)**
 

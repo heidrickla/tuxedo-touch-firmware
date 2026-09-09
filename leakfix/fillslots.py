@@ -12,9 +12,11 @@ predictable cycle, the model is right and the endpoint becomes drivable.
 Each iteration is a SEPARATE login, because reusing one session makes the scan
 find the existing entry and skip the write (sl = 1 at 0x14338).
 
-One login per iteration, always the correct password. Three wrong submissions
-permanently disable every web account on this hardware, so the credential never
-varies -- only how many sessions exist.
+One login per iteration, always the correct password. On stock firmware three wrong
+submissions permanently disable every web account; this panel runs P1, so it is five
+attempts then a 300 s self-clearing lock. Nothing on the wire says which is
+answering, so assume the stricter one: the credential never varies -- only how many
+sessions exist.
 """
 import hashlib
 import os

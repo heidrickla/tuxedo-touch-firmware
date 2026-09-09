@@ -5,8 +5,10 @@ Each iteration is a separate login plus the registering GET, which is what makes
 addSessionItem run. Reports the last attempt that succeeded, so the count is a
 measurement rather than "it broke at some point".
 
-The password is always the correct one. Three WRONG submissions permanently
-disable every web account on this hardware; nothing here ever varies it.
+The password is always the correct one and nothing here ever varies it. On stock
+firmware three WRONG submissions permanently disable every web account; this panel
+runs P1, so it is five attempts then a 300 s self-clearing lock. A client cannot tell
+the two apart, so assume the stricter one.
 """
 import os
 import sys

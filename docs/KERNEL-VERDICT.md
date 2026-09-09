@@ -335,7 +335,7 @@ The `Random` header (31 chars — odd length, so not hex) is the **HMAC-SHA512 k
 | **4** | **Bounded-window on-panel canary on a spare port**, alongside the vendor binary — never replacing it | Opening a push stream is not passive: registering triggers command 500 and flushes the 32-deep reply queue, transiently stealing events from the production client |
 
 **Hard exclusions — by construction, not by discipline:**
-- **Never submit a deliberately wrong password.** Three failed web logins disable the panel's web accounts and **the counter survives a firmware reflash** (`const.py OPT_CREDENTIALS_REJECTED` exists solely because of this). This is the real soft-brick risk in the whole workstream.
+- **Never submit a deliberately wrong password.** Still an exclusion, but no longer a soft-brick on this panel: P1 shipped in v14, so failures cost 5 attempts then a 300 s self-clearing lock, and that deny path has never been observed on hardware (`TUXEDO-FIX-STATUS.md`). The stock behaviour it replaced — three failed logins disable every web account, and **the counter survives a firmware reflash**, which is why `const.py OPT_CREDENTIALS_REJECTED` exists — still applies to every unpatched panel this repo targets. See `TUXEDO-LOCKOUT-PATCH.md`.
 - **Never provoke a declined user code** on the alarm side.
 - The **ECP-link-down** fixture must be labelled **SYNTHESISED** from producer code, not captured — capturing it requires dropping the VISTA bus on an armed house — and per the correction above it must cover both id 21 and id 22.
 

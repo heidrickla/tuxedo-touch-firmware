@@ -5,7 +5,7 @@
 **Binary:** `/opt/webserver/Barracuda`, sha256 `b9bf50d8d1cfe198bb6a0e33888092f4d29016a09a3db67df99401e49060186b`, 5,680,361 bytes
 **Local copy:** `C:\Users\dev\AppData\Local\Temp\claude\D--PersonalProjects-iot-protocol-tools\000ba43d-52f5-43a6-902d-6c0edfdf3ceb\scratchpad\fw\carved\app2_root\opt\webserver\Barracuda`
 **Address convention:** `.text` addr `0x0000c438` / off `0x00004438`; `.rodata` addr `0x00084d30` / off `0x0007cd30` → **VA − 0x8000 = file offset**, confirmed on two independent sections. [CONFIRMED]
-**Status:** read-only analysis. No file was modified; sha256 re-verified unchanged after all work.
+**Status:** APPLIED AND SHIPPED. The analysis below was read-only — the stock `Barracuda` sha256 was re-verified unchanged after all of it — but the patch it recommends is now `patches.tsv` rows P1/P1a/P1b/P1c, in shipped images since v11 and current in v14, flashed to the live panel 2026-09-09 (`RELEASES.md`). §6's "not packaged, not flashed" is superseded.
 
 ---
 
@@ -24,7 +24,7 @@ Three corrections to the brief's premises, all settled by instruction-level read
 - **There is therefore no "neutralise the overlay and let the stock timer take over" path.** Honeywell's policy hook `LoginTrackerIntf_Validate_func` @0x13af0 is 12 bytes that tail-call `LoginTracker_find`, so `LoginTracker_validate` **structurally cannot return 0**. The stock tracker is a fully inert, decorative rate-limiter. The timer must be written. [CONFIRMED]
 - **The audit's headline is literally true; its stated reason is wrong.** A reset does exist and does run on successful login — but it never writes `"status"`, and it is unreachable once accounts are disabled. Both things are true at once. Detail in §2.
 
-**Recommendation:** apply **P1 alone** (4 bytes) now. It removes the denial-of-service against the owner and is the change he actually needs. Evaluate the timed lock separately, and only after the deployment discipline in §4/§5 is in place.
+**Recommendation — SUPERSEDED 2026-09-09.** Both tiers shipped, in the order advised: P1 alone first, then the timed lock once the §4/§5 deployment discipline was in place. v14 carries `P1-lockout`, `P1a`/`P1b`/`P1c-lockout-stub` and `P2-validate-hook`, giving the live panel 5 attempts then a 300 s self-clearing lock. Tier 3 (P7/P8/P9) remains unapplied. Read §3 below as the record of what was decided, not as an open proposal.
 
 ---
 
@@ -482,9 +482,10 @@ So the corrected statement of the original finding is:
 > Three failed web logins disable every web account **until someone clears it at
 > the panel's touchscreen.** Not permanent, not a rebuild — a panel visit.
 
-**This should be read BEFORE applying anything.** It means the failure mode the
-patch addresses is recoverable today, which lowers the urgency and raises the
-bar for accepting flash-write risk.
+**Historical — this was the case for not rushing the patch.** On stock firmware the
+failure mode is recoverable at the touchscreen without a flash write, which lowered
+the urgency at the time. Superseded: the patch shipped in v14, flashed 2026-09-09.
+Enable All remains the recovery path for a panel still on stock.
 
 ## Gap 1, PROPOSED ORDER
 

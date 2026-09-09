@@ -1,8 +1,9 @@
 # What is actually fixed, and where
 
-Status 2026-09-06. **v12 is built** (see `RELEASES.md`); **v11 is flashed and
-running**, with v12's three extra patches already applied live over SSH — so the
-running panel and the v12 image are byte-identical in every patched binary. `./verify-panel.sh` confirms every patch site in one command.
+Status 2026-09-09. **v14 is built, flashed and running** (see `RELEASES.md`) — the
+first image whose `Barracuda` md5 equals the binary the panel actually runs, so drift
+is NONE and no fix exists only as a live SSH edit. `./verify-panel.sh` confirms every
+patch site in one command.
 
 This document had drifted: it said v10, and it listed two patches as
 "outstanding" that had in fact shipped. The cause was that `verify-panel.sh`
