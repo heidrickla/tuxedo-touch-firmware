@@ -1179,7 +1179,8 @@ Found 2026-09-09 within twenty minutes of installing a decompiler, in a function
 already read twice by hand that same day for a different question. Measured on the
 live panel the same day, with Lewis's authorisation to arm and disarm.
 
-**The leak is real. The rate is not.** Two paired runs on the panel, 12 arm/disarm
+**The leak is real. The rate is not, and the mechanism is narrower than first written**
+(see the registry-node correction below). Two paired runs on the panel, 12 arm/disarm
 cycles each (24 handler calls), `leakfix/armrss.sh` and `leakfix/armrss2.sh`:
 
 | run | busy | idle control | attributable | per call |
@@ -1239,12 +1240,49 @@ believing it would have double-freed the response body on the first fix. The cen
 counts *calls* and cannot see where a result goes, which is exactly the caveat this
 file already recorded, now with a concrete instance.
 
-Ownership then propagates and nothing catches it: the caller is `set` @`0x15a00`, the
-REST write dispatcher, which contains **no** `json_free`, `json_delete` or `free` of
-any kind and returns the string straight up to `WnmpModule`'s dispatch — Barracuda
-framework code, and already established as the layer that never frees `json_write`
-results. So the string is still leaked; it is leaked one or two frames higher, and a
-fix belongs there rather than in nineteen handlers.
+Ownership propagates two frames: `set` @`0x15a00` contains no `json_free`,
+`json_delete` or `free` of any kind and returns the string straight up to
+`WnmpDir_serviceField`.
+
+**Correction to the correction: the string is NOT leaked, and this file said it was.**
+`WnmpDir_serviceField` does dispose of it, at `0x29018`:
+
+    29018: ldr pc, [ip, #16]      call the module's set method -> r0 = the string
+    29020: mov r4, r0             save it
+    29028: bl HttpResponse_setContentType
+    29034: bl HttpResponse_printf sent to the client
+    2903c: bl free                <- disposed of here
+
+So the claim that "a fix belongs one or two frames higher" was written before this
+site was read, and it was wrong about the string being leaked at all.
+
+**What IS leaked here is the registry node, and the fix is one instruction.** That
+`free` should be `json_free`. libjson is built with `JSON_MEMORY_MANAGE`, and
+`json_write` returns the result of `toCString` @`0x27d78` in the library, which
+mallocs, memcpys, and then **inserts the pointer into the string registry** (an
+indirect map insert, then `str r0,[r2,#20]` into the node). `json_free` @`0x21000`
+erases that entry — it calls `_Rb_tree_rebalance_for_erase`, `operator delete` for
+the node, and `free` for the block. Plain `free` releases the block and strands the
+node, so the registry gains exactly one entry per REST write request, holding a
+pointer that is now dangling.
+
+That is the measured signature: 1.0000 outstanding per request, with the bytes
+already returned to the allocator. It also explains why the growth is small in RSS
+terms and yet perfectly linear in the registry count.
+
+The substitution is safe in the other direction too: `json_free` erases without
+branching on membership, so for a pointer that was never registered it is an erase
+that matches nothing followed by the same `free`. It is a strict superset of `free`
+here, which matters because not every module method need return a registered string.
+
+    site   VA 0x2903c   (file offset 0x2103c, VA - 0x8000)
+    from   bl free
+    to     bl json_free
+
+**Not yet built or applied.** `patches.tsv` has no entry at `0x2103c`; the nearest is
+`P15-leakfix-site-29088`, which fixes a leaked *tree* on the `get` path and does not
+touch this. Proving it needs the REST write path exercised under emulation, which is
+blocked on the bench credentials described below.
 
 This is the security-operation path. Home Assistant arms and disarms through it, so
 it runs on every alarm state change, not only when someone opens a web page.
