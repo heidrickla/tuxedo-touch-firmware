@@ -1678,6 +1678,38 @@ The remaining msgTypes — 3, 4, 5, 6, 7, 8, 9, 19, 25, 26, 27, 29, 51, 55, 56,
 59, 61, 62, 104, 105, 112, 125, 130, 132, 133, 160, 161, 162, 716 — have not
 been characterised.
 
+#### That list predates `reply-layouts.py`, and re-deriving it shrinks the gap to two sites
+
+Recomputed by `tools/msgtypes.py`, which classifies every send site in
+`reply-layouts.txt` by destination queue:
+
+| of the 29 listed above | count | which |
+|---|---|---|
+| decoded, and sent to Barracuda's queue | 5 | 51, 59, 61, 62, 112 |
+| sent only to another queue | 0 | — |
+| no send site in `/tuxedo` at all | 24 | 3, 4, 5, 6, 7, 8, 9, 19, 25, 26, 27, 29, 55, 56, 104, 105, 125, 130, 132, 133, 160, 161, 162, 716 |
+
+**25 msgTypes reach Barracuda's queue `[*0xd2f25c]`, and all 25 are decoded:** 18,
+20, 21, 24, 51, 59, 60, 61, 62, 101, 103, 109, 111, 112, 147, 150, 151, 152, 153,
+154, 504, 600, 801, 999, 9999.
+
+Nothing emits the other 24, so they cannot appear in a stage-6 capture. They are
+constants Barracuda's dispatch compares and `/tuxedo` never sends — not a gap the
+window can close, and not a reason to book one.
+
+The real remainder is different in kind. **23 send sites take a buffer that arrives
+pre-filled** and never write `+0x004` themselves. For the six Z-wave and thermostat
+callbacks on `[*0xd2f2e8]`, eighteen `CReceiverThread::sltRequest*` methods set
+`+0x004 <- [arg r1+0x4]`: **the reply echoes the request's own msgType**, so those
+carry whatever Barracuda asked with, which is a command-side set. Two sites on the
+`r0+0x18` buffer still resolve to `+0x004 <- ?` and are the genuine gap.
+
+This says what `/tuxedo` SENDS, derived from its send sites. It says nothing about
+what Barracuda ACCEPTS, and must not be read that way: `TRAPS.md` §2 records that a
+compiler-generated binary search routes values by range, so enumerating Barracuda's
+`cmp`/`beq` pairs cannot prove a constant absent from its dispatch. msgType 20 was
+documented as unhandled for a release on exactly that error.
+
 #### The frame grammar, and two msgTypes decoded end to end
 
 The formatter is `bprintf` @`0x1e0f4` followed by `bflush` @`0x1df84`, called as
