@@ -2622,6 +2622,49 @@ predicts that a **non-zero** `sessionId` produces the confirmation frame. Test t
 accepted path only; the declined path stays untested because a failed code
 attempt has consequences on the panel.
 
+#### That reading re-checked instruction by instruction, 2026-09-09 — it holds, and it is stricter than stated
+
+Still untested on hardware, but no longer resting on one pass over the code. All
+three claims verified against v14's own binaries:
+
+**`setarmwithcode` really does hard-code the zero**, and it is the first field it
+writes:
+
+```
+1afe4  ldr lr, [pc,#316]   ; lr = the command buffer
+1afe8  mov ip, #0
+1afec  str ip, [lr]        ; buffer +0x00 = 0   <- sessionId, a literal zero
+1aff0  ldr ip, [fp,#8]
+1aff8  str ip, [lr,#4]     ; buffer +0x04 = the msgType argument
+1b00c  mov r2, #404        ; 0x194
+1b01c  bl  mq_send
+```
+
+**Commands are 404 bytes, not 556.** The reply union is `0x22c`; this direction
+sends `0x194`. Anything sizing a command buffer from the reply layout is wrong.
+
+**The guard exists in both functions, and the accepted path has TWO of them:**
+
+```
+13c414  ldr lr, [r0, r3]    ; r3 = 0x50d8, a CReceiverThread field
+13c41c  cmp lr, #0
+13c420  beq 13c44c          ; zero -> epilogue, returns WITHOUT sending
+13c424  sub r3, r3, #4      ; the field at 0x50d4
+13c428  ldr r3, [ip, r3]
+13c434  cmp r3, #0
+13c448  bne 13c454          ; both must be non-zero to reach the send
+```
+
+`sltSendUserCodeDeclinedMsg` has the same shape at `0x13dbcc`–`0x13dbd8` on its own
+field. So a non-zero `sessionId` is necessary but **not sufficient** for the accepted
+frame: the field at `0x50d4` must also be set. A 7d test that supplies a session and
+sees no confirmation frame has not refuted the prediction until that second field is
+accounted for.
+
+**The declined path has a side effect before its guard.** `13dbc8` calls
+`SetGotoStatus(false)` *before* the `sessionId` test, so it changes panel state even
+on the path that returns without sending. That is another reason not to exercise it.
+
 **Proves:** functional parity for security operations.
 **Revert:** per sub-stage, the deadman and the `mv`.
 
