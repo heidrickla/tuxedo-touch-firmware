@@ -1211,3 +1211,57 @@ never read for frees. `setarmwithcode` was read twice the same day for the
 rather than mismatching an allocator (`docs/ALLOCATOR-REWORK.md` §4). The rate can be
 confirmed exactly with `leakfix/jsoncount.py` on the bench, or on the panel the next
 time Lewis arms it, which costs one arm/disarm cycle instead of a campaign.
+
+### LEAK 31 is a FAMILY of 19, not three functions
+
+`leakfix/alloccensus.py` counts allocating calls against freeing calls for every
+function in the image, cross-references `patches.tsv` so shipped fixes are marked,
+and ranks what is left. Of 127 functions where allocations exceed frees, **19 have
+the LEAK 31 signature exactly: a `json_write` and not one free.**
+
+| net | address | function |
+|---|---|---|
+| 11 | `0x18ffc` | `setAddIPURL` |
+| 10 | `0x18c68` | `setUpdateIPURL` |
+| 10 | `0x189d4` | `setViewIPURL` |
+| 7 | `0x19be4` | `setAddDevMAC` |
+| 6 | `0x12c54` | `uploadDevicesToOtherTuxedos` |
+| 5 | `0x1b470` | **`setDoorLock`** |
+| 5 | `0x1bbec` | `setMode` |
+| 5 | `0x1c7fc` | `setOccupancyMode` |
+| 5 | `0x1b868` | `setThermostatEnergyMode` |
+| 5 | `0x1ba28` | `setThermostatSetPoint` |
+| 4 | `0x1724c` | `getDeviceStatusFromFile` |
+| 4 | `0x15f7c` | `setClientUnregister` |
+| 4 | `0x1aa10` | `setEScenes` |
+| 4 | `0x1c958` | `setPartitionArmed` |
+| 4 | `0x1afc8` | `setarmwithcode` |
+| 4 | `0x1ae50` | `setdisarmwithcode` |
+| 3 | `0x13064` | `BLightStatusToOtherTuxedos` |
+| 3 | `0x12f18` | `DLightStatusToOtherTuxedos` |
+| 3 | `0x1c340` | `setLights` |
+
+That is the REST write API more or less entire: arming, disarming, door locks,
+lights, thermostat set-point and mode, occupancy, scenes, device registration. Every
+state-changing call the Home Assistant integration can make is on this list.
+
+Three were confirmed by reading the disassembly. **The other sixteen share the
+signature and have not been read**, and the census is explicit that a signature is
+not a verdict: a function may return its allocation, store it somewhere that
+outlives the call, or hand it to something that takes ownership. `setDoorLock` in
+particular deserves reading before anything is written, being a lock.
+
+The largest single candidate is not in the family: **`readCRCJSONFile` @`0x32280`,
+45 `json_as_string` against one `json_delete`.** It is reached from
+`getRegisteredDevNodes` by way of `validateCRCFileOnFileRead`. If it ran per request
+it would dominate the measured 3.13 strings per request, and it does not, so it runs
+on some rarer path — worth establishing which, because 45 unfreed strings per call
+is the biggest single number in the image.
+
+**What this says about the method.** Thirty leak sites were found by hammering an
+endpoint and watching RSS. That cannot see a handler which is not hammerable, and
+the entire write API is not hammerable: you cannot arm a panel a thousand times to
+raise a slope. The census took minutes and found nineteen candidates the growth
+method could never have surfaced. Neither approach replaces the other -- growth
+proves a leak is real and gives its rate, the census says where to look -- but the
+gap between them was a whole API surface.
