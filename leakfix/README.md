@@ -895,6 +895,28 @@ So LEAK 24 + LEAK 26 took `cmd=141` from **~107 B/request to zero**, and the
 earlier "39" and "11 B/request" figures were partly a per-run constant divided by
 N. **Divide-by-N reports a constant as a rate.** Vary N before believing one.
 
+### ✅ CONFIRMED ON THE PANEL, not just the bench
+
+Every per-request figure above is from the emulated bench. Driven against the real
+unit on `0066ad95`, reading `VmRSS` either side and using the same
+does-it-scale-with-N discriminator:
+
+    N=300 requests   VmRSS 5584 -> 5600 kB    +16 kB
+    N=900 requests   VmRSS 5616 -> 5628 kB    +12 kB
+    pre-fix rate would have put N=900 at about +94 kB
+
+**Tripling the load produced less growth**, so there is no per-request component —
+that is page quantisation, not a leak. 1200 requests, all answering 200 with 43-byte
+bodies. `cmd=141` is leak-free in production.
+
+⚠ RSS can only see about 14 B/request or more at this sample size, so this confirms
+the absence of the ~107 B/request that was there before; it could not have detected
+a few bytes per request. The chunk histogram on the bench is the sensitive
+instrument, and it agrees.
+
+⚠ Idle RSS is also flat: 5600 kB right after the LEAK 24 deploy, 5576 kB some
+19 000 s later.
+
 🚨 **A zero-delta table is NOT proof of a fix, and it fooled me once here.** Two
 runs reported no growing sizes at all — because `scenedrive` had correctly aborted
 on an exhausted session table and `sceneopmeasure` swallowed the message, so
