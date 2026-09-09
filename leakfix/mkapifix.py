@@ -979,6 +979,28 @@ WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both
 # probably in the caller, after the response is written. Read the caller's frame rather
 # than adding another delete inside serviceField.
 #
+# Two things checked since, so the next attempt does not spend time on them.
+#
+# 1. "Both attempts share the CMPFREE cave, so the wedge is the CAVE, not the site."
+#    REFUTED, and it was a good hypothesis: the two stubs sit at 0x696c0 and 0x696e0,
+#    both inside HttpServer_getStatusCode, and that region holds what reads exactly
+#    like a live lookup table -- 0x696b8 = 301, 0x696c0 = 302, 0x696d0 = 401, each
+#    beside a pointer into .rodata that really does spell "302 Moved Temporarily".
+#    Overwriting an HTTP status table would explain a hang with no crash, and it would
+#    explain why two different sites failed identically. It is still wrong. The only
+#    callers of 0x693dc and 0x693fc anywhere in the image are our own CMPFREE sites
+#    (0x1f0f0, 0x29bbc, 0x29e84, 0x47c44), and there is not one data reference to the
+#    function or into its table. The function is dead, the table is unreachable, and
+#    the cave is sound. Note the disassembly is misleading here: objdump still prints
+#    `bl 693dc <HttpServer_getStatusCode>` at 0x1f0f0 because the symbol survives, but
+#    that call is OURS -- stock holds 0xEBFFB227, a bl to strncmp.
+#
+# 2. That check is only trustworthy with the fixed ci/wordref.py. The older version
+#    kept NOBITS sections, and .bss's sh_offset overlaps .symtab in this image, so
+#    every symbol-table st_value read as a live .bss reference. It would have reported
+#    a data reference to 0x693dc that does not exist, i.e. reported the cave as live
+#    and sent the next attempt chasing the theory above.
+#
 # Do not re-enable without re-running leakfix A/B on the bench. The site tuple and
 # stub are kept here, disabled, so the next attempt inherits the two refutations
 # instead of re-deriving them.
