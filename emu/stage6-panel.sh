@@ -140,18 +140,49 @@ phase0() {
     ls -l /dev/mq/Q_ServCmdTrsmtr 2>/dev/null || echo "  /dev/mq/Q_ServCmdTrsmtr NOT VISIBLE (queues mount at /dev/mq, not /dev/mqueue)"
 
     say "supervis relaunch budget"
-    # 24 relaunches then a HARDWARE RESET, and the counter is never zeroed.
-    # It lives in supervis's own memory, not in /proc, so it CANNOT be read
-    # here and has to be tracked by hand across sessions. Saying that plainly
-    # is better than printing a number that looks like the budget and is not.
+    # 24 relaunches then a HARDWARE RESET. The live counter lives in supervis's
+    # own .bss and cannot be read from /proc -- but supervis WRITES each relaunch
+    # to a log on mtdblock17, so the count IS readable without touching the
+    # process. This block used to say "track it by hand", which sent you into a
+    # window that spends three relaunches without knowing how many were left.
+    # Do not ptrace supervis to read the counter: it holds /dev/watchdog and
+    # kicks it at 1 Hz, so stopping it resets the panel in hardware (TRAPS §6).
     s=$(pids_named supervis | head -1)
     if [ -n "$s" ]; then
         echo "  supervis pid $s, system uptime $($BB awk '{print int($1)}' /proc/uptime)s"
     else
         echo "  supervis NOT RUNNING"
     fi
-    echo "  budget is NOT readable from /proc -- track it by hand"
+    SLOG=/opt/tuxedo/configuration/SupervisionLog.txt
+    if [ -f "$SLOG" ]; then
+        # SCOPE TO THE CURRENT BOOT. The log is on mtdblock17 and survives both
+        # reboots and reflashes, so its LAST BARRACUDA_RESTART-N is whatever
+        # supervis wrote most recently -- possibly several boots ago. Reading that
+        # as the live count reported 6 of 24 on a panel that had rebooted 20
+        # minutes earlier and had spent none. Over-reporting is the safe
+        # direction, but it is still wrong, and it would talk you out of a window
+        # you could afford.
+        #
+        # supervis writes "######## SYSTEM START ########" at each boot, so reset
+        # the count at every such line and keep the last value after it.
+        used=$($BB awk '
+            /SYSTEM START/ { n = 0; next }
+            /BARRACUDA_RESTART-/ {
+                if (match($0, /BARRACUDA_RESTART-[0-9]+/))
+                    n = substr($0, RSTART + 19, RLENGTH - 19) + 0
+            }
+            END { print n + 0 }' "$SLOG" 2>/dev/null)
+        [ -n "$used" ] || used=0
+        echo "  relaunches used THIS BOOT: $used of 24, $((24 - used)) left"
+        if [ "$used" -gt 20 ]; then
+            echo "  TOO FEW LEFT for a window -- reboot first to clear it"
+            rc=1
+        fi
+    else
+        echo "  $SLOG MISSING -- cannot read the budget, track it by hand"
+    fi
     echo "  a full phase1 + phase2 + revert spends THREE of the 24"
+    echo "  the count is per BOOT and a reboot clears it"
 
     say "current state"
     echo "  Barracuda pids: $(pids_named Barracuda | tr '\n' ' ')"
