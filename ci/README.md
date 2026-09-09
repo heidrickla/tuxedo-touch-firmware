@@ -48,6 +48,31 @@ the second bug. It uses a real clone.
 | header checksum | a 16-bit end-around-carry accumulator matches short inputs and diverges on long ones; cost a flash |
 | docs record key addresses | keeps `0x80003864` and the `cfg_services` finding from being dropped |
 
+`pubscan.py` is deliberately **not** in that table: it needs the untracked
+`pubscan.local` to say anything useful, so it is a pre-publish step you run, not a
+gate `checks.sh` can enforce. See below.
+
+## `ci/pubscan.py` — author identifiers before publishing
+
+Scans for things that identify the author or the house network: real MACs, local
+paths, SSIDs, keys, tokens, personal email, hostnames, house addresses, the panel
+MAC. Patterns live in the untracked `ci/pubscan.local`, so the list itself is not
+published.
+
+**It scans untracked-but-unignored files as well as tracked ones**, which is
+deliberate and load-bearing: `git ls-files` alone cannot see a file you have not
+added yet, and 22 untracked files carrying a real MAC were the entire exposure in
+a sibling repo. So the scan is correct whether you run it before or after
+`git add`.
+
+That was not always true, and it cost a history rewrite. On 2026-09-08 the panel's
+real address shipped in `leakfix/panelverify.sh` because the file was untracked
+when the scan ran. **History was rewritten on 2026-09-08 to replace the two real
+addresses with documentation-range ones** (`git filter-repo --replace-text`,
+three lines in one file in one commit, 313 commits before and after, tip tree
+byte-identical). Every hash from that commit forward changed, so an older clone
+cannot fast-forward — re-clone or reset to the remote.
+
 ## Vendor image tests
 
 `ci/test_hdr.py` verifies the checksum against hand-computed fixtures always,
