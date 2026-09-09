@@ -52,17 +52,47 @@ Every one of those is a **vendor** defect. None was introduced by this project.
 cannot compare character devices or fifos and reports them as differing on both
 sides, it calls a symlink that dangles identically in both trees a missing file, and
 piping it to `head` discards its exit status — so an "exit=0" there means nothing.
-`scratchpad/treecmp.py` compares the attributes JFFS2 actually stores.
+`ci/treecmp.py` compares the attributes JFFS2 actually stores.
 
 ⚠ **JFFS2 output is not byte-reproducible**, so do not verify a build by hashing the
 payload against a previous one. v13's original payload is `54b14f68` and a rebuild of
 the same tree is `0ddc5f1b`. The round-trip extract is the check that means something.
 
+### Executed under emulation before flashing
+
+The image tree was booted under `qemu-user` from `/work/emu/v14` via `emu/serve.sh`,
+which is the rule this project adopted at v13 and the reason v13's flash was boring.
+
+| check | result |
+|---|---|
+| comes up | 4/4 listeners, serving `/` with 302 |
+| P13 push-stream gate | `GET /SimpleDebugger.interface/G.` → **401 on :80, :443 and :9443** |
+| `:6280` | handshake times out — **and it does so identically on the live panel**, so this is a property of that listener on this firmware, not a v14 regression |
+| API surface | 300 × `/GetSceneList`, **all 300 → HTTP 200** |
+| leak profile | **1.0000 leaked JSONNode trees per request**, the same figure measured on the panel; 2.13 strings/request |
+
+⚠ **A modern TLS client cannot reach these listeners and its failure looks exactly
+like a dead port.** `curl` gets `000` in ~10 ms on all three HTTPS listeners, and
+Python fails with `UNSAFE_LEGACY_RENEGOTIATION_DISABLED`, because SharkSSL of this
+vintage predates RFC 5746. `ci/tlscheck.py` sets `OP_LEGACY_SERVER_CONNECT`
+and then gets a real answer. Never read `000` here as a failed check without running
+the same client against the panel first — that control is what separated a client
+limitation from a regression on three of the four listeners.
+
+⚠ The string-leak rate is **config-dependent**, so it is not a fixed number to
+regress against: this tree measures 2.13/request where another tree on the identical
+binary measured 3.13. `getRegisteredDevNodes` extracts a `json_as_string` per
+registered device, so the count follows how many devices the seeded
+`registereddevMAClist.json` holds. The **tree** count, 1.0000/request, is stable and
+is the one to watch.
+
 ### Not fixed in v14
 
-`/GetSceneList` still leaks ~780 B/request on the API surface — exactly 1.0000
-JSONNode trees and ~3.13 libjson strings per request, counted directly in libjson's
-own allocation registries with `leakfix/jsoncount.py`. The tree is `json_new` at
+`/GetSceneList` still leaks ~780 B/request on the API surface — **exactly 1.0000
+JSONNode trees per request**, plus 2–3 libjson strings depending on how many devices
+the configuration holds (see the config-dependence note above; the tree figure is the
+stable one). Counted directly in libjson's own allocation registries with
+`leakfix/jsoncount.py`. The tree is `json_new` at
 VA 0x1ef04 in `WnmpDir_serviceField`. Three candidate fixes were built and **refuted
 under emulation, none shipped**: 0x2a084 never executes on that path, and both
 0x2955c and 0x1f0f4 hang inside `json_delete` and deadlock the entire server, because
