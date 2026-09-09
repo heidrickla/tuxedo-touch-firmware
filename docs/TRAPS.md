@@ -556,6 +556,24 @@ and left sitting there saying the opposite of the truth.
   ⚠ `/vidrec` is missing too but does **not** loop — it is launched once at boot
   with no retry timer. So "missing binary" alone does not predict the behaviour;
   the retry timer does.
+- 🚨 **THE PANEL HAS NO `find`, `diff`, `xargs`, `awk`, `tar` OR `gzip`, AND A
+  MISSING COMMAND LOOKS LIKE A NEGATIVE RESULT.** `sh` prints its error to stderr
+  and the pipeline yields nothing, so `find /var/www -type f` returns empty and
+  reads as "the directory is empty" — which is exactly the wrong conclusion drawn
+  from it once: `/var/www` actually holds an LTIB test page and a test CGI, with no
+  server installed to serve them. A `diff` of two config files would likewise report
+  "no differences" by printing nothing at all.
+  ✅ Present and usable: `sed`, `grep`, `tr`, `cut`, `sort`, `md5sum`, `dd`, `od`,
+  `hexdump`, `ls -R`, `readlink`. Enumerate with `ls -R` or a shell glob walk, and
+  compare by piping both sides to the *host* and diffing there.
+  ⚠ Same class as every other entry here: **verify the tool ran before believing
+  what its silence means.**
+- ⚠ **`pkill -f <pattern>` MATCHES YOUR OWN SSH COMMAND LINE AND KILLS THE SESSION.**
+  `pkill -9 -f "qemu-arm-static.*Barracuda"` and `pkill -9 -f mqdrain.py` both
+  killed the shell running them, mid-script, twice in one session — the second time
+  after the first was already written down here, because the rule was recorded as
+  being about one specific pattern rather than about `-f` itself. Use `pkill -x
+  <exact-name>`, or make the pattern unable to match itself: `pkill -f "mqdrain[.]py"`.
 - 🚨 **`/proc/PID/mem` CANNOT BE READ ON THE PANEL — the kernel refuses, with a
   misleading error.** Every cross-process read returns **`ESRCH`**, which `dd`
   prints as `No such process` even though the pid is right there in `/proc` and
