@@ -1172,3 +1172,42 @@ On the panel: `verify-panel.sh` passes all 134 rows, the P13 push stream denies
 anonymous access with 401 on all four listeners and delivers frames when
 authenticated, and a paired control (400 requests versus the same interval idle)
 shows requests contribute no growth.
+
+## LEAK 31 — the REST arm/disarm handlers leak, all three. STATIC ONLY, not measured
+
+Found 2026-09-09 within twenty minutes of installing a decompiler, in a function
+already read twice by hand that same day for a different question. Not measured, and
+deliberately not: quantifying it means arming and disarming a live alarm system,
+which is Lewis's call.
+
+`setarmwithcode` @`0x1afc8` (0x17c bytes), `setdisarmwithcode` @`0x1ae50` (0x178) and
+`setPartitionArmed` @`0x1c958` (0x180) share one shape. Counted from the
+disassembly, not from the decompiler:
+
+| call | setarm | setdisarm | setPartitionArmed |
+|---|---|---|---|
+| `json_new` | 3 | 3 | 3 |
+| `json_new_a` | 3 | 3 | 3 |
+| `json_push_back` | 4 | 4 | 4 |
+| `json_write` | 3 | 3 | 2, plus 1 `json_write_formatted` |
+| `Base64Encode` | 1 | 1 | 1 |
+| `json_free` / `json_delete` / `free` | **0** | **0** | **0** |
+
+Six nodes created and four absorbed by `push_back`, so **two roots leak per call**,
+plus **three serialised strings**, plus almost certainly the `Base64Encode` buffer —
+the malloc'd-buffer pattern LEAK 20 already fixed in `getEScenes`.
+
+This is the security-operation path. Home Assistant arms and disarms through it, so
+it runs on every alarm state change, not only when someone opens a web page.
+
+**Why every earlier sweep missed it.** The hunt followed measured growth on endpoints
+that can be hammered: `/GetSceneList`, `cmd=140`, `cmd=141`. Arming cannot be
+hammered, so it never produced a slope, and a function no instrument pointed at was
+never read for frees. `setarmwithcode` was read twice the same day for the
+`sessionId = 0` question and the missing frees were not what either reading sought.
+
+**Before fixing:** these are `json_write` results, so `json_free` and never `free` —
+`json_free` is not a `free()` wrapper, and the wrong one corrupts libjson's registry
+rather than mismatching an allocator (`docs/ALLOCATOR-REWORK.md` §4). The rate can be
+confirmed exactly with `leakfix/jsoncount.py` on the bench, or on the panel the next
+time Lewis arms it, which costs one arm/disarm cycle instead of a campaign.
