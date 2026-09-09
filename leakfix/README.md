@@ -1343,23 +1343,53 @@ inferring from 4 kB pages.
 
 `setViewIPURL` (endpoint `ViewIPURL`) is the one to use: it is read-only — it calls
 `getRegisteredDevNodes()`, iterates, builds a reply, and writes nothing — whereas the
-other four mutate persistent config. It is also the richer target, because
-`getRegisteredDevNodes()` is the path through `readCRCJSONFile` @`0x32280`, the 45
-`json_as_string` against one `json_delete` that is the biggest single allocator in
-the image, and its tree is not freed here either. One measurement covers the family
-shape and that open question together.
+other four mutate persistent config. Its own `getRegisteredDevNodes()` result tree is
+never freed either, so the measurement covers that as well. (An earlier draft of this
+section claimed `getRegisteredDevNodes` also reaches `readCRCJSONFile`; it does not —
+see the `readCRCJSONFile` section below.)
 
 Blocked on credentials: `/tmp/pw.txt` on the bench is empty, so `leakprobe.py` cannot
 authenticate, and unauthenticated requests are rejected at the auth gate — which is
 what made an earlier raw-HTTP attempt return 0.000 per call against a control known
 to be 1.0000.
 
-The largest single candidate is not in the family: **`readCRCJSONFile` @`0x32280`,
-45 `json_as_string` against one `json_delete`.** It is reached from
-`getRegisteredDevNodes` by way of `validateCRCFileOnFileRead`. If it ran per request
-it would dominate the measured 3.13 strings per request, and it does not, so it runs
-on some rarer path — worth establishing which, because 45 unfreed strings per call
-is the biggest single number in the image.
+### readCRCJSONFile @`0x32280` — 45 strings per IPC message type 154
+
+The largest single candidate is not in the family, and the route this file gave for
+it was wrong. **It is NOT reached from `getRegisteredDevNodes` by way of
+`validateCRCFileOnFileRead`.** `validateCRCFileOnFileRead` @`0x334c4` does not call it
+at all — that function calls only `calculate_CRC`, `apl_isConfigurationFileExist`,
+`system()` x4 and `sprintf`. `readCRCJSONFile` has exactly two callers:
+
+  - `barracuda`, once at startup
+  - `gettuxedoIPCCommFunc` @`0xd5d0`, at `0xd810`
+
+The second is the one that matters, and it is a recurring leak rather than a startup
+one. `gettuxedoIPCCommFunc` is a 12,336-byte message pump: `osal_MqRecv` at `0xd610`,
+then a binary-search dispatch on the message type in r8, every arm ending in a branch
+back to the receive tail at `0x105c4`. The `readCRCJSONFile` arm is selected by
+
+    d788: cmp r8, #154 ; beq d7f8      -> memset 180 B ; readCRCJSONFile ; memcpy
+
+so **it runs once per IPC message of type 154**, leaking 45 strings each time. Note
+the dispatch is range-partitioned (`bhi`/`beq`), not a flat equality chain, which is
+the structure that hid reply type 20 from an earlier enumeration — follow the `bhi`
+branches or the arm is invisible.
+
+The function is otherwise clean, which is worth saying because it narrows the fix to
+one line-shape: the file buffer is `operator_delete__`d, the parsed tree IS
+`json_delete`d, and `param_1` is a caller-supplied 180-byte struct (45 ints, matching
+the `0xb4` memcpy), so nothing is returned. The only leak is the 45 `json_as_string`
+results, each fed straight to `atoi` and then dropped:
+
+    json_get(node, name) ; json_as_string() -> pcVar ; atoi(pcVar) ; store int
+    ^ pcVar never freed, 45 times
+
+Each is short numeric text, so the byte cost is small; the count is what is large.
+**Still unknown: the rate of type-154 messages**, which is a property of `/tuxedo`,
+not of Barracuda, and needs measuring rather than reading. Until then this is 45
+strings times an unknown frequency, and calling it "the biggest number in the image"
+was ranking a static count as though it were a rate.
 
 **What this says about the method.** Thirty leak sites were found by hammering an
 endpoint and watching RSS. That cannot see a handler which is not hammerable, and
