@@ -1266,9 +1266,42 @@ the node, and `free` for the block. Plain `free` releases the block and strands 
 node, so the registry gains exactly one entry per REST write request, holding a
 pointer that is now dangling.
 
-That is the measured signature: 1.0000 outstanding per request, with the bytes
-already returned to the allocator. It also explains why the growth is small in RSS
-terms and yet perfectly linear in the registry count.
+**Measured, and it is NOT one node per request.** An earlier version of this section
+said the stranding explains the 1.0000-outstanding-per-request signature. That was
+reasoning, not measurement, and measuring refuted it. `leakfix/regtest.c` exercises
+libjson directly under emulation — no webserver, no credentials — with a
+leak-on-purpose control that must rise by exactly n:
+
+| arm, n = 100 | registry count | per call |
+|---|---|---|
+| control: `json_write`, never freed | 0 -> 100 | **+1.0000** (validates the reader) |
+| `free()`, identical sizes | 100 -> 101 | +0.01 |
+| `json_free()`, identical sizes | 101 -> 100 | -0.01 |
+| `free()`, varying sizes | 100 -> 118 | **+0.18** |
+| `json_free()`, varying sizes | 118 -> 111 | -0.07 |
+
+The registry is keyed by the pointer. Free a string, allocate the same size again,
+and glibc hands back the same address — so the insert overwrites the existing key and
+the map does not grow. Stranded entries accumulate with the number of DISTINCT
+addresses the allocator ever uses for these strings, not with the request count: 0.18
+per call when the reply size varies over 400 bytes, 0.01 when it does not.
+
+So the 1.0000 per request measured earlier is NOT this. That figure is leaked trees,
+which do grow per request; this is a separate and much smaller effect, and the fix
+below is worth far less than the first draft of this section claimed.
+
+It is still worth doing, and not only for bytes: every stranded entry is a dangling
+pointer left in a global registry. Nothing dereferences them today because Barracuda
+never calls libjson's bulk frees (`docs/ALLOCATOR-REWORK.md`), so it is latent rather
+than active — but it costs one instruction to remove.
+
+Two cautions the experiment also settled. The reader must be validated before any arm
+is believed: the first run of `regtest.c` took `&json_write` for libjson's
+implementation, got the **PLT stub in the test executable**, computed a negative
+library base and reported 0 for every arm including the deliberate leak. Only the
+control caught it. And the panel's glibc has no `__isoc99_sscanf`, so parse
+`/proc/self/maps` with `strtoul` or the build links on the host and fails against the
+sysroot.
 
 The substitution is safe in the other direction too: `json_free` erases without
 branching on membership, so for a pointer that was never registered it is an erase
@@ -1279,7 +1312,7 @@ here, which matters because not every module method need return a registered str
     from   bl free
     to     bl json_free
 
-**Not yet built or applied.** `patches.tsv` has no entry at `0x2103c`; the nearest is
+**Not yet built or applied, and now a low-value fix.** `patches.tsv` has no entry at `0x2103c`; the nearest is
 `P15-leakfix-site-29088`, which fixes a leaked *tree* on the `get` path and does not
 touch this. Proving it needs the REST write path exercised under emulation, which is
 blocked on the bench credentials described below.
