@@ -630,7 +630,25 @@ Full working in `ALLOCATOR-REWORK.md`. The three that will bite a patch author:
   ⚠ Corollary for debugging: a crash from a `json_free` stub tells you **nothing**
   about whether that site leaks or who owns the pointer. LEAK 29 spent a
   measurement cycle on that inference.
-- ✅ **`json_delete` does NOT share that flaw, and the asymmetry is diagnostic.**
+- 🚨 **A BAD POINTER TO `json_delete` HANGS, AND TAKES THE WHOLE SERVER WITH IT.**
+  It is not a crash and there is nothing in any log. Because `json_delete` skips
+  the registry erase when the pointer is not registered (below) and then calls
+  `deleteJSONNode` anyway, a non-node makes it walk a child list forever. The
+  worker is then stuck **holding the dispatcher mutex**, which is held across the
+  handler and dropped only around blocking `send()` — so every other request
+  blocks behind it. Measured: one API request against such a build timed out, and
+  immediately afterwards plain HTTP on `:80` returned nothing either, with the
+  process still alive and its log clean.
+  ✅ **The registry counter tells you which happened**, and it is the only cheap
+  way: if the node count is **unchanged** the delete ran (created +1, deleted −1);
+  if it went **up by one** the delete never erased anything, so the pointer was
+  never registered. `leakfix/jsoncount.py`, one request either side.
+  ⚠ And do not diagnose "is this register still the object" statically —
+  `scratchpad/liveness.py` reconstructs executed blocks from a qemu trace and
+  reported a register untouched across a path where the counter proves it was not
+  the registered pointer. A measured cross-check beats the tool.
+- ✅ **`json_delete` does NOT share `json_free`'s erase flaw, and the asymmetry is
+  diagnostic.**
   It performs the same registry lookup but **branches on the result** — `cmp r1,
   r0` / `beq 25b48` at libjson 0x25b30 skips the erase when `find()` returned
   `end()` — before calling `deleteJSONNode` on the pointer regardless. So a bad

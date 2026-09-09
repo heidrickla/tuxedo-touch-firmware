@@ -121,6 +121,15 @@ another in-flight request still holds.** `json_free_all()` is process-wide; the
 registries are unlocked; the scope we want is per-request and the tool is
 per-process. Those cannot be reconciled without rebuilding libjson.
 
+🚨 **Demonstrated accidentally, and it is the most concrete evidence in this
+document.** A later fix attempt handed `json_delete` a pointer that was not a
+JSONNode; it hung inside `deleteJSONNode` instead of crashing. One API request was
+enough to stop the **entire server** answering — plain HTTP on `:80` returned nothing
+afterwards, with the process still alive and its log clean. A single worker stuck
+while holding the dispatcher mutex blocks every other request. That is exactly the
+failure a global free-by-scope would produce, arriving from a one-instruction change
+rather than an allocator rewrite.
+
 ## 3. A bump arena cannot be scoped where it would need to be
 
 `json_as_string` / `json_write` / `json_new` **do not allocate in Barracuda.** They

@@ -999,10 +999,13 @@ SERVICEFIELD_EPILOGUE = 0x29874
 #
 #   1. flaky bench          NO - control passes 300/300 immediately before each
 #                                failure, and the wedge reproduced twice
-#   2. r7 is not the tree   NO - r7 is written 126 times across the function but
-#                                ZERO times on the executed path between 0x1ef0c and
-#                                0x2955c (scratchpad/liveness.py reconstructs the
-#                                executed blocks from the qemu trace and checks)
+#   2. r7 is not the tree   *** THIS ONE IS ACTUALLY TRUE - see item 7. The static
+#                                analysis said otherwise and the static analysis was
+#                                wrong. scratchpad/liveness.py reconstructs the
+#                                executed blocks from the qemu trace and reports zero
+#                                writes to r7 between 0x1ef0c and 0x2955c; a direct
+#                                measurement contradicts it. Do not trust that tool's
+#                                negative result without a measured cross-check.
 #   3. r0 clobbered         NO - json_delete destroys r0, which is serviceField's
 #                                return value, but a stub that pushes/pops
 #                                {r0,r1,r2,r3,lr} around the call wedges identically
@@ -1025,17 +1028,47 @@ SERVICEFIELD_EPILOGUE = 0x29874
 # wedges the request**.
 #
 # 🔑 Which means the tree is ALIASED by something that outlives the handler, even
-# though no further libjson call touches it. The likeliest holder is the response
-# body: it is printed at 0x29458 via HttpResponse_printf but not flushed until after
-# the handler returns, and the signature fits exactly - process alive, no glibc
-# abort, nothing in the log, client simply never receives a response.
+# though no further libjson call touches it.
 #
-# So the next attempt should NOT hunt for a better spot inside serviceField. Settle
-# first whether HttpResponse_printf copies or retains - the vendor's own
-# printf-then-free at 0x29034/0x2903c suggests it copies, which would refute this and
-# leave the aliasing unexplained - and if it retains, release the tree after the
-# response is flushed, which is past HttpServer_releaseResources, not in this
-# function.
+# ⚠ 6. AND THE OBVIOUS CANDIDATE FOR THAT ALIAS IS REFUTED TOO. The response body
+# looked like the holder - printed at 0x29458 but not flushed until the handler
+# returns - but HttpResponse_printf COPIES. It is a 0x30-byte varargs shim that
+# marshals into HttpResponse_vprintf (0x6b5d0), which tail-branches to
+# BufPrint_vprintf (0x63258) with the response's own BufPrint at [r4,#52]. Output is
+# formatted into that buffer; no caller pointer is retained. This also agrees with
+# the vendor's printf-then-free at 0x29034/0x2903c, which would be a use-after-free
+# otherwise.
+#
+# So the alias is NOT the response body.
+#
+# 🚨 7. AND THE COUNTER SETTLES IT: r7 IS NOT THE REGISTERED TREE AT 0x2955c. Running
+# ONE API request against the patched binary and reading the registry either side:
+#
+#     before  69 strings,  4 nodes     :80 -> 302
+#     one API request                  -> client read timeout
+#     after  110 strings,  5 nodes     :80 -> 000, process still alive
+#
+# The node count goes UP by one, exactly as in the control. If json_delete had run on
+# the registered root the count would be unchanged (created +1, deleted -1). So the
+# erase never happened - and json_delete DOES branch on membership (libjson 0x25b30),
+# so a pointer it cannot find in the registry skips the erase and falls straight into
+# deleteJSONNode. That is the hang: deleteJSONNode walking a child list on something
+# that is not a JSONNode.
+#
+# 🔑 AND ONE STUCK HANDLER KILLS THE WHOLE SERVER. After that single request, plain
+# HTTP on :80 stops answering too, while the process stays alive. The worker is stuck
+# inside json_delete holding the dispatcher mutex, which is held across the handler
+# and released only around blocking send() - so every other request blocks behind it.
+# This is the concurrency model from docs/ALLOCATOR-REWORK.md section 2 demonstrated
+# the hard way, and it is why a global free-by-scope was never worth the risk.
+#
+# So the leak stands and the register holding the tree at that exit is still unknown.
+# The static liveness pass claims r7 is untouched on the executed path and the
+# measurement says it is not the registered pointer; the tool is wrong somewhere, most
+# likely in reconstructing block extents across calls. Next: instead of reasoning
+# about registers, read the tree pointer directly. json_new's result at 0x1ef04 can be
+# captured into a spare slot by a stub at that site, and the exit stub can free THAT
+# slot rather than trusting any register to have survived 0xa000 bytes of dispatch.
 #
 # ⚠ Keep RESPTREE_NOOP as the control for any future attempt here. A stub that
 # changes everything EXCEPT the free is the only way to tell a bad free from a bad
