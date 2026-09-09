@@ -73,6 +73,35 @@ three lines in one file in one commit, 313 commits before and after, tip tree
 byte-identical). Every hash from that commit forward changed, so an older clone
 cannot fast-forward — re-clone or reset to the remote.
 
+## `ci/histscan.py` — the same question, asked of HISTORY
+
+`pubscan.py` checks the working tree and untracked files, which is the right check
+before a commit. It cannot see what an old commit still holds, and that gap cost
+both rewrites on 2026-09-08 — the second one because a key fragment sat in a file
+whose *current* version no longer carried it, so every working-tree sweep passed.
+
+    python ci/histscan.py .              # scan HEAD
+    python ci/histscan.py . main         # a named ref
+
+Run it before publishing, and again after any rewrite. It triages nothing: a hit is
+not automatically a leak, and the output says so. On this repo the standing hits are
+all benign and each was checked rather than assumed — pubscan's own `10.77` self-test
+fixtures, `10.0.0.0`/`192.168.0.0` as network addresses in docs, `image/etc/hosts`
+gateway placeholders, the private-key armor string inside `checks.sh`'s own pattern,
+and the vendor's published `ginfo@realtimelogic.com`.
+
+⚠ **It scans ONE ref, and `--all` would lie.** A background `git fetch` re-creates
+`refs/remotes/*` from the remote, which after a local rewrite still holds the
+un-scrubbed history — so `--all` reports the old secret as present, a check that
+passed minutes ago starts failing on its own, and the rewrite looks broken when it
+is not. Deleting the tracking ref only helps until the next auto-fetch.
+
+⚠ **Masking a value forward does not remove it from history.** `histscan` will keep
+reporting the old blob, correctly. It still lists the truncated registration-key
+fragment for that reason: the current file is masked, the historical one is not.
+Removing it needs another rewrite, and for a non-exploitable prefix rotating the
+credential is the better fix.
+
 ## Vendor image tests
 
 `ci/test_hdr.py` verifies the checksum against hand-computed fixtures always,
