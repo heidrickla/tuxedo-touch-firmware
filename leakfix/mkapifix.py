@@ -990,6 +990,45 @@ WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both
 # stub are kept here, disabled, so the next attempt inherits the two refutations
 # instead of re-deriving them.
 RESPTREE_NOOP = False            # bisect switch; see build_resptree_stub
+
+# LEAK 30, third site: delete the tree where it is PROVABLY the tree.
+#
+# The 0x2955c attempt failed because r7 is not the registered pointer that far down
+# (measured: the node count rose instead of staying flat). At 0x1f0f4 there is no
+# such doubt - 0x1f0dc `mov r0, r7` feeds json_get two instructions earlier, and
+# 0x1f0e0/0x1f0e4 are the tree's last uses on this path, after which the endpoint
+# dispatch runs entirely off the stack buffer at fp-47.
+#
+# The displaced instruction is `cmp r0, #0`, whose flags the following `bne 29044`
+# consumes, so the stub must restore r0 and re-execute the compare LAST. `bx lr`
+# does not disturb flags.
+#
+# 🚨 RUN, AND IT WEDGES TOO - identically to 0x2955c. So the tree cannot be deleted
+# at the one place its identity is beyond doubt either, and the site is not the
+# problem. Combined with the earlier results the picture is:
+#
+#   0x2955c, plain           WEDGES
+#   0x2955c, r0-r3 preserved WEDGES
+#   0x1f0f4, r7 provably the tree   WEDGES
+#   any of the above with a NOP where the free goes   CLEAN, 300/300
+#
+# ✅ And the tree is ordinary: `mov r0, #5` at 0x1eef0 gives json_new the same type
+# argument every other call site uses (e.g. 0x1f1c8), so it is not a malformed node
+# from a stray type. Checked because the `bl` at 0x1ef04 has no r0 setup adjacent to
+# it, which looked suspicious and turned out to be four instructions earlier.
+#
+# 🔑 So `json_delete` on THIS tree hangs wherever it is called, and one hung worker
+# stops the whole server because it holds the dispatcher mutex. The next investigator
+# should stop moving the call site - that variable is exhausted - and instrument the
+# delete itself: trace inside libjson's deleteJSONNode (0x8344 PLT) to see where it
+# stops, or dump the tree's node structure from guest memory before the delete.
+# jsoncount.py already reads guest memory through /proc/pid/mem on the bench.
+#
+# ⚠ EXPERIMENT, bench only, and left disabled. Even had it worked it would not be
+# automatically safe for the other ~350 endpoint arms, which may still use the tree
+# after this point - the site is on the shared preamble, not inside an arm.
+EARLYTREE_STUB = 0x696E0
+EARLYTREE_SITES = ()             # was ((0x1F0F4, 0xE3500000),) -- WEDGES, see above
 RESPTREE_STUB = 0x696C0
 RESPTREE_SITES = ()              # was ((0x2955C, 0xEA0000C4),) -- WEDGES the request
 SERVICEFIELD_EPILOGUE = 0x29874
@@ -1393,6 +1432,30 @@ def build_resptree_stub():
         (g + 0x10, 0xE8BD400F, "pop  {r0, r1, r2, r3, lr}"),
         (g + 0x14, b_encode(g + 0x14, SERVICEFIELD_EPILOGUE),
          "b    0x29874           @ the displaced branch"),
+    ]
+
+
+def build_earlytree_stub():
+    """json_delete the request tree at its last provable use, then re-do the compare.
+
+    Reached by `bl` from 0x1f0f4 and returns via lr. r7 holds the tree here beyond
+    doubt: 0x1f0dc passes it to json_get two instructions earlier.
+
+    The displaced instruction is `cmp r0, #0`, and the caller's next instruction
+    branches on its flags, so the compare is re-executed LAST, after r0 is restored.
+    json_delete would otherwise leave both r0 and the flags wrong.
+    """
+    g = EARLYTREE_STUB
+    blne_del = (b_encode(g + 0x0C, JSON_DELETE_PLT, link=True)
+                & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE92D4007, "push {r0, r1, r2, lr}  @ r0 is the value being tested"),
+        (g + 0x04, 0xE1A00007, "mov  r0, r7            @ the request tree"),
+        (g + 0x08, 0xE3500000, "cmp  r0, #0"),
+        (g + 0x0C, blne_del, "blne json_delete"),
+        (g + 0x10, 0xE8BD4007, "pop  {r0, r1, r2, lr}  @ r0 back"),
+        (g + 0x14, 0xE3500000, "cmp  r0, #0            @ the displaced insn, sets flags"),
+        (g + 0x18, 0xE12FFF1E, "bx   lr                @ bx preserves flags"),
     ]
 
 
@@ -1823,6 +1886,7 @@ def main():
     editearly_sites = () if args.without_ipc else EDITEARLY_SITES
     wnmpget_sites = () if args.without_ipc else WNMPGET_SITES
     resptree_sites = () if args.without_ipc else RESPTREE_SITES
+    earlytree_sites = () if args.without_ipc else EARLYTREE_SITES
     for site, want, what in ([(s, w, "bl json_delete in getEScenes")
                               for s, w in escenes_sites]
                              + [(s, w, "bl strlen in getEScenes")
@@ -1833,6 +1897,8 @@ def main():
                                 for s, w in wnmpget_sites]
                              + [(s, w, "b to epilogue at the serviceField API exit")
                                 for s, w in resptree_sites]
+                             + [(s, w, "cmp after the request tree's last use")
+                                for s, w in earlytree_sites]
                              + [(s, w, "beq at editSceneDetails parse-failed exit")
                                 for s, w in editearly_sites]
                              + [(s, w, "add sp at editSceneDetails exit")
@@ -1907,6 +1973,11 @@ def main():
     editearly = build_editearly_stub() if editearly_sites else []
     wnmpget = build_wnmpget_stub() if wnmpget_sites else []
     resptree = build_resptree_stub() if resptree_sites else []
+    earlytree = build_earlytree_stub() if earlytree_sites else []
+    if earlytree and resptree and earlytree[0][0] < resptree[-1][0] + 4:
+        sys.exit("REFUSING: the earlytree and resptree stubs overlap")
+    if earlytree and earlytree[-1][0] + 4 > CMPFREE_CAVE_END:
+        sys.exit("REFUSING: the earlytree stub overruns its dead region")
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -2122,7 +2193,7 @@ def main():
                                + ipcnewa + ipctree + ipcskip + ipctreea
                                + ipcerrnode + stripparse + escenes + escstr1 + escstr2
                                + checkscene + validpage + validstr + editscene
-                               + editearly + wnmpget + resptree):
+                               + editearly + wnmpget + resptree + earlytree):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -2218,6 +2289,11 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, RESPTREE_STUB),
                          "WnmpDir_serviceField: delete the tree its API exit skips"))
+        for site, _w in earlytree_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, EARLYTREE_STUB, link=True),
+                         "WnmpDir_serviceField: delete the request tree after its "
+                         "last use"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -2234,7 +2310,7 @@ def main():
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
                  + ipcerrnode + stripparse + escenes + escstr1 + escstr2
                  + checkscene + validpage + validstr + editscene + editearly
-                 + wnmpget + resptree)
+                 + wnmpget + resptree + earlytree)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -2267,6 +2343,7 @@ def main():
     # `b`, not `bl`: the stub runs the delete and then branches on to the epilogue
     # the displaced instruction was heading for, so it never returns to the site.
     site_writes += [(s, RESPTREE_STUB, False) for s, _ in resptree_sites]
+    site_writes += [(s, EARLYTREE_STUB, True) for s, _ in earlytree_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:
