@@ -671,7 +671,7 @@ each leaks a parsed tree per operation.
   it), so a wrong delta cannot quietly satisfy it.
 
       the record IS there:  index 10   id=0x21cb39c0  flag=1
-                            token='7c17e0518d3c7a1c41894ce458...'
+                            token='7c17e051...'   (truncated: real key material)
       slots 1..9:           0xFFFFFFFF, i.e. FREE
 
   `addSessionItem` writes correctly, and `getCSRFToken1` scans

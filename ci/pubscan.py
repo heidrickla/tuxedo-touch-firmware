@@ -199,6 +199,27 @@ YOURS = [
     ("wifi ssid / psk", re.compile(r"(?i)\b(ssid|psk|wpa_passphrase)\s*[:=]\s*\S")),
     ("private keys", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")),
     ("bearer tokens", re.compile(r"\b(?:ghp|gho|github_pat|xox[baprs])[-_][0-9A-Za-z_-]{16,}")),
+    # RAW HEX KEY MATERIAL. The line above only knows GitHub and Slack prefixes,
+    # and the panel's credentials have neither: registereddevMAClist.json holds
+    # 64-hex PrivateKey and 32-hex PublicKey values. A 26-hex fragment of a real
+    # registration key sat in leakfix/README.md through every previous sweep
+    # because nothing here looked for that shape.
+    #
+    # It CANNOT be a bare "long hex run" test. This repo is full of md5sums of
+    # Barracuda builds and 40-char git SHAs, so that version reports hundreds of
+    # lines and teaches you to skim the category -- the same failure the
+    # placeholder-MAC filter exists to prevent. So it requires the credential
+    # CONTEXT beside the hex: an assignment to a key/token/secret-ish name.
+    # 16 hex is the floor, which clears an md5 only because an md5 in this repo is
+    # never written as `key=<hex>`.
+    # The optional quote after the NAME is load-bearing: in JSON the name is
+    # quoted, so `"PrivateKey":"3bfb..."` puts a `"` between the name and the
+    # colon. Without it this missed registereddevMAClist.json, which is the exact
+    # file the panel keeps its keys in -- i.e. the detector would have passed the
+    # one format that matters.
+    ("raw hex key material", re.compile(
+        r"(?i)\b(?:priv(?:ate)?key|pub(?:lic)?key|authtoken|token|secret|apikey)"
+        r"['\"]?\s*[:=]\s*['\"]?[0-9a-f]{16,}")),
     # An address SHAPE identifies nobody, so this belongs here and not in
     # pubscan.local -- where it sat, meaning a fresh clone had NO email detector
     # and still printed a clean summary.
