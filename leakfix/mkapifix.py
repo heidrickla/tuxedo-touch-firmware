@@ -989,9 +989,57 @@ WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both
 # ⚠ Do not re-enable without re-running leakfix A/B on the bench. The site tuple and
 # stub are kept here, disabled, so the next attempt inherits the two refutations
 # instead of re-deriving them.
+RESPTREE_NOOP = False            # bisect switch; see build_resptree_stub
 RESPTREE_STUB = 0x696C0
 RESPTREE_SITES = ()              # was ((0x2955C, 0xEA0000C4),) -- WEDGES the request
 SERVICEFIELD_EPILOGUE = 0x29874
+
+# 🔑 THE WEDGE REPRODUCES, AND FOUR EXPLANATIONS FOR IT ARE NOW REFUTED. Recorded so
+# the next attempt starts from the eliminations rather than repeating them:
+#
+#   1. flaky bench          NO - control passes 300/300 immediately before each
+#                                failure, and the wedge reproduced twice
+#   2. r7 is not the tree   NO - r7 is written 126 times across the function but
+#                                ZERO times on the executed path between 0x1ef0c and
+#                                0x2955c (scratchpad/liveness.py reconstructs the
+#                                executed blocks from the qemu trace and checks)
+#   3. r0 clobbered         NO - json_delete destroys r0, which is serviceField's
+#                                return value, but a stub that pushes/pops
+#                                {r0,r1,r2,r3,lr} around the call wedges identically
+#   4. shared with login    NO - blocks 0x1ef08, 0x29548, 0x29550 and 0x29874 each
+#                                execute exactly 2 times for 2 requests, so the login
+#                                never enters serviceField and this exit is purely
+#                                per-request
+#
+# And the tree really is dead there: its last use is 0x1f0e0 json_get / 0x1f0e4
+# json_as_string, whose copy our own 0x693dc stub frees, after which the endpoint
+# dispatch runs entirely off the stack buffer at fp-47 (0x29044 `sub r0, fp, #47`)
+# and never touches r7 again.
+#
+# ✅ 5. THE BISECT WAS RUN, AND IT ISOLATES THE FREE. `RESPTREE_NOOP = True` builds
+# the identical stub - same site word, same redirect, same push/pop, same
+# `mov r0, r7` - with a NOP where the `blne json_delete` goes. That binary serves
+# 300/300 with HTTP 200 and counts 69->1007 strings and 4->304 nodes, i.e. exactly
+# the control's behaviour. So the control flow, the branch to 0x29874, the site word
+# and the register traffic are all sound, and **the json_delete call itself is what
+# wedges the request**.
+#
+# 🔑 Which means the tree is ALIASED by something that outlives the handler, even
+# though no further libjson call touches it. The likeliest holder is the response
+# body: it is printed at 0x29458 via HttpResponse_printf but not flushed until after
+# the handler returns, and the signature fits exactly - process alive, no glibc
+# abort, nothing in the log, client simply never receives a response.
+#
+# So the next attempt should NOT hunt for a better spot inside serviceField. Settle
+# first whether HttpResponse_printf copies or retains - the vendor's own
+# printf-then-free at 0x29034/0x2903c suggests it copies, which would refute this and
+# leave the aliasing unexplained - and if it retains, release the tree after the
+# response is flushed, which is past HttpServer_releaseResources, not in this
+# function.
+#
+# ⚠ Keep RESPTREE_NOOP as the control for any future attempt here. A stub that
+# changes everything EXCEPT the free is the only way to tell a bad free from a bad
+# redirect, and it took four wrong guesses to reach for it.
 
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
@@ -1288,13 +1336,29 @@ def build_resptree_stub():
     `ldm sp, {...pc}` off the frame rather than through lr.
     """
     g = RESPTREE_STUB
-    blne_del = (b_encode(g + 0x08, JSON_DELETE_PLT, link=True)
+    if RESPTREE_NOOP:
+        # Bisect variant: the redirect and the register traffic, with NO free at
+        # all. If this wedges the request too, the fault is the control flow or the
+        # site word rather than the deletion, and every register-liveness argument
+        # about r7 is beside the point.
+        return [
+            (g + 0x00, 0xE92D400F, "push {r0, r1, r2, r3, lr}"),
+            (g + 0x04, 0xE1A00007, "mov  r0, r7            @ same register traffic"),
+            (g + 0x08, 0xE3500000, "cmp  r0, #0"),
+            (g + 0x0C, 0xE1A00000, "nop (mov r0, r0)       @ WHERE THE DELETE WOULD BE"),
+            (g + 0x10, 0xE8BD400F, "pop  {r0, r1, r2, r3, lr}"),
+            (g + 0x14, b_encode(g + 0x14, SERVICEFIELD_EPILOGUE),
+             "b    0x29874           @ the displaced branch"),
+        ]
+    blne_del = (b_encode(g + 0x0C, JSON_DELETE_PLT, link=True)
                 & 0x0FFFFFFF) | 0x10000000
     return [
-        (g + 0x00, 0xE1A00007, "mov  r0, r7            @ the request's root tree"),
-        (g + 0x04, 0xE3500000, "cmp  r0, #0"),
-        (g + 0x08, blne_del, "blne json_delete"),
-        (g + 0x0C, b_encode(g + 0x0C, SERVICEFIELD_EPILOGUE),
+        (g + 0x00, 0xE92D400F, "push {r0, r1, r2, r3, lr}  @ r0 is the return value"),
+        (g + 0x04, 0xE1A00007, "mov  r0, r7            @ the request's root tree"),
+        (g + 0x08, 0xE3500000, "cmp  r0, #0"),
+        (g + 0x0C, blne_del, "blne json_delete"),
+        (g + 0x10, 0xE8BD400F, "pop  {r0, r1, r2, r3, lr}"),
+        (g + 0x14, b_encode(g + 0x14, SERVICEFIELD_EPILOGUE),
          "b    0x29874           @ the displaced branch"),
     ]
 
