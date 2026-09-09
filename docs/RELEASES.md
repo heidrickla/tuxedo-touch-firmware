@@ -99,6 +99,30 @@ under emulation, none shipped**: 0x2a084 never executes on that path, and both
 the stuck worker holds the dispatcher mutex. See `leakfix/mkapifix.py` LEAK 30 and
 `ALLOCATOR-REWORK.md`.
 
+### How it was built, and a gap that closed
+
+⚠ **v14 was built by hand from `TUXEDO-BUILD.md`'s recipe, not by `build-image.sh`.**
+That was a miss — the repo's own rule is to grep for a tool before hand-rolling one.
+The build is nonetheless equivalent, because every gate that script enforces was run
+against the result afterwards and passed:
+
+| `build-image.sh` gate | v14 |
+|---|---|
+| all paths `root:root` before `mkfs.jffs2` | **0 non-root paths.** Its comment is blunt about this: a stray non-root file ships an image nobody can boot, and it has happened |
+| geometry `-e 0x20000 -l -n`, no `-p` | matched exactly |
+| round-trip diff must be empty | 3520 entries identical via `ci/treecmp.py` |
+| patches re-checked in the **extracted** tree | 284/284 already patched in `root_verify`, not just in the source tree |
+| header built from the stock template, then verified | PASS |
+
+The one place hand-building was better: the marker. `build-image.sh` regenerated
+`/etc/tuxedo-build` from a fixed field list, so v14's `LIVE_DRIFT`, `NEW_IN_V14`,
+`PATCH_TABLE`, `KNOWN_UNFIXED` and `ROLLBACK` lines would all have been dropped — the
+same failure its own comment records for `CHANGES`, and worse here, because
+`ROLLBACK` is what stops someone reaching for a rollback binary that no longer
+exists. **`build-image.sh` now carries every non-generated line forward**, verified
+against v14's marker: 15 lines partition into 10 regenerated and exactly those 5
+carried, with nothing duplicated.
+
 ### To flash
 
 `/work/v14/card` holds all six files with v14's `app2.hdr` substituted and the other

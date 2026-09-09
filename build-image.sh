@@ -70,6 +70,19 @@ say "stamp the build marker"
 # real regression the first time this was scripted -- verify-panel.sh prints
 # CHANGES, so losing it makes the panel look less patched than it is.
 # Append to CHANGES with:  CHANGES_ADD=console-gate,back-home-fix ./build-image.sh ...
+#
+# EVERY OTHER non-generated line is carried forward as well, and that is
+# deliberate. v14's marker added LIVE_DRIFT, NEW_IN_V14, PATCH_TABLE,
+# KNOWN_UNFIXED and ROLLBACK -- prose this script cannot regenerate, and ROLLBACK
+# in particular records which on-panel rollback binaries still exist. v13's chain
+# named six that had since been deleted, which would have sent someone to
+# non-existent binaries mid-recovery. Emitting only the generated fields would
+# silently drop all of it: the same failure as losing CHANGES, called out above.
+#
+# ⚠ Carried-forward prose can go STALE, which is the price of keeping it. Each
+# such line describes the state at ITS build, so re-read the marker after a build
+# and correct whatever the new version changed -- LIVE_DRIFT in particular should
+# read NONE on any image whose BARRACUDA_MD5 equals the running binary.
 CHANGES_ADD="${CHANGES_ADD:-}"
 $SSH "sudo sh -c 'cd $D && {
   OLD=root/etc/tuxedo-build
@@ -87,6 +100,10 @@ $SSH "sudo sh -c 'cd $D && {
   echo BUSYBOX_MD5=\$(md5sum root/bin/busybox 2>/dev/null | cut -d\" \" -f1)
   [ -n \"\$LINK\" ] && echo DROPBEAR_LINK=\$LINK
   [ -n \"\$CH\" ] && echo CHANGES=\$CH
+  # Anything else the previous marker carried, in its original order. The field
+  # list here must stay in step with the echoes above, or a generated field gets
+  # emitted twice.
+  grep -vE \"^(BUILD|BUILT|BASE|TUXEDO_MD5|BARRACUDA_MD5|SUPERVIS_MD5|DROPBEAR_MD5|BUSYBOX_MD5|DROPBEAR_LINK|CHANGES)=\" \$OLD 2>/dev/null
   } > /tmp/marker.\$\$ && mv /tmp/marker.\$\$ root/etc/tuxedo-build
 } && chmod 644 root/etc/tuxedo-build && chown root:root root/etc/tuxedo-build && cat root/etc/tuxedo-build'" | sed 's/^/  /'
 
