@@ -409,4 +409,4 @@ One claim is NOT verified, and is not needed for the decision: nobody has observ
 two handler entries interleaving in a trace under parallel load. The mutex-drop
 listing makes it structurally possible, which is enough to rule the arena out — but
 do not cite an observed interleave, because there isn't one.
-`scratchpad/concurrency.sh` is the test if it is ever wanted.
+`leakfix/concurrency.sh` is the test if it is ever wanted.

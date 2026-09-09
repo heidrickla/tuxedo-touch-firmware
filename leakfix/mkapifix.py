@@ -1032,7 +1032,7 @@ SERVICEFIELD_EPILOGUE = 0x29874
 #   1. flaky bench          NO - control passes 300/300 immediately before each
 #                                failure, and the wedge reproduced twice
 #   2. r7 is not the tree   *** TRUE - see item 7. The static analysis said otherwise
-#                                and was wrong. scratchpad/liveness.py reconstructs
+#                                and was wrong. leakfix/liveness.py reconstructs
 #                                the executed blocks from the qemu trace and reports
 #                                zero writes to r7 between 0x1ef0c and 0x2955c; a
 #                                direct measurement contradicts it. Do not trust that

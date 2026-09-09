@@ -204,7 +204,7 @@ and left sitting there saying the opposite of the truth.
   — with **zero hits in any loaded section**. The `b 69628`…`b 69688` branches a
   naive grep turns up are the function's own internal switch arms, not external
   callers. Do not read "a symbol exists there" as "the code is live", and do not
-  settle it with a disassembly grep: `scratchpad/wordref.py` maps every raw hit to
+  settle it with a disassembly grep: `ci/wordref.py` maps every raw hit to
   a section and discounts the symbol table. Our stubs have overwritten 437 of
   those 896 bytes and the panel is healthy.
   In a patched image, leftover stock bytes in the unused part of the cave still
@@ -662,7 +662,7 @@ Full working in `ALLOCATOR-REWORK.md`. The ones that will bite a patch author:
   one** the delete never erased anything, so the pointer was never registered.
   `leakfix/jsoncount.py`, one request either side.
   Do not diagnose "is this register still the object" statically —
-  `scratchpad/liveness.py` reconstructs executed blocks from a qemu trace and
+  `leakfix/liveness.py` reconstructs executed blocks from a qemu trace and
   reported a register untouched across a path where the counter proves it was not
   the registered pointer.
 - **`json_delete` does NOT share `json_free`'s erase flaw, and the asymmetry is
