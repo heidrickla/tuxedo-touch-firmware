@@ -1701,8 +1701,35 @@ The real remainder is different in kind. **23 send sites take a buffer that arri
 pre-filled** and never write `+0x004` themselves. For the six Z-wave and thermostat
 callbacks on `[*0xd2f2e8]`, eighteen `CReceiverThread::sltRequest*` methods set
 `+0x004 <- [arg r1+0x4]`: **the reply echoes the request's own msgType**, so those
-carry whatever Barracuda asked with, which is a command-side set. Two sites on the
-`r0+0x18` buffer still resolve to `+0x004 <- ?` and are the genuine gap.
+carry whatever Barracuda asked with, which is a command-side set.
+
+#### The two `+0x004 <- ?` sites are variable by construction, not unresolved
+
+Read directly rather than left as a gap. The buffer for both is the object at
+`r7+0x18` / `r8+0x18`, so the store four bytes along is `+0x004`.
+
+`CReceiverThread::sltGoAuthLevelReceived` @`0x13dcf0`:
+
+```
+13dce0  ldr r3, [r8, r5]     ; two CReceiverThread instance fields
+13dce4  ldr r2, [r8, r4]
+13dcec  str r3, [r8, #24]    ; +0x000  session  <- field at r5
+13dcf0  str r2, [r8, #28]    ; +0x004  msgType  <- field at r4
+13dd00  ldr r3, [r8, r4]     ; the same two values then go into the
+13dd04  ldr r2, [r8, r5]     ; 556-byte stack reply
+13dd0c  stm sp, {r2, r3}
+```
+
+`CReceiverThread::sltSendPartitionDetailsToWebClient` @`0x1469ac` has the same shape:
+`str r2,[r7,#24]` for the session from an instance field and `str r0,[r7,#28]` for the
+type, with `r0` arriving from its single predecessor at `0x146988`.
+
+**So the msgType at these two sites is held in runtime state, not chosen by a
+literal.** There is no constant to record, which is why a displacement scan reports
+`?`. That is the answer rather than missing work: the value is whatever the object
+held when the send happened, and only a capture can say what that is in practice.
+These two are therefore the one place where the stage-6 window genuinely discovers
+instead of confirming.
 
 This says what `/tuxedo` SENDS, derived from its send sites. It says nothing about
 what Barracuda ACCEPTS, and must not be read that way: `TRAPS.md` §2 records that a
