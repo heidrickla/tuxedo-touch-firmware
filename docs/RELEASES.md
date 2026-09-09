@@ -6,6 +6,78 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
+## v14 — 2026-09-09 — BUILT, NOT YET FLASHED
+
+**What it is: v13 plus every leak fix that had been hot-patched over SSH.** This is
+the first image whose `BARRACUDA_MD5` equals the binary the panel is actually
+running. v13 shipped `55448f05`; the panel has been running `0066ad95` since
+2026-09-08 because P14-detach and the whole P15-leakfix series were applied live and
+were **not** in any flashed image. v14 folds them in, so the drift is zero.
+
+### Artefacts
+
+| | |
+|---|---|
+| `app2.hdr` | 125,723,316 bytes, md5 `a8da9001` |
+| payload | 125,723,188 bytes, md5 `a7065e2160d658724d226bde20b4e69f` |
+| header | size field `125723188`, checksum `0x10f8` computed and matching |
+| `Barracuda` | md5 `0066ad95c82602930f939294f9e80af1` |
+| built at | `/work/v14` on the build VM; card set staged in `/work/v14/card` |
+
+38,080 bytes larger than v13, entirely from the longer `/etc/tuxedo-build` record.
+125.7 MB against mtd16's 180 MB (`0x0b400000`), so 67% of the partition.
+
+### New in v14
+
+| patch | binary | what it does |
+|---|---|---|
+| P14-detach | `Barracuda` | 7 sites: the thread-stack leak that took RSS to 2.0 GB |
+| P15-leakfix | `Barracuda` | 264 rows, 24 active fixes: HTTP heap-leak sites, IPC-path defects, all 43 `json_strip_white_space` results, the getEScenes tree and its Base64 buffer, the validatePageName page-map tree, and the `cmd=140`/`cmd=141` dispatch-arm frees |
+| timezone | `/etc/rc.d/rc.conf` | `export TZ="CST6CDT,M3.2.0/2,M11.1.0/2"`, without which `/tuxedo`'s `date -s` from the VISTA lands 18,022 s off true UTC |
+
+Every one of those is a **vendor** defect. None was introduced by this project.
+
+### Verified
+
+| check | result |
+|---|---|
+| `apply-patches.py --check` | 284 sites, **284 already patched, 0 needing attention** |
+| patch table reproduces the live binary | v13/root + `patches.tsv` yields Barracuda `0066ad95c82602930f939294f9e80af1`, byte-identical to what the panel runs |
+| JFFS2 round-trip | extracted the built image back out: **3520 entries identical** — content hash, mode, uid, gid, symlink target and device major/minor, across 3112 files, 228 dirs, 176 links, 3 char devices, 1 fifo |
+| payload survived wrapping | `app2.hdr[128:]` md5 equals `v14.jffs2` md5 |
+| header | `tuxedo_hdr.py verify` → PASS, computed checksum equals stored |
+| whole card set | `tuxedo_hdr.py preflight` over all six files → **ALL FILES WOULD PASS** |
+
+⚠ **`diff -r` is not sufficient for the round-trip check and was not used for it.** It
+cannot compare character devices or fifos and reports them as differing on both
+sides, it calls a symlink that dangles identically in both trees a missing file, and
+piping it to `head` discards its exit status — so an "exit=0" there means nothing.
+`scratchpad/treecmp.py` compares the attributes JFFS2 actually stores.
+
+⚠ **JFFS2 output is not byte-reproducible**, so do not verify a build by hashing the
+payload against a previous one. v13's original payload is `54b14f68` and a rebuild of
+the same tree is `0ddc5f1b`. The round-trip extract is the check that means something.
+
+### Not fixed in v14
+
+`/GetSceneList` still leaks ~780 B/request on the API surface — exactly 1.0000
+JSONNode trees and ~3.13 libjson strings per request, counted directly in libjson's
+own allocation registries with `leakfix/jsoncount.py`. The tree is `json_new` at
+VA 0x1ef04 in `WnmpDir_serviceField`. Three candidate fixes were built and **refuted
+under emulation, none shipped**: 0x2a084 never executes on that path, and both
+0x2955c and 0x1f0f4 hang inside `json_delete` and deadlock the entire server, because
+the stuck worker holds the dispatcher mutex. See `leakfix/mkapifix.py` LEAK 30 and
+`ALLOCATOR-REWORK.md`.
+
+### To flash
+
+`/work/v14/card` holds all six files with v14's `app2.hdr` substituted and the other
+five carried from `/work/stock` unchanged. Copy to a FAT32 SD card, then **verify the
+card, not the staging directory** — `python tuxedo_hdr.py verify G:\*.hdr`. Skipping
+that has cost a wasted trip to the panel once already.
+
+---
+
 ## v13 — 2026-09-06
 
 **What it is: v12 plus P13, which closes the unauthenticated push stream.**
