@@ -196,6 +196,14 @@ registered libjson pointer.
 ✅ Passing NULL is safe (early-out at 0x21008), so a stub that fires on an
 already-cleared slot costs nothing.
 
+🔑 **`json_delete` does NOT share the flaw, and that asymmetry is diagnostic.** At
+0x25adc it runs the same lookup but **branches on it** — `cmp r1, r0` / `beq 25b48`
+at 0x25b30 skips the erase when `find()` returned `end()` — then calls
+`deleteJSONNode` on the pointer regardless. So only `json_free` can corrupt the
+registry. When a *delete* stub misbehaves, the registry is intact and the fault is
+the object's lifetime; when a *free* stub misbehaves, the registry may already be
+destroyed and nothing downstream can be trusted.
+
 ✅ **No shipped stub has armed this landmine** — checked, not assumed.
 `mkapifix.py` routes libjson-produced strings to `JSON_FREE_PLT` 0xBCA0 and uses
 `FREE_PLT` 0xC150 only for genuinely `malloc`'d buffers (Base64 output, HMAC and

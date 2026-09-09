@@ -630,6 +630,15 @@ Full working in `ALLOCATOR-REWORK.md`. The three that will bite a patch author:
   ⚠ Corollary for debugging: a crash from a `json_free` stub tells you **nothing**
   about whether that site leaks or who owns the pointer. LEAK 29 spent a
   measurement cycle on that inference.
+- ✅ **`json_delete` does NOT share that flaw, and the asymmetry is diagnostic.**
+  It performs the same registry lookup but **branches on the result** — `cmp r1,
+  r0` / `beq 25b48` at libjson 0x25b30 skips the erase when `find()` returned
+  `end()` — before calling `deleteJSONNode` on the pointer regardless. So a bad
+  pointer handed to `json_delete` leaves the registry intact and only mis-frees
+  one object. Practical consequence when a delete stub misbehaves: a **hang or a
+  wrong result means the object was still live**, not that the registry was
+  corrupted; only `json_free` can corrupt it. LEAK 30's second attempt was read
+  this way.
 - ⚠ **glibc's two free-time messages mean different things.** `free(): invalid
   pointer` is the chunk-alignment / arena-bounds check — the address is not a heap
   chunk. `double free or corruption` is the double-free check. Reading the first

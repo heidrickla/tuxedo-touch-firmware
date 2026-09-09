@@ -941,10 +941,16 @@ WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both
 # ⚠ THE STUB DELETES r7 ONLY, NOT r6, so it does NOT simply jump to the vendor's
 # cleanup at 0x29860. On this path r6 is a STACK ADDRESS, not a tree - 0x1f024 sets
 # `sub r6, fp, #75` and 0x1f004 passes it to json_new_a as the value buffer. Reusing
-# the vendor's two-delete cleanup would hand json_delete a stack pointer, and
-# json_free/json_delete erase from the registry without branching on membership, so
-# that is heap corruption rather than a mismatched free (see LEAK 29 and
-# docs/ALLOCATOR-REWORK.md section 4).
+# the vendor's two-delete cleanup would hand json_delete a stack pointer.
+#
+# ✅ json_delete is SAFER THAN json_free, and the difference matters when reading a
+# failure here. json_delete DOES branch on registry membership - `cmp r1, r0` /
+# `beq 25b48` at libjson 0x25b30 skips the erase when find() returned end() - whereas
+# json_free computes the same test, hands it to a non-fatal assert, and then erases
+# anyway. So a bad pointer to json_delete does NOT corrupt the registry; it only
+# reaches deleteJSONNode. That is why the 0x2955c failure is a wedge rather than a
+# heap abort, and it is what rules OUT "the registry erase looped" as the
+# explanation, leaving the object still being live.
 #
 # lr is expendable in the stub: the epilogue returns with `ldm sp, {...pc}` off the
 # frame, not through lr, so `blne json_delete` may clobber it. Same shape as
