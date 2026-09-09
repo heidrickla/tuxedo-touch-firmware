@@ -241,6 +241,30 @@ handler-side analysis below could not account for it.
 it** — different auth, different path. It is the largest single leak known in the
 image.
 
+### ✅ AND IT IS CONFIRMED ON THE PANEL, scaling properly
+
+    N=300   panel VmRSS 5628 -> 5852 kB   +224 kB   = 764 B/request
+    N=900   panel VmRSS 5852 -> 6552 kB   +700 kB   = 796 B/request
+
+Tripling the load tripled the growth, so unlike the `cmd=141` residual this is a
+real per-request rate, and it agrees with the bench's 733 B/request.
+
+⚠ **Do not read `leakprobe`'s own `rss:` line for a panel run.** It reported
+`24044 -> 24044 kB, slope 0.0` while the panel grew 224 kB. `leakprobe` measures a
+LOCAL pid — the emulator on the build VM — so against a remote host it is measuring
+the wrong process entirely and will report a clean zero for any leak. Read the
+panel's own `VmRSS`.
+
+**What it costs:** ~780 B/request. If the scene page polls this the way
+`/console.html` polls `commandID=5002` (every 5 s, 720/hour), that is roughly
+**560 kB/hour with a scene page left open** — against ~70 MB free, so days rather
+than weeks. That is the number that decides whether a structural fix is worth its
+risk.
+
+⚠ Honest note: taking this measurement leaked about 0.9 MB into the live panel
+(1200 requests), which will not come back until Barracuda restarts. Harmless at
+70 MB free, but it is the cost of measuring this endpoint on the unit.
+
 ### 🚨 LEAK 29 attempted the obvious fix and it CRASHES — do not repeat it
 
 The owner of that 120 B chunk looked settled. `WnmpDir_serviceField` calls the

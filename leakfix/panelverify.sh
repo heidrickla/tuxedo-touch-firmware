@@ -15,7 +15,8 @@
 set -u
 N="${1:-300}"
 : "${PANEL_USER:?set PANEL_USER}"
-PANEL=203.0.113.5
+PANEL="${PANEL:-203.0.113.5}"   # the real address is not in this repo; override via env
+VMHOST="${VMHOST:-203.0.113.40}"   # build VM; the real address is not in this repo
 KEY=~/.ssh/tuxedo_ed25519
 SSH="ssh -o ConnectTimeout=30 -o BatchMode=yes -i $KEY root@$PANEL"
 
@@ -26,14 +27,14 @@ rss() {
 echo "  binary: $($SSH 'md5sum /opt/webserver/Barracuda | cut -c1-8')"
 echo "  warming $N (excludes the startup ramp from the measurement)"
 sudo=""
-ssh -o ConnectTimeout=25 -i ~/.ssh/fwbuild_ed25519 -o IdentitiesOnly=yes claude@203.0.113.40 \
+ssh -o ConnectTimeout=25 -i ~/.ssh/fwbuild_ed25519 -o IdentitiesOnly=yes claude@${VMHOST:-203.0.113.40} \
   "cd /work/fwcheck && sudo TUXEDO_USER=$PANEL_USER python3 /tmp/scenedrive.py $PANEL $PANEL_USER 141 $N sceneid=1" \
   2>&1 | grep -E "hiddenKey|body sizes" | sed 's/^/    /'
 
 BEFORE=$(rss)
 echo "  VmRSS before: $BEFORE kB"
 
-ssh -o ConnectTimeout=25 -i ~/.ssh/fwbuild_ed25519 -o IdentitiesOnly=yes claude@203.0.113.40 \
+ssh -o ConnectTimeout=25 -i ~/.ssh/fwbuild_ed25519 -o IdentitiesOnly=yes claude@${VMHOST:-203.0.113.40} \
   "cd /work/fwcheck && sudo TUXEDO_USER=$PANEL_USER python3 /tmp/scenedrive.py $PANEL $PANEL_USER 141 $N sceneid=1" \
   2>&1 | grep -E "body sizes" | sed 's/^/    /'
 
