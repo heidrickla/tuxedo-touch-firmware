@@ -1312,10 +1312,15 @@ here, which matters because not every module method need return a registered str
     from   bl free
     to     bl json_free
 
-**Not yet built or applied.** `patches.tsv` has no entry at `0x2103c`; the nearest is
-`P15-leakfix-site-29088`, which fixes a leaked *tree* on the `get` path and does not
-touch this. It is now measurable: the five non-alarm-bus family members are
-hammerable on the bench, and the measured per-call cost is below.
+**Built and A/B'd on the bench; the A/B was UNINFORMATIVE, not a refutation.**
+`patches.tsv` has no entry at `0x2103c`; the nearest is `P15-leakfix-site-29088`,
+which fixes a leaked *tree* on the `get` path and does not touch this. The
+one-instruction change was built (2 bytes differ, `ebff8c43` -> `ebff8b17`), installed
+on the bench and measured against the same five arms: **zero effect, to four
+decimals.** That is not evidence the fix is wrong. An execution trace afterwards
+showed `0x29000..0x29060` never runs for `/system_http_api` requests, so the A/B
+exercised a path that does not include the site. It still needs an arm that reaches
+the WNMP field service. See the retraction below.
 
 This is the security-operation path. Home Assistant arms and disarms through it, so
 it runs on every alarm state change, not only when someone opens a web page.
@@ -1404,11 +1409,19 @@ returned, and the `Base64Encode` buffer. Its first root pointer is overwritten b
 later assignment before the function returns, so that tree is unreachable, not merely
 unfreed.
 
-### MEASURED: 3 strings and 1 tree per call, identical across three handlers
+### The family is still NOT measured. What follows measures the API error path
 
-The arm path cannot be counted on the bench (alarm bus) or on the panel (ESRCH), but
+> **RETRACTED within the hour, by an execution trace.** This section first said "3
+> strings and 1 tree per call, identical across three handlers" and attributed it to
+> the LEAK 31 family. The numbers below are real and reproduce exactly, but they are
+> **not the family**: `/System/Tuxedo/ZwaveSync/{ViewIPURL,AddIPURL,UpdateIPURL}` are
+> **not implemented** on this firmware. They return a generic envelope, and
+> `setAddIPURL` never executes when they are called. Kept in full because the numbers
+> are sound and because the way it went wrong is the point.
+
+The arm path cannot be counted on the bench (alarm bus) or on the panel (ESRCH), and
 **five family members never touch the alarm bus**: `setAddIPURL`, `setUpdateIPURL`,
-`setViewIPURL`, `setAddDevMAC`, `setClientUnregister`. Those are hammerable under
+`setViewIPURL`, `setAddDevMAC`, `setClientUnregister`. Those look hammerable under
 emulation with `jsoncount.py`, which counts libjson's registries exactly instead of
 inferring from 4 kB pages. `leakfix/famcount2.sh`, 200 requests per arm, each arm
 warmed with 200 first:
@@ -1417,38 +1430,68 @@ warmed with 200 first:
 |---|---|---|---|
 | control A | `/GetSceneList` | +2.19 | **+1.0000** |
 | control B | `/GetSecurityStatus` | +0.19 | **+0.0000** |
-| family | `ViewIPURL` | +3.19 | +1.0000 |
-| family | `AddIPURL` | +3.19 | +1.0000 |
-| family | `UpdateIPURL` | +3.19 | +1.0000 |
+| unimplemented | `ViewIPURL` | +3.19 | +1.0000 |
+| unimplemented | `AddIPURL` | +3.19 | +1.0000 |
+| unimplemented | `UpdateIPURL` | +3.19 | +1.0000 |
 
 The +0.19 is constant in every arm including the one that leaks nothing, so it is
-background, not per-call. Subtracting it: **the family leaks 3 strings and 1 tree per
-call**, and three different handlers agree to four decimals — which is what you expect
-from one code shape, and is the evidence that this is a family rather than three
-coincidences. Control A reproduces its documented 1.0000 trees per request exactly,
-which is the instrument check; run 1 and run 2 of `famcount.sh` also agreed to four
-decimals at completely different registry occupancies (812 -> 1250 and 3086 -> 3524).
+background, not per-call. Subtracting it, and stating only what is actually
+established: **an unimplemented `/system_http_api` command costs 3 strings and 1 tree
+per call**, `/GetSceneList` costs 2 and 1, and `/GetSecurityStatus` costs nothing at
+all. Control A reproduces its documented 1.0000 trees per request exactly, which is
+the instrument check; `famcount.sh` run 1 and run 2 agreed to four decimals at
+completely different registry occupancies (812 -> 1250 and 3086 -> 3524).
 
-**Two things this refutes.**
-
-*The static count over-predicted the trees.* This file said "two roots leak per call".
-Only **one** does. Six nodes created and four absorbed by `push_back` leaves two
-roots, but the measurement says one, so one of them is released on a path the reading
-did not follow.
+**Two things this does establish.**
 
 *"1.0000 trees per request" is per-PATH, not per-request.* Control B is a request, and
 it leaks zero trees and zero strings. Some API endpoints leak nothing at all, so
 LEAK 30's rate cannot be multiplied by a request count to get a panel-wide figure.
 
-Method notes, because each cost a run. The handler must be proved to have RUN, not
-merely answered: `ViewIPURL` returns `{"Result":"<base64>"}`, which is exactly the
-shape `setViewIPURL` builds (`json_new` root, `json_new_a("Result", …)`,
-`json_push_back`, `json_write`), so a rejection at parameter validation would look
-different. Arms are serial by necessity -- one process, one global registry, so
-driving two endpoints at once attributes each one's allocations to the other. And the
-mutating handlers run last, because `AddIPURL`/`UpdateIPURL` write the
+*Rejecting an unknown command costs more than serving a real one.* The error envelope
+leaks 3 strings and 1 tree; `/GetSceneList`, which does real work, leaks 2 and 1. An
+unauthenticated-but-routable caller cannot reach this, but anything that probes the
+documented-and-unimplemented endpoint list walks straight into the most expensive path
+measured here.
+
+**How the attribution went wrong, in one line each.**
+
+*The response shape was taken as proof of execution.* `ViewIPURL` returns
+`{"Result":"<base64>"}`, which is the shape `setViewIPURL` builds, so it looked
+decisive. It is not: a deliberately bogus command,
+`/System/Tuxedo/ZwaveSync/NoSuchCommandXYZ`, returns a **byte-identical** body. That
+one control, which takes seconds, would have caught this before any of it was written
+down.
+
+*The execution trace settles it.* `serve-traced.sh` with `-dfilter 0x18ffc..0x19390`
+over 200 successful `AddIPURL` calls logs **zero** blocks: `setAddIPURL` never runs.
+The same for `0x29000..0x29060`, so the `set` dispatch at `0x29018` and the `free` at
+`0x2903c` are not on this path either.
+
+*And the trace needed its own control.* An empty log is also what a broken harness
+produces. `-dfilter 0x6b678..0x6b780` (`HttpResponse_printf`, on every response) over
+50 requests logs 9594 bytes, so the harness emits and the zeros mean what they say.
+Without that check the correct reading of an empty log is "no information".
+
+*`docs/TRAPS.md` and the REST-API note already said this.* ~6 endpoints are
+implemented; a vendor endpoint list is not evidence of implementation. The endpoint
+was picked off a help string in the binary, which is a vendor list by another name.
+
+**What it would take to measure the family.** The handlers are real and are called —
+`setAddIPURL` from `set` @`0x15e20`, `setUpdateIPURL` @`0x15e44` — but `set` is the
+**WNMP field-service** method, reached through the module's `+16` slot at `0x29018`,
+not through `/system_http_api`. So the family needs driving through the WNMP URL
+space, and the first thing to establish there is which URL reaches `set` with a field
+name that dispatches to one of these. Until then the family's per-call cost is
+unmeasured, and the static prediction (two roots, two strings, a Base64 buffer)
+stands unconfirmed rather than refuted.
+
+Method notes worth keeping. Arms are serial by necessity -- one process, one global
+registry, so driving two endpoints at once attributes each one's allocations to the
+other. The mutating handlers run last because `AddIPURL`/`UpdateIPURL` would write the
 registered-device list that `getRegisteredDevNodes` walks; they are safe on the bench
-only because `emu/serve.sh` re-seeds the config from `/work/panel-config` every start.
+only because `emu/serve.sh` re-seeds the config from `/work/panel-config` every start
+-- and, as it turns out, because they never ran.
 
 ### readCRCJSONFile @`0x32280` — 45 strings per IPC message type 154
 
