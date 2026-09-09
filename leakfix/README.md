@@ -288,8 +288,7 @@ true. Freeing the slot at 0x290fc still produces, on the first request:
     *** glibc detected *** /opt/webserver/Barracuda: free(): invalid pointer:
         0x40bddcd8 ***
 
-Most likely `WnmpModule_printFieldControl` already frees it, making this a double
-free — which also means **the 120 B chunk is not leaked at this site** and the
+which also means **the 120 B chunk is not leaked at this site** and the
 733 B/request is elsewhere in the chain.
 
 🔑 **An ownership argument assembled from a sibling path is a hypothesis, not a
@@ -307,9 +306,26 @@ simply not a pointer this code may release, and the site is dead as a candidate.
 
 ⚠ **`WnmpModule_printFieldControl` (0x1e48c) does not free it either** — 600 lines,
 **zero** `free`/`json_free`/`json_delete` calls, checked. So neither the dispatcher
-nor its callee releases the slot, yet releasing it is invalid. Something upstream
-already owns and frees that pointer, or the slot does not hold the string by the
-time 0x290fc runs.
+nor its callee releases the slot, yet releasing it is invalid.
+
+🔑 **The mechanism is now known, and it was NOT a double free** — see
+[../docs/ALLOCATOR-REWORK.md](../docs/ALLOCATOR-REWORK.md) §4, which disassembles
+both allocators. One reason per attempt:
+
+* **`json_free` is not a `free()` wrapper.** It looks the pointer up in libjson's
+  registry, computes "was it registered" into a register, hands that to a
+  **non-fatal** assert, and then **never branches on it** — so an unregistered
+  pointer makes it rebalance-for-erase and `operator delete` the registry map's own
+  header node before it ever reaches `free()`. Handing it a non-libjson pointer
+  corrupts the heap regardless of who owns the pointer, so that attempt could never
+  have worked and tells us nothing about ownership.
+* **plain `free` reported `invalid pointer`**, which in glibc is the
+  chunk-alignment / arena-bounds check — *not* the double-free check, which reports
+  `double free or corruption`. So the slot does not hold a malloc'd heap pointer.
+
+Between the two possibilities this section left open, that confirms the second:
+**the slot does not hold the string by the time 0x290fc runs.** Nobody frees it
+early; it was never the string's home.
 
 🔑 **Where the next attempt should start, given all of the above:** stop reasoning
 about who *should* free it and read what the slot actually contains at 0x290fc.

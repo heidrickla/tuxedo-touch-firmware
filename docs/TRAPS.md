@@ -539,3 +539,34 @@ and left sitting there saying the opposite of the truth.
   of the thing**, not merely reading the instructions at the site. Both flash
   failures in this repo came from reading a mechanism partly and then describing
   it in the register the resolved parts had earned.
+
+## 7. libjson
+
+Full working in `ALLOCATOR-REWORK.md`. The three that will bite a patch author:
+
+- 🚨 **`json_free` is NOT a `free()` wrapper, and it corrupts the heap on a
+  pointer libjson did not issue.** libjson is built with `JSON_MEMORY_MANAGE`, so
+  it keeps a global `std::map` of every pointer its C API hands out. `json_free`
+  looks the pointer up, computes *was it registered* into a register, passes that
+  to a **non-fatal** assert, and then **never branches on it** — an unregistered
+  pointer makes it rebalance-for-erase and `operator delete` the **map's own
+  header node** before it ever reaches the real `free()`. So "wrong allocator"
+  here is not a mismatched-free, it is guaranteed corruption, and it happens
+  *before* any message you might see. NULL is safe (early-out).
+  ⚠ Corollary for debugging: a crash from a `json_free` stub tells you **nothing**
+  about whether that site leaks or who owns the pointer. LEAK 29 spent a
+  measurement cycle on that inference.
+- ⚠ **glibc's two free-time messages mean different things.** `free(): invalid
+  pointer` is the chunk-alignment / arena-bounds check — the address is not a heap
+  chunk. `double free or corruption` is the double-free check. Reading the first
+  as the second sends you looking for a phantom earlier owner.
+- ⚠ **libjson exports bulk frees that Barracuda cannot reach, and they must stay
+  unreached.** `json_free_all` (0x20de0) and `json_delete_all` (0x2458c) free
+  *everything registered process-wide*. They are absent from Barracuda's
+  relocation table, and wiring one up to "free by scope" would corrupt the heap,
+  because HTTP requests run concurrently on a 20-thread pool whose serialising
+  mutex is **dropped around every blocking `send()`** — so another request is
+  live, mid-handler, with registered allocations, whenever you might call it.
+  Two copies of the library exist with different md5s (`usr/lib` and
+  `vidrec/lib`, and `/vidrec/lib` is on `LD_LIBRARY_PATH`), so offset work must
+  name which one is mapped.
