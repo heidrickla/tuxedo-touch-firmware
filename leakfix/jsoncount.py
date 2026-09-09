@@ -2,13 +2,12 @@
 """Count OUTSTANDING libjson allocations in a running Barracuda, read-only.
 
 libjson is built with JSON_MEMORY_MANAGE: it keeps a std::map of every pointer its
-C API hands out, and json_free erases from that map. So the map's node count IS the
-number of libjson allocations currently outstanding. Reading it turns "which chunk
-sizes grew" into an exact number, with no patch and nothing on the request path.
+C API hands out, and json_free erases from that map. So its node count is the
+number of libjson allocations outstanding: exact, with no patch and nothing on
+the request path.
 
-Why this beats the chunk histogram: chunkdiff names allocations by content and has
-to guess ownership. This counts what libjson itself thinks it still owes, and it
-separates strings from nodes.
+chunkdiff's histogram names allocations by content and has to guess ownership.
+This counts what libjson itself still owes, and separates strings from nodes.
 
 Layout, derived in docs/ALLOCATOR-REWORK.md (do not re-derive):
 
@@ -19,30 +18,30 @@ Layout, derived in docs/ALLOCATOR-REWORK.md (do not re-derive):
 
 These hold for BOTH copies of the library. The panel maps /vidrec/lib/libjson.so.7
 (md5 610d5009), not /usr/lib/libjson.so.7.6.1 (md5 6aa09429), because
-/etc/rc.d/init.d/startup puts /vidrec/lib on LD_LIBRARY_PATH -- but the two have
-identical section tables and a byte-identical json_free, and differ only by 499
-bytes of non-loaded content. Checked, so neither copy needs its own address set.
+/etc/rc.d/init.d/startup puts /vidrec/lib on LD_LIBRARY_PATH. The two have
+identical section tables and a byte-identical json_free and differ only by 499
+bytes of non-loaded content, so neither needs its own address set.
 
 Offset 20 is confirmed two ways: json_free computes end() as map+4 before
 _Rb_tree_rebalance_for_erase, and both singletons have st_size exactly 24, which
 only fits 4 pad + 16 _Rb_tree_node_base + 4 count.
 
 READ-ONLY by construction: opens /proc/PID/mem 'rb' and never ptrace-attaches.
-That matters -- see TRAPS.md section 6: attaching to a process that holds
-/dev/watchdog resets the panel.
+TRAPS.md section 6: attaching to a process that holds /dev/watchdog resets the
+panel.
 
-🚨 THIS DOES NOT WORK ON THE PANEL, and the reason is the kernel, not this script.
-On 2.6.31 /proc/PID/mem refuses every read from another process with ESRCH ("No
-such process") -- measured on the panel against a live Barracuda, at offset 0 as
-well as at a mapped address. Pre-2.6.39 mem_read requires the target to be
-ptrace-attached AND stopped by the reader. Stopping Barracuda makes supervis
-relaunch it, which spends relaunch budget, so there is no read-only path to this
-counter on the unit. The panel also has no python at all (checked: no python,
-python2, python3 or perl -- only dd, od, hexdump), so a shell port would not help.
+Does not work on the panel, for kernel reasons. On 2.6.31 /proc/PID/mem refuses
+every read from another process with ESRCH ("No such process") -- measured on the
+panel against a live Barracuda, at offset 0 and at a mapped address. Pre-2.6.39
+mem_read requires the target ptrace-attached AND stopped by the reader, and
+stopping Barracuda makes supervis relaunch it, spending relaunch budget, so there
+is no read-only path to this counter on the unit. The panel also has no python at
+all (checked: no python, python2, python3 or perl -- only dd, od, hexdump), so a
+shell port would not help.
 
-So this is a BENCH instrument: run it on the build VM against the qemu-user process,
+A BENCH instrument, then: run it on the build VM against the qemu-user process,
 whose /proc/PID/mem the VM's own kernel does allow. The guest's libjson mapping
-appears in the qemu process's maps under its real path, which is what this reads.
+appears in the qemu process's maps under its real path.
 
 Usage, on the build VM:
     jsoncount.py                      # one reading
@@ -114,7 +113,7 @@ def sample(mem, base):
     ):
         g = read_word(mem, base + guard)
         # guard zero => the function-local static is not constructed yet, so the
-        # map is still all zeros and the honest answer is 0, not a garbage read.
+        # map is still all zeros; report 0 rather than a garbage read.
         out[label] = read_word(mem, base + reg + COUNT_OFF) if g else 0
         out[label + "_init"] = bool(g)
     return out

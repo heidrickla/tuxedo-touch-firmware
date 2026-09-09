@@ -61,7 +61,7 @@ the correct ones.
 
 ## Console mode: the display path in Barracuda is COMPLETE
 
-🚨 **This section previously said Barracuda drops reply type 20 and that console
+**This section previously said Barracuda drops reply type 20 and that console
 mode "cannot work through Barracuda by any means". That was wrong. Corrected
 2026-09-08 by measurement.**
 
@@ -92,13 +92,13 @@ the text — and exactly what `getConsoleMessage()` returns for `commandID=5002`
 print. So the path is confirmed from injected IPC message to the bytes the page
 would render, not inferred from the disassembly.
 
-⚠ **Reading that buffer needs the second-LOAD delta.** Guest VA `0x55b7e4` is
+**Reading that buffer needs the second-LOAD delta.** Guest VA `0x55b7e4` is
 mapped at host `0x56b7e4` under qemu-user, **+0x10000** — the same delta
 `patches.tsv` notes for the P14 attr block. Seeking to the guest VA lands in the
 read-only ELF mapping instead and returns S-box data, which looks like a failed
 write rather than a wrong address.
 
-⚠ **Why the old claim survived, and it generalises.** The "42 message types"
+**Why the old claim survived, and it generalises.** The "42 message types"
 list was built by enumerating the dispatch chain's **equality** comparisons.
 Type 20 is routed by a **range** arm instead:
 
@@ -111,7 +111,7 @@ compiler-generated binary-search chain silently misses every value handled by a
 range arm**, so any "type N is not dispatched" claim derived that way needs
 re-checking.
 
-⚠ **Consequence for Home Assistant:** console display text is broadcast with id
+**Consequence for Home Assistant:** console display text is broadcast with id
 **-1**, which `ha-tuxedo-touch` treats as `CMD_UNSOLICITED` and feeds to its
 partition-status path. That is stock behaviour whenever console mode is in use,
 not something introduced by any patch here.

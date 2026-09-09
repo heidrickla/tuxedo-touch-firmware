@@ -172,7 +172,7 @@ def main(path: str) -> int:
                 w = struct.unpack_from("<I", e.d, o)[0]
                 if e.ta <= w < e.ta + e.ts:
                     entries.append((e.name(w), ins.address))
-    # ⚠ NOT "exactly one". The first version asserted sites == 1 and FAILED on
+    # NOT "exactly one". The first version asserted sites == 1 and FAILED on
     # the live v13 binary, where P9 replaces `bl pthread_create` with
     # `mov r0,#1` at 0xc5e8 and there are ZERO sites. Zero satisfies the
     # finding MORE strongly than one, so a checker demanding one would have

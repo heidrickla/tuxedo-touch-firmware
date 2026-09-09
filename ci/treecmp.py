@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Compare two staged rootfs trees exactly: content, type, mode, owner, links, devs.
 
-`diff -r` is not enough for this job. It cannot compare character devices or fifos
-and prints them as differences on both sides, it reports dangling symlinks as
-missing files even when both sides dangle identically, and piping it into `head`
-throws away its exit status -- so "exit=0" can mean nothing at all.
+`diff -r` is not enough. It cannot compare character devices or fifos and reports
+them as differing on both sides; it reports identically dangling symlinks as
+missing files; and piping it into `head` discards its exit status, so exit=0
+proves nothing.
 
-This walks both trees with os.lstat and compares every attribute that JFFS2 stores,
-then reports only genuine mismatches.
+Walks both trees with os.lstat, compares every attribute JFFS2 stores, and reports
+only genuine mismatches.
 
 Usage: treecmp.py <tree_a> <tree_b>
 """
@@ -75,8 +75,8 @@ def main():
 
     print()
     if not (only_a or only_b or diff):
-        # Say what was actually compared, so a clean result cannot be mistaken
-        # for a scan that checked nothing.
+        # Name what was compared, so a clean result cannot be read as a scan
+        # that checked nothing.
         kinds = {}
         for rec in a.values():
             kinds[rec[0]] = kinds.get(rec[0], 0) + 1

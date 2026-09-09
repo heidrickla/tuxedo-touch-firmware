@@ -154,7 +154,7 @@ The **only** way to obtain `tokenkey` is to scrape a generated HTML page. `/even
 
 Name is **fixed per Barracuda process**: `main` @0xc6ec does `sprintf(BA_COOKIE_ID, "z9ZAqJtI_%u", time(NULL))`. It looks random per login only because it changes when the web server restarts. `/handlerequest.html` reads **only** this cookie — never `_zFL`. CONFIRMED.
 
-> ⚠️ **The single most likely integration failure.** If your existing REST client keeps only `_zFL`, or drops cookies across the login redirect, `/handlerequest.html` will reject you with a silent empty body. Use a cookie-jar-backed HTTP session and follow redirects. Which response carries the `Set-Cookie` for `z9ZAqJtI_*` (the POST itself or the 302 target) is **UNKNOWN** — the jar makes it moot.
+> ️ **The single most likely integration failure.** If your existing REST client keeps only `_zFL`, or drops cookies across the login redirect, `/handlerequest.html` will reject you with a silent empty body. Use a cookie-jar-backed HTTP session and follow redirects. Which response carries the `Set-Cookie` for `z9ZAqJtI_*` (the POST itself or the 302 target) is **UNKNOWN** — the jar makes it moot.
 
 ### 2.4 Lifetime and limits
 
@@ -313,7 +313,7 @@ Take everything before the first `<`. `baTime2tm` @0x618b8 is pure epoch arithme
 
 Key encoding: 48-57 = `0`-`9`, 42 = `*`, 35 = `#`, **65/66/67/68 = A/B/C/D = the panic keys**. The vendor UI gates those behind a confirmation dialog; **the server does not distinguish them from a digit.** Display text arrives as the code-20 broadcast. Handler 0x3cc94; count at msg[0x2e], bytes from msg[0x2f]. CONFIRMED.
 
-> ⚠️ If you expose Console Mode in Home Assistant, filter 65-68 in your own client. Nothing below you will.
+> ️ If you expose Console Mode in Home Assistant, filter 65-68 in your own client. Nothing below you will.
 
 **`Type=1125/1126` — CONSOLEMODESTATUSADD/SUB.** A Barracuda-local counter (`consoleMode` @0x55b7d8) with **no message to the panel at all**. Its only effect is to gate Types 502/503. See Bug (a)-2 — it leaks. CONFIRMED.
 
@@ -331,7 +331,7 @@ Entry addresses inside `handlerequest_html076EF::service`, enumerated from the c
 
 `1`→0x3a908 `2`→0x3a9ec `3`→0x3aad0 `4`→0x3ab84 `5`→0x3ac54 `6`→0x3ad00 `7`→0x3adb4 `8`→0x3ae68 `9`→0x3af1c `10`→0x3afd0 `12`→0x3ca38 `13`→0x3ca94 `14`→0x3cae0 `15`→0x3cb2c `16`→0x3cbe0 `17`→0x3c9b0 `18`→0x3b550 `19`→0x3cc94 `25`→0x3b05c `26`→0x3b108 `27`→0x3b260 `29`→0x3b1b4 `52`→0x3b614 `54`→0x3b9bc `55`→0x3ba48 `56`→0x3bad0 `57`→0x3bb38 `58`→0x3bb80 `59`→0x3bbe4 `100`→0x3c3a4 `101`→0x3b460 `500`→0x3b42c `501`→0x3cf44 `502`→0x3b3ac `503`→0x3b3ec `504`→0x3b488 `506`→0x3d1b4 `600`→0x3d1d0 `800`→0x3d25c `888`→0x3cf64 `1118`→0x3b520 `1121`→0x3cfd0 `1122`→0x3d064 `1123`→0x3d130 `1125`→0x3d24c `1126`→0x3d254 `1152`→0x3b59c `1250`→0x3c5b4; video Types 6285/6287/6288/6290/6297/6298/6400-6403 in the 0x188d-0x189d block; 103-153 prefixed `SERV_ZW_` are Z-Wave. **`28` is not handled.**
 
-> ⚠️ The two agents that enumerated this **disagree on completeness**. One reports the chain fully unwound with no zone code anywhere; the other says the immediate-comparison dispatch tops out around 0x480 with higher codes reached via literal-pool loads it did not fully unwind. Treat the map as **near-complete but not proven exhaustive**.
+> ️ The two agents that enumerated this **disagree on completeness**. One reports the chain fully unwound with no zone code anywhere; the other says the immediate-comparison dispatch tops out around 0x480 with higher codes reached via literal-pool loads it did not fully unwind. Treat the map as **near-complete but not proven exhaustive**.
 
 **ZONES: still a negative.** Both agents searched independently and found no zone command code. The zone handlers exist in `tuxedo` (`sltRequestAllZoneCurrStatus` and 11 siblings) but nothing in the web dispatch reaches them. `Type=17` (handler 0x3c9b0) queues `{sessionId, 17, pID-or-0xFF, filters, index}` into a *second, non-zeroed* 404-byte stack buffer and has no name in any vendor JS; the `filters`/`index` pair makes it *look* like a paged list query. **It is unidentified, not evidence of a zone command.** If you probe it, do so knowing it sends a struct with uninitialised stack bytes to the panel.
 
@@ -617,12 +617,12 @@ Ranked by what actually touches attacker-influenced input on Lewis's LAN.
    stream is read-only — it carries no code and accepts no commands — so this
    is a disclosure, not a control path. Not fixed: per Lewis, security work is
    deferred until the firmware is stable, and this does not block any feature.
-2. ✅ **OQ-2 — ANSWERED 2026-09-08: `LocalLogin` is `1`.** Read from
+2. **OQ-2 — ANSWERED 2026-09-08: `LocalLogin` is `1`.** Read from
    `/opt/tuxedo/configuration/Tuxedo.json` on the panel (the file the carve
    lacked): `"BARRACUDA":[{"PORT_NUMBER":6280,"HTTPS":1,"LocalLogin":1}]`. So
    local LAN access **does** run the form authenticator, and the section (b)
    material that depended on `LocalLogin = 0` stays theoretical on this unit
-   rather than being live. ⚠ This is a *config* value: it can be changed from the
+   rather than being live. This is a *config* value: it can be changed from the
    panel UI, so re-read it rather than trusting this line after any settings
    work. Confirmed independently by behaviour — an unauthenticated LAN fetch of
    `/home.html` returns the 6311-byte login page, not the page.

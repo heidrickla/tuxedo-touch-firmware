@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """Scan every blob in a branch's HISTORY for identifier classes.
 
-`pubscan.py` scans the working tree and untracked files, which is the right check
-before a commit. It cannot see what an OLD commit still holds, and that gap cost two
-history rewrites on 2026-09-08: the panel's real address in leakfix/panelverify.sh,
-and a device registration key fragment in leakfix/README.md that every working-tree
-sweep had passed because the current file no longer carried it.
+`pubscan.py` scans the working tree and untracked files, the right check before a
+commit. It cannot see what an OLD commit still holds, and that gap cost two history
+rewrites on 2026-09-08: the panel's real address in leakfix/panelverify.sh, and a
+device registration key fragment in leakfix/README.md that every working-tree sweep
+had passed because the current file no longer carried it.
 
-So this walks every blob reachable from one ref and reports what it finds. Run it
-before publishing a repo, and after any history rewrite.
+This walks every blob reachable from one ref. Run it before publishing a repo, and
+after any history rewrite.
 
     python ci/histscan.py .              # scan HEAD
     python ci/histscan.py . main         # scan a named ref
 
-🚨 SCOPED TO ONE REF ON PURPOSE, AND `--all` WOULD LIE. A background `git fetch`
-re-creates refs/remotes/* from the remote, which after a local rewrite still holds
-the UN-scrubbed history. With `--all` this reports the old secret as still present,
-so a check that passed minutes ago starts failing on its own and the rewrite looks
-broken when it is not. Deleting the tracking ref only helps until the next
-auto-fetch. Scope to the branch; re-run after the push.
+Scoped to one ref on purpose; `--all` would lie. A background `git fetch` re-creates
+refs/remotes/* from the remote, which after a local rewrite still holds the
+UN-scrubbed history. With `--all` this reports the old secret as still present, so a
+check that passed minutes ago starts failing on its own. Deleting the tracking ref
+only helps until the next auto-fetch. Scope to the branch; re-run after the push.
 
-⚠ A clean result is not a promise the repo is safe to publish, only that these
-patterns did not match. Same caveat pubscan prints, for the same reason.
+A clean result is not a promise the repo is safe to publish, only that these
+patterns did not match.
 """
 import collections
 import re
@@ -29,8 +28,8 @@ import subprocess
 import sys
 
 # Classes worth knowing about in history. Values that identify the AUTHOR
-# specifically belong in pubscan.local, not here -- this file is published, so
-# putting a real prefix in it would be the exact failure it exists to prevent.
+# specifically belong in pubscan.local, not here: this file is published, so a real
+# prefix written into it would leak exactly what the scan looks for.
 PATTERNS = {
     "private IPv4 (10/8)": rb"\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
     "private IPv4 (192.168)": rb"\b192\.168\.\d{1,3}\.\d{1,3}\b",
@@ -41,8 +40,8 @@ PATTERNS = {
     "AWS-style key id": rb"\bAKIA[0-9A-Z]{16}\b",
     # Mirrors pubscan's "raw hex key material": credential CONTEXT beside the hex,
     # never a bare long-hex test. This repo is full of Barracuda md5sums and 40-char
-    # git SHAs, and a bare test reports hundreds of lines -- which teaches you to
-    # skim the category on the day it finds a real key.
+    # git SHAs, so a bare test reports hundreds of lines and the category gets skimmed
+    # on the day it finds a real key.
     "raw hex key material":
         rb"(?i)\b(?:priv(?:ate)?key|pub(?:lic)?key|authtoken|token|secret|apikey)"
         rb"['\"]?\s*[:=]\s*['\"]?[0-9a-f]{16,}",
@@ -52,7 +51,7 @@ PATTERNS = {
 }
 
 # Documentation ranges (RFC 5737, RFC 3849), network addresses, and the vendor's own
-# published contact. Reporting these is how a real hit gets skimmed past.
+# published contact. Reporting these buries a real hit.
 ALLOW = re.compile(
     rb"203\.0\.113\.|192\.0\.2\.|198\.51\.100\.|"
     rb"\b(?:10|192\.168)\.\d{1,3}\.\d{1,3}\.0\b|"      # network addresses
@@ -62,14 +61,13 @@ ALLOW = re.compile(
     rb"deadbeef|0123456789abcdef",
     re.IGNORECASE,
 )
-# ⚠ NO MAC LITERALS IN THIS FILE, not even placeholders, and not in a comment
-# either. A first version listed the two obvious sequential/repeated placeholders
-# here to cut noise; pubscan immediately flagged this file for "real MAC addresses",
-# because its placeholder filter recognises all-zero, all-ff, and the
-# locally-administered bit — not an ascending one. Rewriting the warning then put the
-# same two literals back inside the comment explaining not to write them, and it
-# fired again. pubscan.py's own notes record this happening five times in one day.
-# MAC-shaped hits are left to triage instead: the tool reports, it does not judge.
+# NO MAC LITERALS IN THIS FILE, not even placeholders, and not in a comment either.
+# A first version listed the two obvious sequential/repeated placeholders here to cut
+# noise; pubscan flagged the file for "real MAC addresses", because its placeholder
+# filter recognises all-zero, all-ff and the locally-administered bit, not an ascending
+# one. Rewriting the warning put the literals back inside the comment saying not to
+# write them, and it fired again. pubscan.py's notes record this five times in one day.
+# MAC-shaped hits are left to triage: the tool reports, it does not judge.
 
 
 def git(repo, args):
@@ -101,8 +99,8 @@ def main():
 
     targets = sorted(o for o in named if o in blobs)
     if not targets:
-        # An empty target list would print a clean summary while checking nothing,
-        # which is the failure mode this repo has hit more than once.
+        # An empty target list would print a clean summary while checking nothing;
+        # this repo has hit that more than once.
         sys.exit("REFUSING: no blobs found for %s -- scanning nothing would "
                  "report clean" % ref)
     print("scanning %d blob(s) reachable from %s" % (len(targets), ref))

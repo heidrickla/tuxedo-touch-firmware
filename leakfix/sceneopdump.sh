@@ -9,7 +9,7 @@
 # how the IPC registry buffers and the voice vocabulary were identified when
 # tracing could not.
 #
-# ⚠ ONE login for the whole run, enforced by scenedrive.py: ten session slots
+# ONE login for the whole run, enforced by scenedrive.py: ten session slots
 # exist and re-logging exhausts them, after which every reply is an empty 200 that
 # reads as no leak.
 set -u

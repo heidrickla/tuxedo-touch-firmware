@@ -10,7 +10,7 @@
 # The verdict comes from the chunk histogram, not the RSS slope: RSS is
 # page-quantised at 4 kB and cannot resolve a few hundred bytes per request.
 #
-# ⚠ ONE login for the whole run. scenedrive.py enforces that and aborts if the
+# ONE login for the whole run. scenedrive.py enforces that and aborts if the
 # session has no slot, because ten slots exist and a driver that re-logs
 # exhausts them, after which every reply is an empty 200 that reads as no leak.
 set -u

@@ -7,7 +7,7 @@ each had a dedicated "security scan before publishing" pass. The difference was
 that somebody remembered, four times, and then did not a fifth. A tool that runs
 in ten seconds is a better guarantee than that.
 
-⚠ IT IS A REPORT, NOT A GATE, and deliberately exits 0 with findings. Whether
+IT IS A REPORT, NOT A GATE, and deliberately exits 0 with findings. Whether
 the panel's own IP belongs in a firmware write-up is a judgement call the owner
 makes -- wiring it into `checks.sh` would either fail the build for a decision
 already taken, or get an exception that makes it decorative. It prints; a person
@@ -61,7 +61,7 @@ SELF = {"ci/checks.sh", "ci/pubscan.py"}
 #: MACs that are placeholders, not anybody's hardware: the null address, the
 #: broadcast address, and locally-administered ones (bit 1 of the first octet),
 #: which is what an emulator hands out -- `02:00:00:00:00:01` here.
-#: ⚠ THE FIRST VERSION COUNTED THESE and reported "4 MACs in 3 files" when the
+#: THE FIRST VERSION COUNTED THESE and reported "4 MACs in 3 files" when the
 #: repo holds exactly one real MAC. Over-reporting is not the safe direction:
 #: this file's own docstring says a scanner that cries about placeholders gets
 #: skimmed on the day it finds something, and it did that on its first run.

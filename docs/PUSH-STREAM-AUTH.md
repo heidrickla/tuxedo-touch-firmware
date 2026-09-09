@@ -310,7 +310,7 @@ ssh ... 'cp /tmp/B.good /opt/webserver/Barracuda.new && chmod 755 /opt/webserver
 ssh ... 'for p in /proc/[0-9]*; do e=$(readlink "$p/exe" 2>/dev/null); \
            case "$e" in *Barracuda*) kill "${p#/proc/}" ;; esac; done'
 ```
-🚨 **`killall` DOES NOT EXIST ON THIS UNIT, and this line used to say `killall Barracuda`.** It fails with "killall: not found", the deploy reports success, and the panel keeps serving the OLD binary from the deleted inode while the new one sits on disk. Nothing in the output says so — 2026-09-08 it printed `listeners 4/4` and an unchanged relaunch counter, which is exactly what a healthy panel looks like. **The unchanged counter is the tell:** a real restart always moves it.
+**`killall` DOES NOT EXIST ON THIS UNIT, and this line used to say `killall Barracuda`.** It fails with "killall: not found", the deploy reports success, and the panel keeps serving the OLD binary from the deleted inode while the new one sits on disk. Nothing in the output says so — 2026-09-08 it printed `listeners 4/4` and an unchanged relaunch counter, which is exactly what a healthy panel looks like. **The unchanged counter is the tell:** a real restart always moves it.
 
 So kill by pid, matching the exe link, and tolerate the `(deleted)` suffix — after the `mv`, the running process's `/proc/PID/exe` reads `/opt/webserver/Barracuda (deleted)`, so an exact-path match finds nothing.
 
@@ -329,7 +329,7 @@ about 5 s on the reported path against ~90 s here (not the 600 s
 `SupervisTimeout` this file used to claim; that number was inferred, ~90 s is
 measured once).
 
-⚠ **And a SIGTERM restart can cost TWO.** `sigHandler` runs a long cleanup —
+**And a SIGTERM restart can cost TWO.** `sigHandler` runs a long cleanup —
 `freeCameraDetailsList`, four `DeleteSWTimer`s, `sendUnregisterCommand`, two
 `free`s, `osal_SemDestroy` — and frequently faults partway, so the SIGTERM posts
 message 7 and the fault posts message 8 a second later. Each `RECV` advances the
@@ -355,7 +355,7 @@ grep "E_SUPVTRD_BARRACUDA" /opt/tuxedo/configuration/SupervisionLog.txt | tail -
 ```
 That partition survives reflash, and the restart counter is printed in the line (`E_SUPVTRD_BARRACUDA_RESTART-N`).
 
-🚨 **The reset half of the model is now MEASURED, and it was measured the
+**The reset half of the model is now MEASURED, and it was measured the
 expensive way: I tripped it.** 2026-09-08, doing leak work over a panel that had
 been up since 2026-09-06 13:02 with the counter already at 19:
 
@@ -370,7 +370,7 @@ The panel reset itself in hardware, exactly as section 6 of `TRAPS.md` decoded.
 Delete "never hit the ceiling" on sight; the previous sentence stood for 16 boots
 and stopped being true on the 17th.
 
-🔑 **The trap is that the budget is per-BOOT, not per-session, and nothing on the
+**The trap is that the budget is per-BOOT, not per-session, and nothing on the
 panel reminds you.** The counter was at 19 before I sent a single signal. A
 session that spends "only" six restarts is fine on a fresh boot and fatal on a
 two-day-old one. **Read the counter BEFORE the first restart, not after the

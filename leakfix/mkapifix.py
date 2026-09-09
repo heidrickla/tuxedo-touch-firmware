@@ -335,7 +335,7 @@ PRINTF2_SITES = ((0x47C94, 0xEB008E77),)
 #
 # The json_strip_white_space result is ALSO leaked, and is now freed too.
 #
-# ✅ OWNERSHIP VERIFIED IN libjson.so.7.6.1 RATHER THAN ASSUMED - this was the
+# OWNERSHIP VERIFIED IN libjson.so.7.6.1 RATHER THAN ASSUMED - this was the
 # open question that kept it untouched, and freeing wrongly here corrupts the
 # heap instead of leaking:
 #
@@ -374,7 +374,7 @@ IPC_BUF_SITES = ((0x34964, 0xEBFF5D7B),)
 # LEAK 15: r8 is never freed. No json_delete appears anywhere in the function,
 # and the tree is not returned, so on return it is unreachable.
 #
-# 🔑 BOTH FREES ARE SAFE FOR THE SAME VERIFIED REASON: json_new_a reaches
+# BOTH FREES ARE SAFE FOR THE SAME VERIFIED REASON: json_new_a reaches
 # JSONNode::JSONNode(std::string const&, std::string const&), so it COPIES the
 # value. Only copies are pushed into the caller's array, and json_at returns a
 # node inside r8 that is used solely within its own loop iteration. Nothing
@@ -431,14 +431,14 @@ IPC_SKIP_RETURN = 0x34A80
 # branch target), and the existing code already lets json_delete clobber r0,
 # so no return value is disturbed.
 #
-# ⚠ NOT PATCHED, DELIBERATELY: the three per-client leaks inside that loop -
+# NOT PATCHED, DELIBERATELY: the three per-client leaks inside that loop -
 # json_as_string 0x13314, json_write 0x13350, curl_easy_escape 0x13360. The
 # loop body executes ZERO times (measured: 0x132fc runs 0 times over 3
 # messages) because registeredClients pushes nothing, so patching them would
 # ship code no test on this rig can exercise. That is exactly the mistake this
 # file already records once. They are real defects; leave them until a registry
 # with a >4-field entry exists to drive them.
-# ⚠ Same caveat applies to LEAK 14 above, which is already built: correct by
+# Same caveat applies to LEAK 14 above, which is already built: correct by
 # construction but never executed on this bench.
 IPC_TREEA_STUB = 0x694C0
 IPC_TREEA_SITE = 0x13398
@@ -546,14 +546,14 @@ GETESCENES_SITES = ((0x165F8, 0xEBFFD506),)
 # The pointer is provably the json_write result because the two calls are
 # adjacent and nothing writes r0 between them.
 #
-# ⚠ STRING 2 at 0x165a4 is NOT patched here and needs more care: it is consumed
+# STRING 2 at 0x165a4 is NOT patched here and needs more care: it is consumed
 # by `encrypt` at 0x165b8, which takes a STACK argument (`str r5,[sp]` at
 # 0x165ac), so a stub must not push. The registers dead after that call in this
 # straight-line function are r4, r8 and r9, so the shape would be
 # `mov r4,r0 ; mov r9,lr ; bl encrypt ; mov r8,r0 ; json_free(r4) ; mov r0,r8 ;
 # bx r9` - three stashes and a custom return, the most delicate stub in this
 # file. Measured on its own increment before being written.
-# 🚨 BUILT, MEASURED, AND DELIBERATELY NOT SHIPPED. Redirecting 0x16570 changed
+# BUILT, MEASURED, AND DELIBERATELY NOT SHIPPED. Redirecting 0x16570 changed
 # the leak by NOTHING: /GetSceneList read 491.5 B/request with and without it, on
 # two runs each, and the chunk histogram showed no row disappearing either. So
 # either the string is already released somewhere, or its effect is below both
@@ -579,7 +579,7 @@ ESCENES_STR1_SITES = ()          # was ((0x16570, 0xEBFFD5D3),)
 #   165ac  str r5, [sp]     <- encrypt takes a STACK ARGUMENT
 #   165b8  bl encrypt      -> r0 becomes the ciphertext; the string is gone
 #
-# ⚠ A STUB HERE MUST NOT PUSH. [sp] holds encrypt's fifth argument, so moving sp
+# A STUB HERE MUST NOT PUSH. [sp] holds encrypt's fifth argument, so moving sp
 # by even one word hands it the wrong value. That rules out the stack-stash shape
 # every other stub in this file uses.
 #
@@ -596,13 +596,13 @@ ESCENES_STR1_SITES = ()          # was ((0x16570, 0xEBFFD5D3),)
 # function's own epilogue at 0x16608 restores the caller's values from the stack.
 # lr is saved in r9 because `bl json_free` would otherwise destroy the return
 # address; the stub returns with `bx r9`.
-# 🚨 ALSO BUILT, MEASURED, AND NOT SHIPPED - same verdict as LEAK 21, and the two
+# ALSO BUILT, MEASURED, AND NOT SHIPPED - same verdict as LEAK 21, and the two
 # together are the informative result. /GetSceneList read 491.5 B/request with
 # STRING 1 freed, with STRING 2 freed, and with neither: identical, two runs each.
 # The stub itself is sound (the server answered 302 with all four listeners up
 # afterwards), it just releases nothing that was accumulating.
 #
-# 🔑 WHAT THE TWO NULL RESULTS TOGETHER SAY: the residual is NOT the json_write
+# WHAT THE TWO NULL RESULTS TOGETHER SAY: the residual is NOT the json_write
 # strings. The chunk histogram after LEAK 20 shows, per request, roughly
 # 5x40 B, 3x32 B, 2.7x16 B, 1x64 B and 1x56 B - a dozen small chunks, which is
 # the shape of a JSON TREE, not of two large serialised strings. Freeing strings
@@ -646,7 +646,7 @@ ESCENES_STR2_SITES = ()          # was ((0x165B8, 0xEB001A0E),)
 # (`beq 34c50` at 0x34c0c, and the loop exit), which a `b` into a stub handles
 # because both arrivals fall into it - but it is why the displaced instruction has
 # to be reproduced rather than dropped.
-# 🚨 BUILT, MEASURED, AND NOT SHIPPED - the free is correct and frees NOTHING on
+# BUILT, MEASURED, AND NOT SHIPPED - the free is correct and frees NOTHING on
 # this unit, because the tree is always NULL. Same verdict as LEAKS 21 and 22,
 # reached the same way, and the evidence is specific rather than a null slope:
 #
@@ -657,7 +657,7 @@ ESCENES_STR2_SITES = ()          # was ((0x165B8, 0xEB001A0E),)
 # The stub itself definitely runs - 0x69580 and 0x6958c each execute exactly once
 # per request - so this is not the "stub never written" failure. r6 is simply 0.
 #
-# 🔑 WHY, and it is not a mystery once the right string is read:
+# WHY, and it is not a mystery once the right string is read:
 # checkIfSceneExists parses the file named by the pointer at 0x90e94, which is
 # 0x8b080 = "/opt/tuxedo/configuration/hascenedb.json" - the ZWAVE scene database,
 # which is **0 bytes** on this unit (and on the bench). Not hatcscenedb.json, the
@@ -714,12 +714,12 @@ VALIDPAGE_SITES = ((0x13B68, 0xE28DD004),)
 # wrong one corrupts the heap.
 #
 # Freed by wrapping the strcmp, which is the same shape as LEAK 12's printf stub.
-# ⚠ THE RESULT CANNOT BE HELD IN A REGISTER ACROSS THE FREE. Every callee-saved
+# THE RESULT CANNOT BE HELD IN A REGISTER ACROSS THE FREE. Every callee-saved
 # register here is live -- r4 is the loop counter, r5 the entry count, r6 the tree,
 # r7 the target name -- so the compare result goes on the stack instead, over the
 # stashed r1. Registers dead after the compare are r1 (reassigned at 0x13b54), r2
 # and r3, so popping into those is safe; lr must come back for the `bx lr`.
-# 🚨 BUILT, MEASURED, NOT SHIPPED - it changes nothing, and the reasoning that
+# BUILT, MEASURED, NOT SHIPPED - it changes nothing, and the reasoning that
 # predicted otherwise was wrong in a way worth writing down.
 #
 #   per-request bytes on cmd=141:  + LEAK 24        39 B
@@ -729,7 +729,7 @@ VALIDPAGE_SITES = ((0x13B68, 0xE28DD004),)
 # The stub RUNS - 0x695b0, 0x695b8 and 0x695c8 each execute exactly once per
 # request - so this is not the never-reached failure.
 #
-# 🔑 "Once per request" is the finding. I predicted up to 29 frees per request,
+# "Once per request" is the finding. I predicted up to 29 frees per request,
 # one per map entry, and the trace says the loop body runs ONCE. So the 32-byte
 # row at ~1.16 per request was never the loop, and the arithmetic said so before
 # the trace did: 349 growth over 300 requests is 1.16, not 10 or 29. **When a
@@ -739,7 +739,7 @@ VALIDPAGE_SITES = ((0x13B68, 0xE28DD004),)
 # What the 32-byte chunks actually hold is POINTERS, not text - a 0x21 header then
 # pointer pairs, the shape of an internal node - so they belong to some other
 # structure abandoned once per request, still unidentified.
-# ✅ LEAK 26 - THE SAME STUB, ON A SITE THAT ACTUALLY RUNS: the tokenkey compare
+# LEAK 26 - THE SAME STUB, ON A SITE THAT ACTUALLY RUNS: the tokenkey compare
 # in handlerequest_html076EF::service, once per request.
 #
 #   3a42c  bl json_get(r6, "...")   the CSRF token node
@@ -776,14 +776,14 @@ VALIDSTR_SITES = ((0x3A44C, 0xEBFF45FB),)   # 0x13B40 stays OFF: measured zero
 #   34e34  json_as_string                   -> the scene name             LEAK
 #   34ec0  add sp,#12 ; pop                 the ONE exit, frees nothing
 #
-# ⚠ THE TREES CANNOT BE FREED AT THIS EXIT, and that is not timidity. On the match
+# THE TREES CANNOT BE FREED AT THIS EXIT, and that is not timidity. On the match
 # branch `moveq r0,r7 ; moveq r1,r6 ; bl json_push_back` pushes tree A INTO tree C,
 # and the loop pushes nodes of tree B into tree C as well, so r5, r6 and r7 share
 # nodes on the full path and freeing any two double-frees. The early-exit paths do
 # not alias, but they converge on this same exit, which therefore cannot tell them
 # apart. Freeing the trees needs per-path stubs, not this one.
 #
-# ✅ The Base64Decode buffer has no such problem: a plain malloc'd string, never
+# The Base64Decode buffer has no such problem: a plain malloc'd string, never
 # pushed into any tree. And it is ALWAYS written -- Base64Decode (0x33d98) is
 # straight-line with no branches and stores to the out param at 0x33db0
 # unconditionally -- so [sp+4] is never uninitialised stack. NULL-guarded anyway,
@@ -800,7 +800,7 @@ EDITSCENE_SITES = ((0x34EC0, 0xE28DD00C),)
 # malloc'd buffer. The 32 B (+350) and 40 B (+299) rows are the TREES, and the
 # shared exit cannot free them because the full path aliases them together.
 #
-# 🔑 But the aliasing only exists AFTER the loop, and the early exits happen
+# But the aliasing only exists AFTER the loop, and the early exits happen
 # before it. On the r6 == NULL branch:
 #
 #   34df4  cmp r6, #0
@@ -813,7 +813,7 @@ EDITSCENE_SITES = ((0x34EC0, 0xE28DD00C),)
 # reachable: a client that repeatedly POSTs unparseable `scenedata` leaks two trees
 # per request. That is the one worth closing first.
 #
-# ⚠ CONDITIONAL SITE. 0x34E00 is `beq`, not `b`, and the stub must run only when
+# CONDITIONAL SITE. 0x34E00 is `beq`, not `b`, and the stub must run only when
 # the branch is taken. The redirect keeps cond = EQ (0x0), the same technique the
 # IPC skip site uses for `bls` -- a plain `b` here would free on every call and
 # skip the rest of the function.
@@ -832,7 +832,7 @@ EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 # the formatted `{"Result" : "<base64>"}` (120 B), the base64 itself (96 B) and
 # the inner `{"Status":"Sucess",...}` (64 B), one of each per request.
 #
-# 🔑 THE VENDOR'S OWN CODE SHOWS THE INTENDED PATTERN, on the sibling path:
+# THE VENDOR'S OWN CODE SHOWS THE INTENDED PATTERN, on the sibling path:
 #
 #   29014  mov lr,pc ; ldr pc,[ip,#16]   module->method16(...) -> r0 = a string
 #   29034  HttpResponse_printf(r9, r4)
@@ -854,16 +854,16 @@ EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 # and the freeing sibling at 0x29014 runs ZERO times, so this path is the one
 # taken and the free genuinely never happens.
 #
-# ⚠ json_free, NOT free. The vendor frees the sibling's string with plain `free`,
+# json_free, NOT free. The vendor frees the sibling's string with plain `free`,
 # but that one comes from a different producer; this slot holds a
 # json_write_formatted result, which the libjson contract says must go to
 # json_free. Using the wrong one corrupts the heap, so this is bench-verified
 # under load before it goes anywhere near the panel.
 #
-# ⚠ HIGH BLAST RADIUS: WnmpDir_serviceField is ~11 000 lines and serves EVERY API
+# HIGH BLAST RADIUS: WnmpDir_serviceField is ~11 000 lines and serves EVERY API
 # endpoint, not just this one. r0 is dead at 0x290fc (reassigned at 0x29104) and
 # lr is stale there, but lr is saved anyway rather than reasoned about.
-# 🚨 BUILT, TESTED ON THE BENCH, AND IT CRASHES. DO NOT SHIP THIS SITE.
+# BUILT, TESTED ON THE BENCH, AND IT CRASHES. DO NOT SHIP THIS SITE.
 #
 #   *** glibc detected *** /opt/webserver/Barracuda: free(): invalid pointer:
 #       0x40bddcd8 ***
@@ -874,7 +874,7 @@ EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 # which also means the 120-byte formatted response is NOT leaked here, and the
 # 733 B/request comes from elsewhere in the chain.
 #
-# 🔑 The reasoning that produced this was good and still wrong, which is the part
+# The reasoning that produced this was good and still wrong, which is the part
 # worth keeping. The vendor's sibling path at 0x29014 really does print-then-free
 # an equivalent string; the `get` path really does drop the out slot; the trace
 # really does show 0x290fc running once per request while the freeing sibling
@@ -882,7 +882,7 @@ EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 # free. **An ownership argument assembled from a sibling path is a hypothesis,
 # not a contract.**
 #
-# ⚠ AND THIS IS WHY IT WAS BENCH-ONLY. WnmpDir_serviceField serves EVERY API
+# AND THIS IS WHY IT WAS BENCH-ONLY. WnmpDir_serviceField serves EVERY API
 # endpoint, so on the panel this would have corrupted the heap on the first API
 # request and cost two relaunch units per crash. Prove a free on the bench under
 # load before it goes near the unit; that rule earned itself here.
@@ -892,28 +892,28 @@ EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 WNMPGET_STUB = 0x69614
 WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both allocators
 
-# LEAK 30 - WnmpDir_serviceField's API exit JUMPS PAST ITS OWN CLEANUP, leaking the
-# per-request JSON tree. Exactly one tree per API request.
+# LEAK 30 - WnmpDir_serviceField's API exit jumps past its own cleanup, leaking the
+# per-request JSON tree.
 #
-# 🔑 FOUND BY COUNTING, NOT BY READING. libjson is built with JSON_MEMORY_MANAGE and
+# Found by counting, not by reading. libjson is built with JSON_MEMORY_MANAGE and
 # keeps a std::map of every pointer its C API issues, so the map's node count is the
 # number of outstanding allocations (docs/ALLOCATOR-REWORK.md). leakfix/jsoncount.py
-# reads it. Over 300 x /GetSceneList the NODE registry went 4 -> 304: exactly
-# 1.0000 leaked JSONNode tree per request, an integer match over 300 requests.
+# reads it. Over 300 x /GetSceneList the NODE registry went 4 -> 304: 1.0000 leaked
+# JSONNode tree per request.
 #
-# That is the residual LEAKs 21 and 22 could not find, and their note called it:
+# That is the residual LEAKs 21 and 22 could not find; their note predicted the shape -
 # "a dozen small chunks, which is the shape of a JSON TREE, not of two large
-# serialised strings. Freeing strings was the wrong target." It was a tree.
+# serialised strings. Freeing strings was the wrong target."
 #
-# 🚨 THE FIRST ATTEMPT AT THIS FIX TARGETED THE WRONG FUNCTION, AND THE COUNTER SAID
-# SO. WnmpDir_service (0x2a00c/0x2a078) reads exactly like the leak - one json_new,
-# one json_write, no json_delete - and it does run once per request. But patching it
-# moved the count by NOTHING: 69->1007 strings and 4->304 nodes in BOTH arms, with
-# the patched binary and its stub bytes verified present in the tree. That branch of
-# WnmpDir_service is simply never taken for /GetSceneList. Reading a plausible site
-# is not evidence it executes; the A/B is.
+# The first attempt targeted the wrong function and the counter said so.
+# WnmpDir_service (0x2a00c/0x2a078) reads like the leak - one json_new, one
+# json_write, no json_delete - and does run once per request. Patching it moved the
+# count by nothing: 69->1007 strings and 4->304 nodes in BOTH arms, with the patched
+# binary and its stub bytes verified present in the tree. That branch of
+# WnmpDir_service is never taken for /GetSceneList. Reading a plausible site is not
+# evidence it executes; the A/B is.
 #
-# The real path, found by tracing ALL of WnmpDir_serviceField (0x1eedc..0x29978) and
+# The real path, found by tracing all of WnmpDir_serviceField (0x1eedc..0x29978) and
 # intersecting the executed translation-block starts with its call sites. Of ~350
 # json_new and ~330 json_write sites in that generated dispatcher, exactly TWO
 # libjson calls run per request, and NO json_delete, json_free or json_write at all:
@@ -932,66 +932,59 @@ WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both
 # verified in libjson at 0x26020 (_Rb_tree_rebalance_for_erase + operator delete),
 # not assumed - without it this would predict +2 and the measurement would refute it.
 #
-# ✅ THIS IS A VENDOR BUG, NOT ONE WE INTRODUCED. Stock holds the identical
-# `b 29874` at 0x2955c. The neighbouring `b 65850` at 0x2954c IS ours (CAVE8), and it
-# faithfully reproduces the displaced `ldr r3,[r2]` before branching back to 0x29550
-# - checked, because a patch of ours sitting two instructions from a leak is exactly
-# the coincidence worth ruling out rather than assuming.
+# A vendor bug, not one we introduced: stock holds the identical `b 29874` at
+# 0x2955c. The neighbouring `b 65850` at 0x2954c is ours (CAVE8) and reproduces the
+# displaced `ldr r3,[r2]` before branching back to 0x29550 - checked, because a patch
+# of ours two instructions from a leak is a coincidence worth ruling out.
 #
-# ⚠ THE STUB DELETES r7 ONLY, NOT r6, so it does NOT simply jump to the vendor's
-# cleanup at 0x29860. On this path r6 is a STACK ADDRESS, not a tree - 0x1f024 sets
+# The stub deletes r7 only, not r6, so it does not jump to the vendor's cleanup at
+# 0x29860. On this path r6 is a stack address, not a tree: 0x1f024 sets
 # `sub r6, fp, #75` and 0x1f004 passes it to json_new_a as the value buffer. Reusing
 # the vendor's two-delete cleanup would hand json_delete a stack pointer.
 #
-# ✅ json_delete is SAFER THAN json_free, and the difference matters when reading a
-# failure here. json_delete DOES branch on registry membership - `cmp r1, r0` /
-# `beq 25b48` at libjson 0x25b30 skips the erase when find() returned end() - whereas
-# json_free computes the same test, hands it to a non-fatal assert, and then erases
-# anyway. So a bad pointer to json_delete does NOT corrupt the registry; it only
-# reaches deleteJSONNode. That is why the 0x2955c failure is a wedge rather than a
-# heap abort, and it is what rules OUT "the registry erase looped" as the
-# explanation, leaving the object still being live.
+# json_delete is safer than json_free. json_delete branches on registry membership -
+# `cmp r1, r0` / `beq 25b48` at libjson 0x25b30 skips the erase when find() returned
+# end() - whereas json_free computes the same test, hands it to a non-fatal assert,
+# and erases anyway. So a bad pointer to json_delete does not corrupt the registry;
+# it only reaches deleteJSONNode. That is why the 0x2955c failure is a wedge rather
+# than a heap abort, and it rules out "the registry erase looped", leaving the object
+# still live.
 #
 # lr is expendable in the stub: the epilogue returns with `ldm sp, {...pc}` off the
 # frame, not through lr, so `blne json_delete` may clobber it. Same shape as
 # build_checkscene_stub.
-# 🚨 BUILT, MEASURED, AND NOT SHIPPED - the delete WEDGES the request. With the stub
-# in, the server starts, serves `/` with 302, and then the first /GetSceneList never
-# returns: the client times out reading the response. The process does NOT die - it
-# is still alive afterwards with no glibc abort, no segfault and nothing in its log
-# but the usual vendor noise - so this is not a mismatched free. It reads as a
-# use-after-free: r7 is still needed after 0x2955c, so the tree is not ownerless
-# there even though nothing ever deletes it.
+# BUILT, MEASURED, NOT SHIPPED - the delete WEDGES the request. With the stub in the
+# server starts, serves `/` with 302, and the first /GetSceneList never returns: the
+# client times out reading the response. The process does not die - alive afterwards
+# with no glibc abort, no segfault and nothing in its log but the usual vendor noise
+# - so this is not a mismatched free. It reads as a use-after-free: r7 is still
+# needed after 0x2955c, so the tree is not ownerless there even though nothing
+# deletes it.
 #
 # So the leak is CONFIRMED and its site is NOT. What holds:
-#   - exactly 1.0000 JSONNode trees leak per request (counter, 300 requests)
+#   - 1.0000 JSONNode trees leak per request (counter, 300 requests)
 #   - the tree is json_new @0x1ef04, and json_push_back @0x1f014 erases its child
-#   - the exit at 0x2955c does jump past the vendor's own json_delete pair @0x29860
+#   - the exit at 0x2955c jumps past the vendor's own json_delete pair @0x29860
 #   - stock has the identical branch, so this is a vendor bug, not ours
 # What does NOT hold: that r7 is dead at 0x2955c, or that this exit is where the
-# release belongs.
-#
-# 🔑 TWO SITES NOW REFUTED FOR THE SAME LEAK, EACH BY A DIFFERENT SIGNATURE, and the
-# signatures are worth keeping apart because they mean different things:
-#   - WnmpDir_service 0x2a084: the A/B moved the counter by NOTHING and the server
-#     stayed healthy -> the code never ran.
+# release belongs. Two sites are refuted, each by a different signature:
+#   - WnmpDir_service 0x2a084: the A/B moved the counter by nothing and the server
+#     stayed healthy -> the code never ran. Wrong path.
 #   - WnmpDir_serviceField 0x2955c: the request WEDGED -> the code ran and the object
-#     was still live.
-# A null result and a hang are different evidence. The first says "wrong path", the
-# second says "right path, wrong lifetime".
+#     was still live. Right path, wrong lifetime.
 #
 # Where the next attempt should start: find who still uses r7 after 0x2955c. The tree
-# is built at the very top of serviceField (0x1ef04, before any endpoint dispatch),
-# so it is the request-scoped root the whole dispatcher shares, and its real release
-# point is probably in the CALLER, after the response has been written. Read the
-# caller's frame rather than adding another delete inside serviceField.
+# is built at the very top of serviceField (0x1ef04, before any endpoint dispatch), so
+# it is the request-scoped root the whole dispatcher shares; its release point is
+# probably in the caller, after the response is written. Read the caller's frame rather
+# than adding another delete inside serviceField.
 #
-# ⚠ Do not re-enable without re-running leakfix A/B on the bench. The site tuple and
+# Do not re-enable without re-running leakfix A/B on the bench. The site tuple and
 # stub are kept here, disabled, so the next attempt inherits the two refutations
 # instead of re-deriving them.
 RESPTREE_NOOP = False            # bisect switch; see build_resptree_stub
 
-# LEAK 30, third site: delete the tree where it is PROVABLY the tree.
+# LEAK 30, third site: delete the tree where it is provably the tree.
 #
 # The 0x2955c attempt failed because r7 is not the registered pointer that far down
 # (measured: the node count rose instead of staying flat). At 0x1f0f4 there is no
@@ -1003,48 +996,47 @@ RESPTREE_NOOP = False            # bisect switch; see build_resptree_stub
 # consumes, so the stub must restore r0 and re-execute the compare LAST. `bx lr`
 # does not disturb flags.
 #
-# 🚨 RUN, AND IT WEDGES TOO - identically to 0x2955c. So the tree cannot be deleted
-# at the one place its identity is beyond doubt either, and the site is not the
-# problem. Combined with the earlier results the picture is:
+# Run, and it WEDGES too - identically to 0x2955c. So the tree cannot be deleted even
+# where its identity is beyond doubt, and the site is not the problem. With the
+# earlier results:
 #
 #   0x2955c, plain           WEDGES
 #   0x2955c, r0-r3 preserved WEDGES
 #   0x1f0f4, r7 provably the tree   WEDGES
 #   any of the above with a NOP where the free goes   CLEAN, 300/300
 #
-# ✅ And the tree is ordinary: `mov r0, #5` at 0x1eef0 gives json_new the same type
-# argument every other call site uses (e.g. 0x1f1c8), so it is not a malformed node
-# from a stray type. Checked because the `bl` at 0x1ef04 has no r0 setup adjacent to
-# it, which looked suspicious and turned out to be four instructions earlier.
+# The tree is ordinary: `mov r0, #5` at 0x1eef0 gives json_new the same type argument
+# every other call site uses (e.g. 0x1f1c8), so it is not a malformed node from a
+# stray type. Checked because the `bl` at 0x1ef04 has no r0 setup adjacent to it; the
+# setup is four instructions earlier.
 #
-# 🔑 So `json_delete` on THIS tree hangs wherever it is called, and one hung worker
-# stops the whole server because it holds the dispatcher mutex. The next investigator
-# should stop moving the call site - that variable is exhausted - and instrument the
-# delete itself: trace inside libjson's deleteJSONNode (0x8344 PLT) to see where it
-# stops, or dump the tree's node structure from guest memory before the delete.
-# jsoncount.py already reads guest memory through /proc/pid/mem on the bench.
+# So `json_delete` on THIS tree hangs wherever it is called, and one hung worker stops
+# the whole server because it holds the dispatcher mutex. Stop moving the call site -
+# that variable is exhausted - and instrument the delete itself: trace inside
+# libjson's deleteJSONNode (0x8344 PLT) to see where it stops, or dump the tree's node
+# structure from guest memory before the delete. jsoncount.py already reads guest
+# memory through /proc/pid/mem on the bench.
 #
-# ⚠ EXPERIMENT, bench only, and left disabled. Even had it worked it would not be
-# automatically safe for the other ~350 endpoint arms, which may still use the tree
-# after this point - the site is on the shared preamble, not inside an arm.
+# EXPERIMENT, bench only, left disabled. Even had it worked it would not be safe for
+# the other ~350 endpoint arms, which may still use the tree after this point - the
+# site is on the shared preamble, not inside an arm.
 EARLYTREE_STUB = 0x696E0
 EARLYTREE_SITES = ()             # was ((0x1F0F4, 0xE3500000),) -- WEDGES, see above
 RESPTREE_STUB = 0x696C0
 RESPTREE_SITES = ()              # was ((0x2955C, 0xEA0000C4),) -- WEDGES the request
 SERVICEFIELD_EPILOGUE = 0x29874
 
-# 🔑 THE WEDGE REPRODUCES, AND FOUR EXPLANATIONS FOR IT ARE NOW REFUTED. Recorded so
-# the next attempt starts from the eliminations rather than repeating them:
+# The wedge reproduces, and four explanations for it are refuted. Recorded so the next
+# attempt starts from the eliminations:
 #
 #   1. flaky bench          NO - control passes 300/300 immediately before each
 #                                failure, and the wedge reproduced twice
-#   2. r7 is not the tree   *** THIS ONE IS ACTUALLY TRUE - see item 7. The static
-#                                analysis said otherwise and the static analysis was
-#                                wrong. scratchpad/liveness.py reconstructs the
-#                                executed blocks from the qemu trace and reports zero
-#                                writes to r7 between 0x1ef0c and 0x2955c; a direct
-#                                measurement contradicts it. Do not trust that tool's
-#                                negative result without a measured cross-check.
+#   2. r7 is not the tree   *** TRUE - see item 7. The static analysis said otherwise
+#                                and was wrong. scratchpad/liveness.py reconstructs
+#                                the executed blocks from the qemu trace and reports
+#                                zero writes to r7 between 0x1ef0c and 0x2955c; a
+#                                direct measurement contradicts it. Do not trust that
+#                                tool's negative result without a measured cross-check.
 #   3. r0 clobbered         NO - json_delete destroys r0, which is serviceField's
 #                                return value, but a stub that pushes/pops
 #                                {r0,r1,r2,r3,lr} around the call wedges identically
@@ -1053,65 +1045,58 @@ SERVICEFIELD_EPILOGUE = 0x29874
 #                                never enters serviceField and this exit is purely
 #                                per-request
 #
-# And the tree really is dead there: its last use is 0x1f0e0 json_get / 0x1f0e4
-# json_as_string, whose copy our own 0x693dc stub frees, after which the endpoint
-# dispatch runs entirely off the stack buffer at fp-47 (0x29044 `sub r0, fp, #47`)
-# and never touches r7 again.
+# The tree really is dead there: last use 0x1f0e0 json_get / 0x1f0e4 json_as_string,
+# whose copy our own 0x693dc stub frees, after which dispatch runs off the stack buffer
+# at fp-47 (0x29044 `sub r0, fp, #47`) and never touches r7 again.
 #
-# ✅ 5. THE BISECT WAS RUN, AND IT ISOLATES THE FREE. `RESPTREE_NOOP = True` builds
-# the identical stub - same site word, same redirect, same push/pop, same
-# `mov r0, r7` - with a NOP where the `blne json_delete` goes. That binary serves
-# 300/300 with HTTP 200 and counts 69->1007 strings and 4->304 nodes, i.e. exactly
-# the control's behaviour. So the control flow, the branch to 0x29874, the site word
-# and the register traffic are all sound, and **the json_delete call itself is what
-# wedges the request**.
+# 5. The bisect isolates the free. `RESPTREE_NOOP = True` builds the identical stub -
+# same site word, same redirect, same push/pop, same `mov r0, r7` - with a NOP where
+# the `blne json_delete` goes. That binary serves 300/300 with HTTP 200 and counts
+# 69->1007 strings and 4->304 nodes, the control's behaviour. So the control flow, the
+# branch to 0x29874, the site word and the register traffic are all sound: the
+# json_delete call itself wedges the request. The tree is aliased by something that
+# outlives the handler, even though no further libjson call touches it.
 #
-# 🔑 Which means the tree is ALIASED by something that outlives the handler, even
-# though no further libjson call touches it.
+# 6. The obvious candidate for that alias is refuted too. The response body looked
+# like the holder - printed at 0x29458 but not flushed until the handler returns - but
+# HttpResponse_printf copies. It is a 0x30-byte varargs shim that marshals into
+# HttpResponse_vprintf (0x6b5d0), which tail-branches to BufPrint_vprintf (0x63258)
+# with the response's own BufPrint at [r4,#52]. Output is formatted into that buffer;
+# no caller pointer is retained. This agrees with the vendor's printf-then-free at
+# 0x29034/0x2903c, which would be a use-after-free otherwise. So the alias is not the
+# response body.
 #
-# ⚠ 6. AND THE OBVIOUS CANDIDATE FOR THAT ALIAS IS REFUTED TOO. The response body
-# looked like the holder - printed at 0x29458 but not flushed until the handler
-# returns - but HttpResponse_printf COPIES. It is a 0x30-byte varargs shim that
-# marshals into HttpResponse_vprintf (0x6b5d0), which tail-branches to
-# BufPrint_vprintf (0x63258) with the response's own BufPrint at [r4,#52]. Output is
-# formatted into that buffer; no caller pointer is retained. This also agrees with
-# the vendor's printf-then-free at 0x29034/0x2903c, which would be a use-after-free
-# otherwise.
-#
-# So the alias is NOT the response body.
-#
-# 🚨 7. AND THE COUNTER SETTLES IT: r7 IS NOT THE REGISTERED TREE AT 0x2955c. Running
-# ONE API request against the patched binary and reading the registry either side:
+# 7. The counter settles it: r7 is not the registered tree at 0x2955c. One API request
+# against the patched binary, registry read either side:
 #
 #     before  69 strings,  4 nodes     :80 -> 302
 #     one API request                  -> client read timeout
 #     after  110 strings,  5 nodes     :80 -> 000, process still alive
 #
-# The node count goes UP by one, exactly as in the control. If json_delete had run on
-# the registered root the count would be unchanged (created +1, deleted -1). So the
-# erase never happened - and json_delete DOES branch on membership (libjson 0x25b30),
-# so a pointer it cannot find in the registry skips the erase and falls straight into
+# The node count goes up by one, as in the control. If json_delete had run on the
+# registered root the count would be unchanged (created +1, deleted -1). So the erase
+# never happened - and json_delete branches on membership (libjson 0x25b30), so a
+# pointer it cannot find in the registry skips the erase and falls straight into
 # deleteJSONNode. That is the hang: deleteJSONNode walking a child list on something
 # that is not a JSONNode.
 #
-# 🔑 AND ONE STUCK HANDLER KILLS THE WHOLE SERVER. After that single request, plain
-# HTTP on :80 stops answering too, while the process stays alive. The worker is stuck
-# inside json_delete holding the dispatcher mutex, which is held across the handler
-# and released only around blocking send() - so every other request blocks behind it.
-# This is the concurrency model from docs/ALLOCATOR-REWORK.md section 2 demonstrated
-# the hard way, and it is why a global free-by-scope was never worth the risk.
+# One stuck handler kills the whole server. After that single request, plain HTTP on
+# :80 stops answering too while the process stays alive. The worker is stuck inside
+# json_delete holding the dispatcher mutex, which is held across the handler and
+# released only around blocking send(), so every other request blocks behind it. This
+# is the concurrency model from docs/ALLOCATOR-REWORK.md section 2, and why a global
+# free-by-scope was never worth the risk.
 #
 # So the leak stands and the register holding the tree at that exit is still unknown.
-# The static liveness pass claims r7 is untouched on the executed path and the
-# measurement says it is not the registered pointer; the tool is wrong somewhere, most
-# likely in reconstructing block extents across calls. Next: instead of reasoning
-# about registers, read the tree pointer directly. json_new's result at 0x1ef04 can be
-# captured into a spare slot by a stub at that site, and the exit stub can free THAT
-# slot rather than trusting any register to have survived 0xa000 bytes of dispatch.
+# The liveness pass claims r7 is untouched on the executed path, the measurement says
+# it is not the registered pointer; the tool is wrong somewhere, most likely in
+# reconstructing block extents across calls. Next: read the tree pointer directly
+# rather than reasoning about registers. json_new's result at 0x1ef04 can be captured
+# into a spare slot by a stub at that site, and the exit stub can free THAT slot rather
+# than trusting any register to have survived 0xa000 bytes of dispatch.
 #
-# ⚠ Keep RESPTREE_NOOP as the control for any future attempt here. A stub that
-# changes everything EXCEPT the free is the only way to tell a bad free from a bad
-# redirect, and it took four wrong guesses to reach for it.
+# Keep RESPTREE_NOOP as the control for any future attempt here. A stub that changes
+# everything except the free is the only way to tell a bad free from a bad redirect.
 
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
@@ -1399,12 +1384,12 @@ def build_resptree_stub():
     """Delete the per-request tree the API exit jumps past, then run the epilogue.
 
     Reached by `b` from 0x2955c, so it never returns to the site: it performs the
-    delete the vendor's own cleanup would have done and then branches on to the
-    epilogue at 0x29874, which is where the displaced branch was going.
+    delete the vendor's own cleanup would have done, then branches to the epilogue at
+    0x29874, where the displaced branch was going.
 
-    Deletes r7 ONLY. The vendor cleanup at 0x29860 also deletes r6, but on this path
+    Deletes r7 only. The vendor cleanup at 0x29860 also deletes r6, but on this path
     r6 holds `fp - 75`, a stack buffer, so reusing that code would hand json_delete a
-    stack pointer. No push: lr is expendable because the epilogue returns through
+    stack pointer. lr is expendable because the epilogue returns through
     `ldm sp, {...pc}` off the frame rather than through lr.
     """
     g = RESPTREE_STUB

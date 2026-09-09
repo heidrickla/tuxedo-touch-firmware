@@ -5,11 +5,11 @@
 # fixed. This drives each in turn and reports the chunk growth, so the next fix is
 # chosen by size rather than by which function looked suspicious.
 #
-# ⚠ Ten session slots, reaped only when the HttpSession dies, and every scenedrive
+# Ten session slots, reaped only when the HttpSession dies, and every scenedrive
 # invocation logs in once. So this restarts the server between commands -- without
 # that, later commands measure an exhausted table and report a clean zero.
 #
-# ⚠ Growth here is NOT yet a per-request rate: each measured phase includes one
+# Growth here is NOT yet a per-request rate: each measured phase includes one
 # login, which allocates. Anything that looks interesting must then be re-measured
 # at two request counts, because a per-login constant divided by N looks exactly
 # like a small leak.

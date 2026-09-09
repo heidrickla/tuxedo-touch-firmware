@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Check the push-stream auth gate on the TLS listeners.
 
-curl on a modern host cannot negotiate with this server's SharkSSL build -- it fails
-in ~10 ms with an immediate cipher rejection, which looks identical to a dead
-listener. Reporting that as a failed check would be wrong: the same curl fails
-against the live panel, which is demonstrably healthy.
+curl on a modern host cannot negotiate with this server's SharkSSL build: it fails in
+~10 ms with an immediate cipher rejection, which looks identical to a dead listener.
+The same curl fails against the healthy live panel, so the failure is curl's.
 
-Python's ssl module with SECLEVEL lowered does complete the handshake, so this is the
-client that can tell "denied" from "unreachable". A 401 is the correct answer; a 200
-would mean P13 has regressed and live alarm state is readable without a session.
+Python's ssl module with SECLEVEL lowered completes the handshake, so it can tell
+"denied" from "unreachable". A 401 is the correct answer; a 200 means P13 has regressed
+and live alarm state is readable without a session.
 """
 import http.client
 import ssl
@@ -26,10 +25,9 @@ def ctx():
         c.set_ciphers("ALL:@SECLEVEL=0")
     except ssl.SSLError:
         c.set_ciphers("ALL")
-    # OpenSSL 3 refuses this server outright with
-    # UNSAFE_LEGACY_RENEGOTIATION_DISABLED, which surfaces identically to a dead
-    # listener. SharkSSL of this vintage does not implement RFC 5746, so the
-    # option is required to reach it at all.
+    # OpenSSL 3 refuses this server with UNSAFE_LEGACY_RENEGOTIATION_DISABLED, another
+    # failure that looks like a dead listener. SharkSSL of this vintage does not
+    # implement RFC 5746, so the option is required to reach it at all.
     for name in ("OP_LEGACY_SERVER_CONNECT", "OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"):
         opt = getattr(ssl, name, None)
         if opt is not None:

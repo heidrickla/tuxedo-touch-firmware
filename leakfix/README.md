@@ -69,12 +69,12 @@ file's shape before assuming that still holds.
 not extend by a byte. A further 400 messages under `ipcverify.sh` changed
 nothing, and the HTTP API path still measures 0.0 B/request.
 
-🔑 **Meter the GUEST heap, never qemu's RSS.** The qemu process grows ~34.9 kB
+**Meter the GUEST heap, never qemu's RSS.** The qemu process grows ~34.9 kB
 per message against the guest's 10.9 kB; the difference is qemu's own
 per-guest-thread cost, which the panel does not pay. An early figure of
 "38.5 kB per message" was that confound.
 
-⚠ **`--without-ipc` rebuilds `a84c220a` byte-for-byte.** That is the control:
+**`--without-ipc` rebuilds `a84c220a` byte-for-byte.** That is the control:
 run it after any edit here, and if the md5 moves you changed something you did
 not mean to.
 
@@ -120,7 +120,7 @@ json_parse_unformatted` and the preceding `bl json_strip_white_space` — so
 anything that is not actually this pattern refuses rather than being silently
 rewritten.
 
-⚠ There are **58** `json_parse_unformatted` calls but only 44 follow a strip.
+There are **58** `json_parse_unformatted` calls but only 44 follow a strip.
 Redirect only the 43; the rest take a different argument.
 
 ## Page sweep: every measurable page reads 0.0 after LEAK 19
@@ -132,14 +132,14 @@ Redirect only the 43; the rest take a different argument.
     302 by design   index, occupancy, pList  -- their 0.0 means nothing
     unmeasurable    zwavedevicelist
 
-🚨 **`/zwavedevicelist.html` wedges the webserver under a couple of hundred
+**`/zwavedevicelist.html` wedges the webserver under a couple of hundred
 requests, on the patched and unpatched builds alike** — so it is a vendor
 defect, not a regression. At 20 requests it is harmless; at 200 the server stops
 answering *any* page while the process stays alive, sleeping, with all four
 listeners bound. A restart clears it. Same family as the ~60-parameter API
 crash in `docs/TUXEDO-AUDIT-BUGS.md`.
 
-⚠ It first looked like the documented "wedges under sustained load", because in
+It first looked like the documented "wedges under sustained load", because in
 the sweep it sat at position 17 and everything after it failed too. Running it
 **first** on a freshly started server wedges it immediately. When a failure
 shows up late in a sequence, re-run it first before concluding it is cumulative
@@ -180,7 +180,7 @@ afterwards. They simply release nothing that was accumulating. Both are kept in
 `mkapifix.py` with their `*_SITES` tuples emptied, so the next attempt knows what
 was tried and what it produced.
 
-🔑 **The two null results together are the useful finding: the residual is not
+**The two null results together are the useful finding: the residual is not
 the strings.** The chunk histogram after LEAK 20 shows, per request, roughly
 
     5 x 40 B    3 x 32 B    2.7 x 16 B    1 x 64 B    1 x 56 B
@@ -202,7 +202,7 @@ So it is libjson error nodes plus extra copies of the encoded response, not a tr
 of ours. `Children is null inc` is libjson complaining about a node with no
 children, which fits: the scene database is all placeholder slots.
 
-🔑 **AND THE BENCH IS FAITHFUL HERE — checked, not assumed.**
+**AND THE BENCH IS FAITHFUL HERE — checked, not assumed.**
 `hatcscenedb.json` is **byte-identical on the bench and the panel** (3182 bytes,
 every entry `"id":0, "name":"", "isUsed":0`), so "No scenes found" is what the
 panel returns too and this residual is real rather than an artefact of an empty
@@ -211,11 +211,11 @@ empty-database branch the panel does not — is exactly the mistake that cost a 
 on the IPC path. Re-check the two files before trusting any future measurement
 here.
 
-⚠ Note the scene names visible in the web UI (`Bed time`, `Evening time`, ...)
+Note the scene names visible in the web UI (`Bed time`, `Evening time`, ...)
 come from `voicecommandglobal.json`'s `SCENES` list, **not** from
 `hatcscenedb.json`. Seeing them does not mean scenes are configured.
 
-## 🚨 `/GetSceneList` STILL LEAKS 733 B/request — re-measured 2026-09-08 on `0066ad95`
+## `/GetSceneList` STILL LEAKS 733 B/request — re-measured 2026-09-08 on `0066ad95`
 
 The "491.5 B/request" figure below is **stale and was measured with a
 page-quantised instrument**. On the current build, with the chunk histogram:
@@ -237,16 +237,16 @@ formatted, and **every stage is abandoned**. The 120 B chunk is the
 0x165f0 — the one allocation whose fate is decided by the CALLER, which is why the
 handler-side analysis below could not account for it.
 
-✅ **The histogram reconciles with the slope — 662 of 733 B/request, 90.3%** — so
+**The histogram reconciles with the slope — 662 of 733 B/request, 90.3%** — so
 this leak is accounted for, not merely observed. Per-class rates, which matter
 because the named chunks are not all one-per-request:
 
     32 B 132.6   120 B 120.8   40 B 119.3   64 B 118.6
     96 B  95.4    16 B  45.0   24 B  30.3    -> 662.0 B/req, 71 B unattributed
 
-⚠ 120 B and 96 B do run at ~1.0/request, but **64 B runs at 1.85/request** — there
+120 B and 96 B do run at ~1.0/request, but **64 B runs at 1.85/request** — there
 is a second 64 B allocation beyond the named `{"Status":"Sucess"…}` one.
-🔑 **The 32 B class is the largest, at 4.14 chunks/request, and it is libjson
+**The 32 B class is the largest, at 4.14 chunks/request, and it is libjson
 REGISTRY OVERHEAD, not payload — MEASURED, not inferred.** libjson keeps a `std::map`
 of every pointer its C API issues; a node is 16 B of `_Rb_tree_node_base` plus an
 8 B pair = 24 B, which glibc serves from a 32 B chunk. Counting the two registries
@@ -261,7 +261,7 @@ So **132 B/request of this leak is pure bookkeeping**, and no per-site stub reac
 it directly — a registry node is freed only by a real `json_free`/`json_delete` on
 the pointer it tracks, so every correct free reclaims its node for nothing.
 
-🚨 **EXACTLY ONE JSONNode TREE LEAKS PER REQUEST — 300 requests, 300 trees.** An
+**EXACTLY ONE JSONNode TREE LEAKS PER REQUEST — 300 requests, 300 trees.** An
 integer match, so this is a single tree built per request and never `json_delete`d.
 It is a distinct defect from the string leaks and it has an exact rate.
 
@@ -272,7 +272,7 @@ The tree is identified: `json_new` at **0x1ef04**, at the very top of
 **only two libjson calls run per request, and no `json_delete`, `json_free` or
 `json_write` at all**.
 
-⚠ **Two candidate fix sites are now REFUTED, each by a different signature** — see
+**Two candidate fix sites are now REFUTED, each by a different signature** — see
 LEAK 30 in [mkapifix.py](mkapifix.py), where both are kept disabled:
 
 | Site | Result | What it means |
@@ -289,14 +289,14 @@ root the whole dispatcher shares, so its real release point is likely in the
 third delete inside `serviceField`.
 
 Background and the full derivation: [../docs/ALLOCATOR-REWORK.md](../docs/ALLOCATOR-REWORK.md)
-§3 and §7. ⚠ The counter is **bench-only** — the panel's 2.6.31 kernel refuses
+§3 and §7. The counter is **bench-only** — the panel's 2.6.31 kernel refuses
 `/proc/PID/mem` with `ESRCH` unless the target is ptrace-stopped.
 
-⚠ **This is the API surface, so today's `cmd=140`/`cmd=141` fixes do not touch
+**This is the API surface, so today's `cmd=140`/`cmd=141` fixes do not touch
 it** — different auth, different path. It is the largest single leak known in the
 image.
 
-### ✅ AND IT IS CONFIRMED ON THE PANEL, scaling properly
+### AND IT IS CONFIRMED ON THE PANEL, scaling properly
 
     N=300   panel VmRSS 5628 -> 5852 kB   +224 kB   = 764 B/request
     N=900   panel VmRSS 5852 -> 6552 kB   +700 kB   = 796 B/request
@@ -304,7 +304,7 @@ image.
 Tripling the load tripled the growth, so unlike the `cmd=141` residual this is a
 real per-request rate, and it agrees with the bench's 733 B/request.
 
-⚠ **Do not read `leakprobe`'s own `rss:` line for a panel run.** It reported
+**Do not read `leakprobe`'s own `rss:` line for a panel run.** It reported
 `24044 -> 24044 kB, slope 0.0` while the panel grew 224 kB. `leakprobe` measures a
 LOCAL pid — the emulator on the build VM — so against a remote host it is measuring
 the wrong process entirely and will report a clean zero for any leak. Read the
@@ -316,11 +316,11 @@ panel's own `VmRSS`.
 than weeks. That is the number that decides whether a structural fix is worth its
 risk.
 
-⚠ Honest note: taking this measurement leaked about 0.9 MB into the live panel
+Honest note: taking this measurement leaked about 0.9 MB into the live panel
 (1200 requests), which will not come back until Barracuda restarts. Harmless at
 70 MB free, but it is the cost of measuring this endpoint on the unit.
 
-### 🚨 LEAK 29 attempted the obvious fix and it CRASHES — do not repeat it
+### LEAK 29 attempted the obvious fix and it CRASHES — do not repeat it
 
 The owner of that 120 B chunk looked settled. `WnmpDir_serviceField` calls the
 module through a vtable and drops the out slot:
@@ -346,11 +346,11 @@ true. Freeing the slot at 0x290fc still produces, on the first request:
 which also means **the 120 B chunk is not leaked at this site** and the
 733 B/request is elsewhere in the chain.
 
-🔑 **An ownership argument assembled from a sibling path is a hypothesis, not a
+**An ownership argument assembled from a sibling path is a hypothesis, not a
 contract.** Four independent true observations pointed one way and the conclusion
 was still wrong.
 
-⚠ **And this is exactly why it was bench-only.** `WnmpDir_serviceField` serves
+**And this is exactly why it was bench-only.** `WnmpDir_serviceField` serves
 EVERY API endpoint, so on the panel this would have corrupted the heap on the
 first API request and cost two relaunch units per crash. The panel never saw it —
 it stayed on `0066ad95` throughout, with zero glibc errors in its log.
@@ -359,11 +359,11 @@ it stayed on `0066ad95` throughout, with zero glibc errors in its log.
 `free` to match the vendor's sibling — same result. So the slot at `[fp-868]` is
 simply not a pointer this code may release, and the site is dead as a candidate.
 
-⚠ **`WnmpModule_printFieldControl` (0x1e48c) does not free it either** — 600 lines,
+**`WnmpModule_printFieldControl` (0x1e48c) does not free it either** — 600 lines,
 **zero** `free`/`json_free`/`json_delete` calls, checked. So neither the dispatcher
 nor its callee releases the slot, yet releasing it is invalid.
 
-🔑 **The mechanism is now known, and it was NOT a double free** — see
+**The mechanism is now known, and it was NOT a double free** — see
 [../docs/ALLOCATOR-REWORK.md](../docs/ALLOCATOR-REWORK.md) §4, which disassembles
 both allocators. One reason per attempt:
 
@@ -382,7 +382,7 @@ Between the two possibilities this section left open, that confirms the second:
 **the slot does not hold the string by the time 0x290fc runs.** Nobody frees it
 early; it was never the string's home.
 
-🔑 **Where the next attempt should start, given all of the above:** stop reasoning
+**Where the next attempt should start, given all of the above:** stop reasoning
 about who *should* free it and read what the slot actually contains at 0x290fc.
 The crash address `0x40bddcd8` is far outside the heap `heapwalk` walks
 (0x56b000-0x5f5000), so the value there is probably not the response string at all
@@ -390,7 +390,7 @@ The crash address `0x40bddcd8` is far outside the heap `heapwalk` walks
 being mistimed. `leakfix/findsession.py` shows the technique: search guest memory
 for a value you already know, instead of computing where it ought to be.
 
-⚠ **And it revises the note below.** "Freeing STRING 1 and STRING 2 changed
+**And it revises the note below.** "Freeing STRING 1 and STRING 2 changed
 nothing" was measured with the RSS slope, which cannot resolve anything under
 ~14 B/request; the contents above show 64-byte `json_write` output accumulating at
 one per request. Re-measure those two with the chunk histogram before trusting the
@@ -404,7 +404,7 @@ null result — the instrument, not the fix, may have been the problem.
   idiom. Its single `malloc` is the output buffer, which LEAK 20 frees.
 - `encrypt` (0x1cdf8) is **balanced**: `EVP_CIPHER_CTX_new` / `EVP_CIPHER_CTX_free`.
 
-⚠ **One theory tried and refuted, recorded so it is not tried again:** that
+**One theory tried and refuted, recorded so it is not tried again:** that
 `json_push_back` COPIES the node `json_new_a` returns, leaving the original
 unowned. If that were true, every `json_new_a` + `json_push_back` pair in the
 image would leak a node — and the API path, which uses that pair, measures
@@ -419,12 +419,12 @@ this endpoint is polled only while someone has the scene page open and the panel
 measures flat at idle — the libjson error nodes in particular are inside the
 library and may not be reachable from our side at all.
 
-⚠ **The RSS slope is page-quantised and cannot resolve small wins.** 144 kB over
+**The RSS slope is page-quantised and cannot resolve small wins.** 144 kB over
 300 requests moves in 4 kB steps, so anything under ~14 B/request is invisible to
 it. Use `sceneleak.sh` for increments that size — and note that a slope repeating
 to the decimal across builds is a sign it is quantisation, not stability.
 
-⚠ **A stub at 0x165b8 must not push.** `encrypt` takes a fifth argument on the
+**A stub at 0x165b8 must not push.** `encrypt` takes a fifth argument on the
 stack (`str r5,[sp]` at 0x165ac), so moving sp hands it the wrong value. The
 disabled LEAK 22 stub shows the alternative: stash in r4/r8/r9, which are each
 consumed into an argument register before the call and never read again, and
@@ -443,7 +443,7 @@ Three instructions and no allocation. The ~1965 B/poll seen while the page was
 open was page-load working set, which is consistent with RSS plateauing the
 moment the page closed.
 
-⚠ `/handlerequest_mobile.html` rejects every `commandID` with
+`/handlerequest_mobile.html` rejects every `commandID` with
 `Session_Expired` for a session obtained the normal way — the page's own
 `hiddenKey` is `-1` and `hidSession` a placeholder, so something else populates
 them. Driving that surface would need a bench-only session bypass; it was not
@@ -465,7 +465,7 @@ names tried, only `/GetSceneList` answers; `getScenes`, `getEScenes`,
 Per-request chunk profile (≈787 B), the shape of an abandoned JSON tree:
 `120x1 96x1 112x1 64x1.6 32x4.1 40x3 16x2.6 24x1.5 72x0.35`.
 
-⚠ **Not yet attributed to a function**, and "same shape as the six below" is not
+**Not yet attributed to a function**, and "same shape as the six below" is not
 evidence — that inference is what the `getErrorNode` mistake cost once already.
 
 The dispatch table is decoded. It sits in `.rodata`, spans at least
@@ -476,7 +476,7 @@ The dispatch table is decoded. It sits in `.rodata`, spans at least
 
 The id's low byte increments by one per entry (…0x36, 0x37, 0x38, **0x39** for
 GetSceneList…), so it indexes a command; the upper bytes (0x1001, 0x1024,
-0x2e10, 0x3110) are flags or a group. ⚠ That low byte is **not** `commands.tsv`'s
+0x2e10, 0x3110) are flags or a group. That low byte is **not** `commands.tsv`'s
 first column — 0x39 is 57, and row 57 there is `getDiscoverCameras`. Reconcile
 the two numbering schemes before trusting either.
 
@@ -519,7 +519,7 @@ each leaks a parsed tree per operation.
   `leakprobe.py` now takes `--extra` so console mode can carry those operands,
   and `sceneopleak.sh` drives them.
 
-  🚨 **BUT EVERY CONSOLE-MODE REQUEST ANSWERS 200 AND DISPATCHES NOTHING.** The
+  **BUT EVERY CONSOLE-MODE REQUEST ANSWERS 200 AND DISPATCHES NOTHING.** The
   handler gates on a CSRF token *before* the switch:
 
       3a3c0  bl   getCSRFToken1([sp,#120])   <- keyed on the SESSION's own field
@@ -531,7 +531,7 @@ each leaks a parsed tree per operation.
   gate and not a per-command quirk. `handlerequest_mobile_html076EF` calls
   `getCSRFToken1` too, so it is not a way around.
 
-  ✅ **AND THE PANEL DOES THE SAME — measured, not inferred.** The panel cannot
+  **AND THE PANEL DOES THE SAME — measured, not inferred.** The panel cannot
   be traced, so a trace-free instrument was needed:
   **`leakfix/dispatchcheck.py`**. The bail is taken *before* the switch, so it
   cannot give a command-dependent answer — if the handler dispatches, a real
@@ -544,7 +544,7 @@ each leaks a parsed tree per operation.
   is EMPTY**, which is the tell that was there all along: "400 requests, all
   200" was 400 empty bodies.
 
-  ⚠ The `hiddenKey=-1` on `/console.html` is *consistent* with this but is not
+  The `hiddenKey=-1` on `/console.html` is *consistent* with this but is not
   the evidence — it is rendered by a different code path from the handler's
   `r5 = -1`. The command-independence above is the measurement; cite that.
 
@@ -557,11 +557,11 @@ each leaks a parsed tree per operation.
 
   ### How far the registration chase got — start here, do not redo it
 
-  ✅ **The registrar is `authPage_service`, bound to `authenticated/index.html`.**
+  **The registrar is `authPage_service`, bound to `authenticated/index.html`.**
   `installVirtualDir` calls `HttpPage_constructor(page, 0x1418c, "index.html")`
   into the dir named `authenticated` (0x546648).
 
-  ✅ **It needs a `url` QUERY PARAMETER, and without one it skips registration
+  **It needs a `url` QUERY PARAMETER, and without one it skips registration
   entirely.** Traced:
 
       141f0  bl   HttpRequest_getParameter(req, "url")
@@ -575,11 +575,11 @@ each leaks a parsed tree per operation.
   `clientEnter` called, and the block containing `bl addSessionItem` at 0x143a4
   executed. So the call happens.
 
-  ✅ **Record layout**, from `addSessionItem1` (0x2b444):
+  **Record layout**, from `addSessionItem1` (0x2b444):
   `[0..3]` session id, `[4]` flag, `[5..]` a token string from
   `random_string(32)` + `getKeyFromPassword`.
 
-  🚨 **RETRACTED: "it registers at index 0, which the reader never searches."**
+  **RETRACTED: "it registers at index 0, which the reader never searches."**
   That was committed here and it is WRONG. `mov r8, r6` at 0x1431c is *inside*
   the basic block starting at 0x14314, and 0x14314 IS in the trace — so it does
   execute, and `r8` ends up as **the last free/reclaimed slot index**, not 0.
@@ -623,24 +623,24 @@ each leaks a parsed tree per operation.
   | client-list saturation from many logins | refuted: a freshly restarted server with ONE login bails |
   | the table being empty (tested on the panel with a real browser session live) | bails |
 
-  ⚠ The first cookie attempt had a bug worth not repeating: the jar was built
+  The first cookie attempt had a bug worth not repeating: the jar was built
   with `re.findall(r"([^,;\s]+)=([^,;\s]+)")` over `Set-Cookie`, which swallows
   attributes and produced a cookie literally named `path`. The table row above is
   the corrected `http.cookiejar` run.
 
-  🔑 **And a browser DOES work** — Lewis created a group through the web UI on
+  **And a browser DOES work** — Lewis created a group through the web UI on
   2026-09-08 while the scripted session was bailing, so this is a difference
   between the two clients and not a dead endpoint.
 
-  ## 🚨 RETRACTED ROOT CAUSE — and the real one, which the repo already had
+  ## RETRACTED ROOT CAUSE — and the real one, which the repo already had
 
-  ✅ **THE ENDPOINT DISPATCHES. One login is all it ever needed:**
+  **THE ENDPOINT DISPATCHES. One login is all it ever needed:**
 
       hiddenKey  = c0386cff1a1aadaa88d49dcfaeb586a   31 hex, not -1
       hidSession == int(cookie[0:8], 16)             PASS
       Type 0 / 141 / 65535 -> bodies of 38 and 43 B  DISPATCHES
 
-  🚨 **The cause was my own driver, not a vendor bug.**
+  **The cause was my own driver, not a vendor bug.**
   `docs/TUXEDO-AUDIT-BUGS.md` §2.4 says `No_Of_Users` = **10 concurrent
   sessions**, reaped only when the `HttpSession` dies (`Session_Timer` = 10 min),
   and warns in as many words: *"do not re-login per poll … a client that re-logs
@@ -649,13 +649,13 @@ each leaks a parsed tree per operation.
   logged in afresh — dozens of times — so from the eleventh onward there was no
   slot, and `-1` was the table saying so.
 
-  ⚠ **So the analysis below is WRONG where it concludes "index 10 is outside the
+  **So the analysis below is WRONG where it concludes "index 10 is outside the
   search".** `getCSRFToken1` scans `i = 1..getNoOfUsers()`, and `getNoOfUsers()`
   returns `No_Of_Users` from `/root/Settings/WebConfig.conf` — **10 on this unit,
   verified** — not the 5 web accounts I assumed. Index 10 is *inside* the range.
   The record being at 10 was the last free slot, exactly as designed.
 
-  🔑 **The mechanism notes that follow are still accurate and worth keeping** —
+  **The mechanism notes that follow are still accurate and worth keeping** —
   the record layout, the `url` parameter requirement, the highest-free-slot
   choice. Only the conclusion drawn from them was wrong, and it was wrong because
   I supplied `getNoOfUsers()` from a guess instead of reading it.
@@ -675,19 +675,19 @@ each leaks a parsed tree per operation.
       slots 1..9:           0xFFFFFFFF, i.e. FREE
 
   `addSessionItem` writes correctly, and `getCSRFToken1` scans
-  **`i = 1 .. getNoOfUsers()`** from `r4 = 40`. ⚠ **I read `getNoOfUsers()` as the
+  **`i = 1 .. getNoOfUsers()`** from `r4 = 40`. **I read `getNoOfUsers()` as the
   5 web accounts in `UserNamesFile.txt` and concluded index 10 was out of range.
   That was a guess and it was wrong** — it returns `No_Of_Users` from
   `/root/Settings/WebConfig.conf`, which is **10** here, so index 10 is the last
   valid slot rather than one past the end.
 
-  🔑 **The writer picks the LAST free slot** — `mov r8, r6` at 0x1431c runs on
+  **The writer picks the LAST free slot** — `mov r8, r6` at 0x1431c runs on
   every empty slot the scan passes, so `r8` ends as the highest free index. With
   ten slots and one session that is index 10, which is correct behaviour and not
   a bug. It only *looked* like one because the table was already full of my own
   abandoned sessions.
 
-  🚨 **Not explained: the browser DOES dispatch, and that is now verified from an
+  **Not explained: the browser DOES dispatch, and that is now verified from an
   artifact rather than from a report.** Lewis created a group in the web UI on
   2026-09-08 at 13:00; the panel holds
 
@@ -714,16 +714,16 @@ each leaks a parsed tree per operation.
     a probe that has logged in repeatedly is not in the same state as a browser
     that logged in once.
 
-  ⚠ The peer found arm/disarm going to `/AdvancedSecurity/*` on the API surface,
+  The peer found arm/disarm going to `/AdvancedSecurity/*` on the API surface,
   so a second route exists for *some* commands — but not for this one: the group
   write is `cmd=6293` on `handlerequest`, and it landed.
 
-  ✅ **What this hands the next attempt:** the scripted request shape is now
+  **What this hands the next attempt:** the scripted request shape is now
   known exactly — `sessionid` is the NUMERIC `hidSession` from
   `/eventhandler.html`, not the cookie's hex, and `tokenkey` is a required
   parameter that is `-1` precisely because of the bug above.
 
-  ### ✅ REPRODUCIBLE: session issuance stops after FOUR sessions
+  ### REPRODUCIBLE: session issuance stops after FOUR sessions
 
   Twenty rounds of login + registering GET + three `handlerequest` calls, each a
   separate login, reading `hidSession` back from `/eventhandler.html`:
@@ -742,7 +742,7 @@ each leaks a parsed tree per operation.
   explains why no amount of re-registering moved the index — after the fourth,
   registration has nothing to register.
 
-  ⚠ **SEEN ONCE, NOT REPRODUCED: a segfault.** The first `fillslots` run left this
+  **SEEN ONCE, NOT REPRODUCED: a segfault.** The first `fillslots` run left this
   in `/tmp/barra.scenes.log`:
 
       Barracuda g_mqSuperVisionIn sending mq 7
@@ -756,11 +756,11 @@ each leaks a parsed tree per operation.
   crash posts BOTH messages, i.e. **two relaunch units of twenty-four**. Do not
   chase it on the panel; it belongs on the bench.
 
-  ⚠ Reading the table on the PANEL to settle it directly does not work either:
+  Reading the table on the PANEL to settle it directly does not work either:
   `/proc/<pid>/mem` on 2.6.31 needs a ptrace attach, and attaching to Barracuda
   is not worth a relaunch unit.
 
-  🔑 **The consequence reaches past the scene work: any `/handlerequest.html`
+  **The consequence reaches past the scene work: any `/handlerequest.html`
   number taken through console mode measured the bail-out.** Clean 200s with a
   flat RSS is exactly what a gate that dispatches nothing produces, and at the
   HTTP layer it is indistinguishable from "this endpoint does not leak". Settle
@@ -782,7 +782,7 @@ is unambiguously safe. Nothing derived from the tree escapes — the loop uses
 at **0x34c50**, where a NULL-guarded `json_delete(r6)` fits. r6 is NULL exactly
 on the branch that skips the loop, so the guard covers it.
 
-🔑 **It leaks on EVERY call, not only when the scene exists** — worth stating
+**It leaks on EVERY call, not only when the scene exists** — worth stating
 because it changes what a driver has to arrange. The tree is parsed before the
 id is ever compared:
 
@@ -803,7 +803,7 @@ function returns through `pop {r4,r5,r6,r7,r8,pc}` off the frame it pushed at
 
     mov r0, r6 ; cmp r0, #0 ; blne json_delete ; mov r0, r5 ; pop {r4,r5,r6,r7,r8,pc}
 
-🚨 **WRITTEN, MEASURED, AND WITHHELD — it frees nothing on this unit.** LEAK 23 in
+**WRITTEN, MEASURED, AND WITHHELD — it frees nothing on this unit.** LEAK 23 in
 `mkapifix.py` is exactly that stub, and the endpoint is drivable now, so it was
 measured properly rather than reasoned about:
 
@@ -818,14 +818,14 @@ The stub definitely executes — `0x69580` and `0x6958c` each run exactly once p
 request — so this is not the "stub never written" failure that wasted a day on the
 IPC path. **`r6` is simply always 0.**
 
-🔑 **Because `checkIfSceneExists` parses the WRONG-looking file, and reading the
+**Because `checkIfSceneExists` parses the WRONG-looking file, and reading the
 string settles it.** The pointer at `0x90e94` is `0x8b080` =
 `/opt/tuxedo/configuration/hascenedb.json` — the **Z-Wave** scene database, which
 is **0 bytes** on the panel and the bench. Not `hatcscenedb.json`, the 3182-byte
 TC scene file the rest of the scene code reads. An empty file parses to NULL, so
 `scene_getRootNodeOfObjects` allocates nothing and there is nothing to free.
 
-✅ **So the ~107 B/request on `cmd=141` is real but comes from elsewhere — and
+**So the ~107 B/request on `cmd=141` is real but comes from elsewhere — and
 `chunkdiff.py` has now NAMED IT BY CONTENTS**, the way it named the IPC registry
 buffers. `leakfix/sceneopdump.sh`, 200 requests, the 40-byte size:
 
@@ -843,7 +843,7 @@ request path evidently reaches too. The 0x29 word at +4 is a libjson node header
 and the `inc` fragments are the tail of libjson's own `Children is null inc`
 error string, the same one that turned up in the `/GetSceneList` residual.
 
-✅ **LOCATED: `validatePageName` (0x13afc), and it leaks TWICE per call.** The map
+**LOCATED: `validatePageName` (0x13afc), and it leaks TWICE per call.** The map
 is a string literal at guest VA `0x86168` — the 29-entry
 `[{"1":"zwavedevicelist.html"},…,{"29":"treeview.html"}]` array — and `0x13b70`,
 the only reference to it in the image, is `validatePageName`'s literal pool.
@@ -864,7 +864,7 @@ call; the `json_as_string` results are one per iteration, up to 29 before a matc
 — which is why the 40- and 32-byte rows grow at ~1.2 per request rather than
 exactly 1.
 
-✅ **The exit is a single convergence at 0x13b68** — 0x13b64 falls through to it —
+**The exit is a single convergence at 0x13b68** — 0x13b64 falls through to it —
 so one stub covers both paths. `lr` is expendable (the function returns through
 `pop {…,pc}`), and `r4` is restored by that same pop, so it is free to hold the
 return value across a `bl`:
@@ -872,7 +872,7 @@ return value across a `bl`:
     mov r4, r0 ; mov r0, r6 ; cmp r0,#0 ; blne json_delete ;
     mov r0, r4 ; add sp,sp,#4 ; pop {r4,r5,r6,r7,pc}
 
-## ✅ LEAK 24 SHIPPED IN THE BUILDER: 107 -> 39 B/request, replicated
+## LEAK 24 SHIPPED IN THE BUILDER: 107 -> 39 B/request, replicated
 
 `VALIDPAGE_SITES` is live in `mkapifix.py` (7-word stub at 0x69594, one site at
 0x13b68). Same 300-request load on `cmd=141`, before and after:
@@ -890,7 +890,7 @@ still passes the §2.6 smoke test (31-hex `hiddenKey`, `DISPATCHES`) — which
 matters because `authPage_service` is one of the two callers, so the login path
 exercises this stub every time.
 
-### ⚠ LEAK 25 (the loop's `json_as_string`) — BUILT, MEASURED, WITHHELD
+### LEAK 25 (the loop's `json_as_string`) — BUILT, MEASURED, WITHHELD
 
 I predicted the 32-byte row was the per-iteration `json_as_string` at 0x13b38 and
 built the stub. It changes nothing:
@@ -901,14 +901,14 @@ built the stub. It changes nothing:
 The stub runs — 0x695b0, 0x695b8, 0x695c8 each execute exactly once per request —
 so this is not the never-reached failure.
 
-🔑 **"Once per request" is the whole point, and the arithmetic had already said
+**"Once per request" is the whole point, and the arithmetic had already said
 so.** I predicted up to 29 frees per request, one per map entry. The loop body
 runs **once**. And +349 over 300 requests is **1.16 per request**, not 10 or 29 —
 the growth rate refuted the per-iteration theory before any stub was written.
 **When a per-iteration theory predicts N per request and the measurement says ~1,
 it is already refuted; check the rate against the theory before building.**
 
-### ✅ The residual's FAMILY is named: unfreed `json_as_string`
+### The residual's FAMILY is named: unfreed `json_as_string`
 
 The 32-byte chunks hold **pointers, not text** — a `0x21` glibc size field then
 pointer pairs — so `chunkdiff` cannot name this one from its contents the way it
@@ -925,15 +925,15 @@ is the useful negative: the residual is not raw allocation, it is libjson
 ownership. `json_as_string` returns caller-owned memory needing `json_free`, and
 five of every seven results are dropped.
 
-🔑 The balance sheet is the reusable part: it names the *family* without needing
+The balance sheet is the reusable part: it names the *family* without needing
 the site, and it did in one run what two speculative stubs did not.
 
-⚠ **`readUserNamePasswordFromJSON` looked like the answer and is NOT.** It holds
+**`readUserNamePasswordFromJSON` looked like the answer and is NOT.** It holds
 exactly 7 `json_as_string` calls against a measured 7.20/request — a fit so exact
 it was tempting. Traced: it runs **once per ten requests**. That is the login, not
 the request path. Arithmetic that good is still not evidence.
 
-## ✅ LEAK 26 SHIPPED AND DEPLOYED: the tokenkey compare, 39 -> ~11 B/request
+## LEAK 26 SHIPPED AND DEPLOYED: the tokenkey compare, 39 -> ~11 B/request
 
 Found by tracing all six `json_as_string` sites inside the handler: **five run
 zero times per request and `0x3a430` runs exactly ten times for ten requests.**
@@ -956,7 +956,7 @@ r0 already holds the string and r1 the parameter.
     16 B       +75        +20       +38 / +28
     total   ~107 B/req   39 B/req   ~11 B/req   (two runs)
 
-🚨 **This modifies an AUTHENTICATION comparison, so the rejection was tested, not
+**This modifies an AUTHENTICATION comparison, so the rejection was tested, not
 assumed:**
 
     correct tokenkey -> 200, 43 bytes   (dispatches)
@@ -966,11 +966,11 @@ The stub stashes the compare result on the stack precisely so freeing the string
 cannot disturb it. **Live on the panel as `07987132`**, 263 verify checks passing,
 `patches.tsv` regenerated to 266 sites and re-verified from genuine stock.
 
-⚠ The restart cost **two** budget units this time (2 → 4): `RECV_SIGABRT` and
+The restart cost **two** budget units this time (2 → 4): `RECV_SIGABRT` and
 `RECV_SIGSEGV` one second apart, which is `sigHandler` faulting during its own
 cleanup — the documented two-for-one, seen live rather than inferred.
 
-## ✅ `cmd=141` IS NOW LEAK-FREE PER REQUEST — and the residual was the instrument
+## `cmd=141` IS NOW LEAK-FREE PER REQUEST — and the residual was the instrument
 
 The "~11 B/request" above is **not a per-request leak**. Same binary, fresh server
 each time, only the request count changed:
@@ -990,7 +990,7 @@ So LEAK 24 + LEAK 26 took `cmd=141` from **~107 B/request to zero**, and the
 earlier "39" and "11 B/request" figures were partly a per-run constant divided by
 N. **Divide-by-N reports a constant as a rate.** Vary N before believing one.
 
-### ✅ CONFIRMED ON THE PANEL, not just the bench
+### CONFIRMED ON THE PANEL, not just the bench
 
 Every per-request figure above is from the emulated bench. Driven against the real
 unit on `0066ad95`, reading `VmRSS` either side and using the same
@@ -1004,15 +1004,15 @@ does-it-scale-with-N discriminator:
 that is page quantisation, not a leak. 1200 requests, all answering 200 with 43-byte
 bodies. `cmd=141` is leak-free in production.
 
-⚠ RSS can only see about 14 B/request or more at this sample size, so this confirms
+RSS can only see about 14 B/request or more at this sample size, so this confirms
 the absence of the ~107 B/request that was there before; it could not have detected
 a few bytes per request. The chunk histogram on the bench is the sensitive
 instrument, and it agrees.
 
-⚠ Idle RSS is also flat: 5600 kB right after the LEAK 24 deploy, 5576 kB some
+Idle RSS is also flat: 5600 kB right after the LEAK 24 deploy, 5576 kB some
 19 000 s later.
 
-🚨 **A zero-delta table is NOT proof of a fix, and it fooled me once here.** Two
+**A zero-delta table is NOT proof of a fix, and it fooled me once here.** Two
 runs reported no growing sizes at all — because `scenedrive` had correctly aborted
 on an exhausted session table and `sceneopmeasure` swallowed the message, so
 nothing was driven. An empty delta table looks exactly like a perfect fix.
@@ -1020,7 +1020,7 @@ nothing was driven. An empty delta table looks exactly like a perfect fix.
 line. **Ten session slots, reaped only when the HttpSession dies: restart the
 server between measurement campaigns.**
 
-## ✅ `cmd=140` (editSceneDetails) ALSO LEAK-FREE — LEAKS 27 and 28, deployed
+## `cmd=140` (editSceneDetails) ALSO LEAK-FREE — LEAKS 27 and 28, deployed
 
 `editSceneDetails` frees **nothing**: six allocations, one exit. Measured at
 ~124 B/request, and it scaled properly (16 B `+873 → +2621`, 40 B `+300 → +898`
@@ -1042,11 +1042,11 @@ stack.
 path malformed input takes, so it was remotely reachable: a client POSTing
 unparseable `scenedata` leaked two trees per request.
 
-⚠ **The trees still leak on the FULL path and that is deliberate.** On the match
+**The trees still leak on the FULL path and that is deliberate.** On the match
 branch `json_push_back(r7, r6)` pushes tree A *into* tree C, and the loop pushes
 tree B's nodes into tree C, so r5/r6/r7 share nodes and freeing any two
 double-frees. The early exits do not alias but converge on the same exit, which is
-why LEAK 28 hooks the `beq` at 0x34E00 instead. ⚠ **That site is conditional** —
+why LEAK 28 hooks the `beq` at 0x34E00 instead. **That site is conditional** —
 the redirect keeps cond EQ, because a plain `b` would free on every call and skip
 the rest of the function.
 
@@ -1054,7 +1054,7 @@ Live on the panel as **`0066ad95`**, 273 verify checks passing, `patches.tsv` at
 284 sites re-verified from genuine stock. Scene databases byte-identical after
 2400 edit attempts.
 
-### ✅ The rest of the dispatch surface is CLEAN — swept, not assumed
+### The rest of the dispatch surface is CLEAN — swept, not assumed
 
 `leakfix/cmdsweep.sh` drives each remaining arm of the chain at 0x3a6c8 and
 reports its chunk growth, so the next target is chosen by size rather than by
@@ -1074,18 +1074,18 @@ handlers really ran and differ from one another, so this is not seven copies of
 one bail-out. **None of them leaks per request.**
 
 So on this surface `cmd=140` and `cmd=141` were the leaky pair, and both are now
-closed. ⚠ The sweep's own numbers are not per-request rates — each measured phase
+closed. The sweep's own numbers are not per-request rates — each measured phase
 logs in once. Anything that ever looks interesting here must be re-measured at two
 request counts before it is believed.
 
-🚨 **`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
+**`patches.tsv` STILL DESCRIBES 62ee361c AND MUST NOT BE REGENERATED UNTIL THIS
 IS DEPLOYED.** The table's whole value is that it says what the panel runs;
 regenerating it now would make it describe a build that exists nowhere, which is
 the stale-header failure its own header records twice. When LEAK 24 goes to the
 panel: deploy, then regenerate the P15 rows, then re-verify stock -> new md5 from
 a clean tree, then update the chain and the `LIVE_DRIFT` line together.
 
-✅ **Re-enable LEAK 23 the moment `hascenedb.json` is non-empty** — i.e. once real
+**Re-enable LEAK 23 the moment `hascenedb.json` is non-empty** — i.e. once real
 Z-Wave scenes exist. Then the tree is real, the leak is real, and the stub frees
 it. Disabling it restores the previous build byte-for-byte (`ad0a4c30`, 228
 words), so `patches.tsv` does not drift while it sits idle.

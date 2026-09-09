@@ -6,13 +6,13 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
-## v14 — 2026-09-09 — BUILT, NOT YET FLASHED
+## v14 — 2026-09-09 — FLASHED AND VERIFIED
 
-**What it is: v13 plus every leak fix that had been hot-patched over SSH.** This is
-the first image whose `BARRACUDA_MD5` equals the binary the panel is actually
-running. v13 shipped `55448f05`; the panel has been running `0066ad95` since
-2026-09-08 because P14-detach and the whole P15-leakfix series were applied live and
-were **not** in any flashed image. v14 folds them in, so the drift is zero.
+**What it is: v13 plus every leak fix that had been hot-patched over SSH.** First
+image whose `BARRACUDA_MD5` equals the binary the panel is running. v13 shipped
+`55448f05`; the panel has been running `0066ad95` since 2026-09-08 because
+P14-detach and the whole P15-leakfix series were applied live and were not in any
+flashed image. v14 folds them in.
 
 ### Artefacts
 
@@ -35,7 +35,7 @@ were **not** in any flashed image. v14 folds them in, so the drift is zero.
 | P15-leakfix | `Barracuda` | 264 rows, 24 active fixes: HTTP heap-leak sites, IPC-path defects, all 43 `json_strip_white_space` results, the getEScenes tree and its Base64 buffer, the validatePageName page-map tree, and the `cmd=140`/`cmd=141` dispatch-arm frees |
 | timezone | `/etc/rc.d/rc.conf` | `export TZ="CST6CDT,M3.2.0/2,M11.1.0/2"`, without which `/tuxedo`'s `date -s` from the VISTA lands 18,022 s off true UTC |
 
-Every one of those is a **vendor** defect. None was introduced by this project.
+All three are vendor defects; none was introduced by this project.
 
 ### Verified
 
@@ -48,67 +48,64 @@ Every one of those is a **vendor** defect. None was introduced by this project.
 | header | `tuxedo_hdr.py verify` → PASS, computed checksum equals stored |
 | whole card set | `tuxedo_hdr.py preflight` over all six files → **ALL FILES WOULD PASS** |
 
-⚠ **`diff -r` is not sufficient for the round-trip check and was not used for it.** It
-cannot compare character devices or fifos and reports them as differing on both
-sides, it calls a symlink that dangles identically in both trees a missing file, and
-piping it to `head` discards its exit status — so an "exit=0" there means nothing.
-`ci/treecmp.py` compares the attributes JFFS2 actually stores.
+`diff -r` cannot do the round-trip check and was not used for it: it reports
+character devices and fifos as differing on both sides, calls an identically
+dangling symlink a missing file, and piped to `head` loses its exit status, so
+"exit=0" there means nothing. `ci/treecmp.py` compares the attributes JFFS2 stores.
 
-⚠ **JFFS2 output is not byte-reproducible**, so do not verify a build by hashing the
-payload against a previous one. v13's original payload is `54b14f68` and a rebuild of
-the same tree is `0ddc5f1b`. The round-trip extract is the check that means something.
+JFFS2 output is not byte-reproducible, so do not verify a build by hashing the
+payload against a previous one: v13's original payload is `54b14f68` and a rebuild of
+the same tree is `0ddc5f1b`. Use the round-trip extract instead.
 
 ### Executed under emulation before flashing
 
 The image tree was booted under `qemu-user` from `/work/emu/v14` via `emu/serve.sh`,
-which is the rule this project adopted at v13 and the reason v13's flash was boring.
+a project rule since v13.
 
 | check | result |
 |---|---|
 | comes up | 4/4 listeners, serving `/` with 302 |
 | P13 push-stream gate | `GET /SimpleDebugger.interface/G.` → **401 on :80, :443 and :9443** |
-| `:6280` | handshake times out — **and it does so identically on the live panel**, so this is a property of that listener on this firmware, not a v14 regression |
+| `:6280` | handshake times out, identically on the live panel, so it is a property of that listener on this firmware, not a v14 regression |
 | API surface | 300 × `/GetSceneList`, **all 300 → HTTP 200** |
 | leak profile | **1.0000 leaked JSONNode trees per request**, the same figure measured on the panel; 2.13 strings/request |
 
-⚠ **A modern TLS client cannot reach these listeners and its failure looks exactly
-like a dead port.** `curl` gets `000` in ~10 ms on all three HTTPS listeners, and
-Python fails with `UNSAFE_LEGACY_RENEGOTIATION_DISABLED`, because SharkSSL of this
-vintage predates RFC 5746. `ci/tlscheck.py` sets `OP_LEGACY_SERVER_CONNECT`
-and then gets a real answer. Never read `000` here as a failed check without running
-the same client against the panel first — that control is what separated a client
-limitation from a regression on three of the four listeners.
+A modern TLS client cannot reach these listeners, and its failure looks like a dead
+port. `curl` gets `000` in ~10 ms on all three HTTPS listeners, and Python fails with
+`UNSAFE_LEGACY_RENEGOTIATION_DISABLED`, because SharkSSL of this vintage predates
+RFC 5746. `ci/tlscheck.py` sets `OP_LEGACY_SERVER_CONNECT` and gets a real answer.
+Never read `000` as a failed check without running the same client against the panel;
+that control separated a client limitation from a regression on three of the four
+listeners.
 
-⚠ The string-leak rate is **config-dependent**, so it is not a fixed number to
-regress against: this tree measures 2.13/request where another tree on the identical
-binary measured 3.13. `getRegisteredDevNodes` extracts a `json_as_string` per
-registered device, so the count follows how many devices the seeded
-`registereddevMAClist.json` holds. The **tree** count, 1.0000/request, is stable and
-is the one to watch.
+The string-leak rate is config-dependent, so it is not a number to regress against:
+this tree measures 2.13/request where another tree on the identical binary measured
+3.13. `getRegisteredDevNodes` extracts a `json_as_string` per registered device, so
+the count follows how many devices the seeded `registereddevMAClist.json` holds. The
+tree count, 1.0000/request, is stable and is the one to watch.
 
 ### Not fixed in v14
 
-`/GetSceneList` still leaks ~780 B/request on the API surface — **exactly 1.0000
-JSONNode trees per request**, plus 2–3 libjson strings depending on how many devices
-the configuration holds (see the config-dependence note above; the tree figure is the
-stable one). Counted directly in libjson's own allocation registries with
-`leakfix/jsoncount.py`. The tree is `json_new` at
-VA 0x1ef04 in `WnmpDir_serviceField`. Three candidate fixes were built and **refuted
-under emulation, none shipped**: 0x2a084 never executes on that path, and both
-0x2955c and 0x1f0f4 hang inside `json_delete` and deadlock the entire server, because
-the stuck worker holds the dispatcher mutex. See `leakfix/mkapifix.py` LEAK 30 and
+`/GetSceneList` still leaks ~780 B/request on the API surface: exactly 1.0000
+JSONNode trees per request, plus 2–3 libjson strings depending on how many devices
+the configuration holds (see the config-dependence note above). Counted in libjson's
+allocation registries with `leakfix/jsoncount.py`. The tree is `json_new` at
+VA 0x1ef04 in `WnmpDir_serviceField`. Three candidate fixes were built and refuted
+under emulation, none shipped: 0x2a084 never executes on that path, and both 0x2955c
+and 0x1f0f4 hang inside `json_delete` and deadlock the server, because the stuck
+worker holds the dispatcher mutex. See `leakfix/mkapifix.py` LEAK 30 and
 `ALLOCATOR-REWORK.md`.
 
 ### How it was built, and a gap that closed
 
-⚠ **v14 was built by hand from `TUXEDO-BUILD.md`'s recipe, not by `build-image.sh`.**
-That was a miss — the repo's own rule is to grep for a tool before hand-rolling one.
-The build is nonetheless equivalent, because every gate that script enforces was run
-against the result afterwards and passed:
+v14 was built by hand from `TUXEDO-BUILD.md`'s recipe, not by `build-image.sh`. That
+was a miss: the repo's rule is to grep for a tool before hand-rolling one. The build
+is equivalent because every gate that script enforces was run against the result
+afterwards and passed:
 
 | `build-image.sh` gate | v14 |
 |---|---|
-| all paths `root:root` before `mkfs.jffs2` | **0 non-root paths.** Its comment is blunt about this: a stray non-root file ships an image nobody can boot, and it has happened |
+| all paths `root:root` before `mkfs.jffs2` | 0 non-root paths. A stray non-root file ships an image nobody can boot, and it has happened |
 | geometry `-e 0x20000 -l -n`, no `-p` | matched exactly |
 | round-trip diff must be empty | 3520 entries identical via `ci/treecmp.py` |
 | patches re-checked in the **extracted** tree | 284/284 already patched in `root_verify`, not just in the source tree |
@@ -116,19 +113,45 @@ against the result afterwards and passed:
 
 The one place hand-building was better: the marker. `build-image.sh` regenerated
 `/etc/tuxedo-build` from a fixed field list, so v14's `LIVE_DRIFT`, `NEW_IN_V14`,
-`PATCH_TABLE`, `KNOWN_UNFIXED` and `ROLLBACK` lines would all have been dropped — the
-same failure its own comment records for `CHANGES`, and worse here, because
-`ROLLBACK` is what stops someone reaching for a rollback binary that no longer
-exists. **`build-image.sh` now carries every non-generated line forward**, verified
-against v14's marker: 15 lines partition into 10 regenerated and exactly those 5
-carried, with nothing duplicated.
+`PATCH_TABLE`, `KNOWN_UNFIXED` and `ROLLBACK` lines would all have been dropped, the
+same failure its own comment records for `CHANGES`, and worse here because `ROLLBACK`
+stops someone reaching for a rollback binary that no longer exists. `build-image.sh`
+now carries every non-generated line forward, verified against v14's marker: 15 lines
+partition into 10 regenerated and exactly those 5 carried, with nothing duplicated.
 
-### To flash
+### Flashed 2026-09-09
 
-`/work/v14/card` holds all six files with v14's `app2.hdr` substituted and the other
-five carried from `/work/stock` unchanged. Copy to a FAT32 SD card, then **verify the
-card, not the staging directory** — `python tuxedo_hdr.py verify G:\*.hdr`. Skipping
-that has cost a wasted trip to the panel once already.
+Delivered over the network, so the card never moved: `push-image.sh` from the build
+VM straight to `/mnt/sd/app2.hdr`, 125,723,316 bytes in 63 s, md5 verified on the
+panel before the atomic rename, then `reboot`.
+
+The card was verified before booting by full-file md5 of all six flashable files,
+not by re-running the checksum tool. All six matched: the five vendor originals
+byte-for-byte, and `app2.hdr` equal to the image that had already passed
+`tuxedo_hdr.py verify` and `preflight`. An md5 over the whole file also excludes
+truncation, which is the residual risk section 7 of `TUXEDO-BUILD.md` names.
+
+| check | result |
+|---|---|
+| `/etc/tuxedo-build` | `BUILD=v14`, was v13 |
+| `/tuxedo`, `Barracuda`, `/supervis` | all three match the image exactly |
+| `verify-panel.sh` | **291 checks, 0 failures**, the same count as before the flash |
+| `LIVE_DRIFT` | `NONE` — image hash and running binary are one value |
+| rootfs | 70% used, 56 MB free |
+
+The rootfs was replaced rather than patched in place: the `.preedit` and
+`.stock55448f05` rollback copies are gone, because the image contains none. That
+invalidated this release's own `ROLLBACK` line, which had named them — the same fault
+v13's marker had after those files were deleted. It now describes recovery from the
+card, and the correction was applied to both the panel and `/work/v14/root`, so a
+rebuild carries it. The two markers are byte-identical.
+
+A plain `reboot` triggered the reprogram. A reboot two days earlier had not
+reflashed, which was the reason to expect otherwise; the difference is that the
+card's `app2.hdr` then matched what was already installed.
+
+Rollback: copy `/work/v13/app2.hdr` (Barracuda `55448f05`) to the card with
+`push-image.sh` and reboot.
 
 ---
 
@@ -232,7 +255,7 @@ increments a counter that the shipped UI never decrements.
 P10 makes reply type 20 carry real keypad display text instead of a canned
 placeholder.
 
-🚨 **This paragraph previously said Barracuda "discards reply type 20 entirely"
+**This paragraph previously said Barracuda "discards reply type 20 entirely"
 so console mode "cannot be reached until Barracuda is replaced". That was wrong,
 corrected 2026-09-08 by measurement.** Barracuda routes type 20 at `0xd6b8` to a
 handler that broadcasts the text on the push stream and caches it via
@@ -275,18 +298,18 @@ exactly 18000 s apart. So with no TZ the clock ends up **holding local time whil
 libc labels it UTC**, which is why every log line after runlevel 3 is 5 h off and
 `syslogd started` is the last trustworthy UTC stamp.
 
-🔑 **Set TZ and the same write lands on the correct epoch instead.** `rcS`
+**Set TZ and the same write lands on the correct epoch instead.** `rcS`
 sources `rc.conf` at its line 7, before starting any service, so supervis — and
 therefore `/tuxedo` and Barracuda — inherits it.
 
-⚠ **ORDER MATTERS on a running panel.** Setting TZ while the clock still holds
+**ORDER MATTERS on a running panel.** Setting TZ while the clock still holds
 local time makes the alarm screen read 08:xx; that is measured, not predicted. On
 a boot it is fine, because `settime`/`ntpclient` sets true UTC before `/tuxedo`
 starts. To apply it live, set TZ **and** reload the clock from the RTC in one
 step: `hwclock -s -f /dev/rtc0`. There is no zoneinfo tree on the panel, so the
 POSIX rule string is required — `/etc/localtime` would have nothing to read.
 
-⚠ `/tuxedo` has its own `g_stDateTimeConfig.i8TimeZone` with DST months and a
+`/tuxedo` has its own `g_stDateTimeConfig.i8TimeZone` with DST months and a
 touchscreen control, persisted in `DateTimeConfig.txt` (28 bytes, with a `_sec`
 twin). That is a **separate** setting from the OS TZ and was left alone.
 

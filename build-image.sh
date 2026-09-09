@@ -71,18 +71,17 @@ say "stamp the build marker"
 # CHANGES, so losing it makes the panel look less patched than it is.
 # Append to CHANGES with:  CHANGES_ADD=console-gate,back-home-fix ./build-image.sh ...
 #
-# EVERY OTHER non-generated line is carried forward as well, and that is
-# deliberate. v14's marker added LIVE_DRIFT, NEW_IN_V14, PATCH_TABLE,
-# KNOWN_UNFIXED and ROLLBACK -- prose this script cannot regenerate, and ROLLBACK
-# in particular records which on-panel rollback binaries still exist. v13's chain
-# named six that had since been deleted, which would have sent someone to
-# non-existent binaries mid-recovery. Emitting only the generated fields would
-# silently drop all of it: the same failure as losing CHANGES, called out above.
+# Every other non-generated line is carried forward too. v14's marker added
+# LIVE_DRIFT, NEW_IN_V14, PATCH_TABLE, KNOWN_UNFIXED and ROLLBACK -- prose this
+# script cannot regenerate. ROLLBACK records which on-panel rollback binaries
+# still exist; v13's chain named six that had since been deleted, which would
+# have sent someone to non-existent binaries mid-recovery. Emitting only the
+# generated fields drops all of it, the same failure as losing CHANGES.
 #
-# ⚠ Carried-forward prose can go STALE, which is the price of keeping it. Each
-# such line describes the state at ITS build, so re-read the marker after a build
-# and correct whatever the new version changed -- LIVE_DRIFT in particular should
-# read NONE on any image whose BARRACUDA_MD5 equals the running binary.
+# Carried-forward prose can go stale: each line describes the state at the build
+# that wrote it. Re-read the marker after a build and correct whatever the new
+# version changed -- LIVE_DRIFT should read NONE on any image whose BARRACUDA_MD5
+# equals the running binary.
 CHANGES_ADD="${CHANGES_ADD:-}"
 $SSH "sudo sh -c 'cd $D && {
   OLD=root/etc/tuxedo-build

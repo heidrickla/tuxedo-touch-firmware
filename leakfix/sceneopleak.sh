@@ -18,7 +18,7 @@
 #     ...    loop comparing the id field
 #     34c50  mov r0, r5                     <- r5 is an int; the TREE IS DROPPED
 #
-# ⚠ This is non-destructive on a placeholder database and that is not luck:
+# This is non-destructive on a placeholder database and that is not luck:
 # deleteExistngScene returns at 0x34c70 when checkIfSceneExists says no, so
 # writeSceneNode is never reached. Check that still holds before running it
 # against a panel with real scenes configured.

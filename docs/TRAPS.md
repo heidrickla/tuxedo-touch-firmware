@@ -10,7 +10,7 @@ already written down somewhere when I hit it. Hand-rolling an emulation rig
 cost hours while `ssh/BUILD.md` held the recipe and `WEBSERVER-REPLACEMENT.md`
 held the queue facts.
 
-🚨 **READING THIS FILE IS NOT CHECKING THE REPO, AND THAT DISTINCTION COST A
+**READING THIS FILE IS NOT CHECKING THE REPO, AND THAT DISTINCTION COST A
 PANEL RESET.** 2026-09-08: I read §6, found the 24-relaunch decode, felt covered,
 and never grepped further. **`docs/PUSH-STREAM-AUTH.md` R1/R4 held the actual
 procedure** — the log path, the counter readout, the ceiling, the note that
@@ -19,7 +19,7 @@ it was cumulative across the whole uptime and **tripped the hardware reset.**
 Same day, twice more: I re-derived §6's decode from the binary, and re-derived
 the event enum that `probe/supervis_events.py` regenerates on demand.
 
-🔑 **This file carries MECHANISMS. Procedures for the live panel are in
+**This file carries MECHANISMS. Procedures for the live panel are in
 `docs/PUSH-STREAM-AUTH.md`.** Before deriving anything about panel behaviour,
 grep `docs/` for the noun — `SupervisionLog`, `RESTART`, `budget`. Three
 re-derivations in one day, each worse than the record it duplicated, is not bad
@@ -44,7 +44,7 @@ and left sitting there saying the opposite of the truth.
 - **A check that can pass for the wrong reason is not a check.**
   `len(body) > 0` is true of a 401 error body, so it reported a gated panel as
   "delivers frames with no credential".
-- 🚨 **HTTP 200 IS NOT EVIDENCE THE HANDLER RAN.** `/handlerequest.html` gates on
+- **HTTP 200 IS NOT EVIDENCE THE HANDLER RAN.** `/handlerequest.html` gates on
   a CSRF token *before* its dispatch — `getCSRFToken1` at `0x3a3c0`, `beq 3e858`
   at `0x3a3c8` when it returns NULL — and the bail-out answers **200** like a
   success. `leakprobe.py --mode console` never carries a token, so every request
@@ -60,7 +60,7 @@ and left sitting there saying the opposite of the truth.
   differently per command — and `Type` 0, 1, 141, 60000 and 65535 all return one
   identical **empty** body on the panel as well as the bench. That is the
   trace-free way to ask "did this endpoint dispatch at all", and it works where
-  qemu cannot go. ⚠ The empty body was the tell all along: "400 requests, all
+  qemu cannot go. The empty body was the tell all along: "400 requests, all
   200" was 400 empty responses, and nobody looked at the length.
 - **A CHECK MUST DISTINGUISH "RAN AND PASSED" FROM "DID NOT RUN".** Deciding a
   verdict by searching a command's output for a failure word conflates them,
@@ -181,47 +181,45 @@ and left sitting there saying the opposite of the truth.
   1,744 reachable functions as uncallable.
 - ARM immediates are 8-bit rotated: **1125 and 1126 are not encodable**, so a
   `cmp #imm` scan cannot see them. Check the literal pool.
-- ⚠ **`objdump -d` disassembles only executable sections, so a grep of the dump
+- **`objdump -d` disassembles only executable sections, so a grep of the dump
   cannot prove a reference does not exist.** On Barracuda it emits `.init`,
   `.plt`, `.text`, `.fini` and nothing else — the 0x4cba04-byte `.rodata`, plus
-  `.data` and `.got`, are **absent from the dump entirely**. So "grep found no
+  `.data` and `.got`, are **absent from the dump entirely**. "grep found no
   reference to 0xNNNN in bd.txt" excludes only *code* references; a pointer table
   in `.rodata` or a GOT slot is invisible. To prove absence, byte-search the file
   for the little-endian word and map hits to sections, **restricting to LOADED
-  ranges** — hits inside `.symtab` are `st_value` fields, not data. A verifier
-  reached the right conclusion about 0x3a2a0 this way after the code-only grep
-  could not have established it.
-- ⚠ **In `add rN, pc, rN`, `pc` is THAT instruction's address + 8** — not the
-  previous instruction's. Getting the GOT base for libjson from `add sl, pc, sl`
-  at 0x2100c means 0x21014 + literal, giving 0x35478, which is exactly
-  `_GLOBAL_OFFSET_TABLE_`. Taking `pc` from the neighbouring instruction gives
-  0x35474, one slot low, and every subsequent GOT lookup then resolves to the
-  **previous** symbol — a plausible-looking wrong answer, not an error. ✅ Always
-  cross-check a computed GOT base against `readelf -Ws | grep GLOBAL_OFFSET_TABLE`.
-- ✅ **The 0x693DC–0x6975C code cave is a REAL NAMED VENDOR FUNCTION,
-  `HttpServer_getStatusCode` (size exactly 0x380 = 896 B) — and it is genuinely
-  dead, checked properly.** In stock nothing `bl`s its entry, and a byte search of
-  the whole file for the LE word `0x000693dc` finds **one** hit, in `.symtab`, i.e.
-  its own symbol-table entry, with **zero hits in any loaded section**. The `b
-  69628`…`b 69688` branches that a naive grep turns up are the function's own
-  internal switch arms, not external callers. ⚠ Do not mistake "a symbol exists
-  there" for "the code is live", and do not settle it with a disassembly grep —
-  use `scratchpad/wordref.py`, which maps every raw hit to a section and discounts
-  the symbol table. Our stubs have overwritten 437 of those 896 bytes and the panel
-  is healthy, which is the empirical half of the same answer.
-  ⚠ Consequence for reading a patched image: leftover stock bytes in the unused
-  part of the cave still **disassemble as instructions**, so a call-site census
-  over the region reports sites that nothing can reach. Two of the "16
-  `json_parse_unformatted` call sites" in this build are exactly that.
-- 🚨 **Symbol names go STALE where our own patches replaced a function body.**
-  `0x6c8c0` still disassembles under the name `HttpServer_destructor`, but in v13
-  the body is the **push-stream auth gate we installed** — it calls
+  ranges** — hits inside `.symtab` are `st_value` fields, not data. 0x3a2a0 was
+  settled this way; the code-only grep could not have settled it.
+- **In `add rN, pc, rN`, `pc` is THAT instruction's address + 8** — not the
+  previous instruction's. The GOT base for libjson from `add sl, pc, sl` at
+  0x2100c is 0x21014 + literal = 0x35478, exactly `_GLOBAL_OFFSET_TABLE_`.
+  Taking `pc` from the neighbouring instruction gives 0x35474, one slot low, and
+  every subsequent GOT lookup then resolves to the **previous** symbol, with no
+  error raised. Cross-check a computed GOT base against
+  `readelf -Ws | grep GLOBAL_OFFSET_TABLE`.
+- **The 0x693DC–0x6975C code cave is a REAL NAMED VENDOR FUNCTION,
+  `HttpServer_getStatusCode` (size exactly 0x380 = 896 B), and it is dead.** In
+  stock nothing `bl`s its entry, and a byte search of the whole file for the LE
+  word `0x000693dc` finds **one** hit, in `.symtab` — its own symbol-table entry
+  — with **zero hits in any loaded section**. The `b 69628`…`b 69688` branches a
+  naive grep turns up are the function's own internal switch arms, not external
+  callers. Do not read "a symbol exists there" as "the code is live", and do not
+  settle it with a disassembly grep: `scratchpad/wordref.py` maps every raw hit to
+  a section and discounts the symbol table. Our stubs have overwritten 437 of
+  those 896 bytes and the panel is healthy.
+  In a patched image, leftover stock bytes in the unused part of the cave still
+  **disassemble as instructions**, so a call-site census over the region reports
+  sites that nothing can reach. Two of the "16 `json_parse_unformatted` call
+  sites" in this build are exactly that.
+- **Symbol names go STALE where our own patches replaced a function body.**
+  `0x6c8c0` still disassembles as `HttpServer_destructor`, but in v13 the body is
+  the **push-stream auth gate we installed** — it calls
   `HttpDir_authenticateAndAuthorize`, compares against `simpleDebugger+0x20` and
   calls `AuthenticatedUser_get1`. The symbol table was not rewritten, so objdump
-  keeps printing the dead function's name over our code. Anything reasoning about
-  "which functions the patch changed" by symbol name will mislabel the biggest
-  hunks — diff the bytes (`cmp -l`) and word-align, do not trust the labels.
-- 🚨 **A COMPILER-GENERATED BINARY-SEARCH CHAIN ROUTES VALUES BY RANGE, SO
+  prints the dead function's name over our code. Reasoning about "which functions
+  the patch changed" by symbol name mislabels the biggest hunks — diff the bytes
+  (`cmp -l`) and word-align.
+- **A COMPILER-GENERATED BINARY-SEARCH CHAIN ROUTES VALUES BY RANGE, SO
   ENUMERATING `cmp`/`beq` PAIRS SILENTLY MISSES THEM.** `gettuxedoIPCCommFunc`
   was documented for a release as dispatching "42 message types" with **no case
   for 20**, and three docs concluded console mode "cannot work through Barracuda
@@ -464,16 +462,16 @@ and left sitting there saying the opposite of the truth.
   in `.bss` and `supervis` restarts with the system. Both halves matter: the
   budget is **cumulative across an entire uptime**, so a panel up for two days
   may have almost none left, and it is **full again after a reset**.
-  🚨 **OBSERVED FIRING 2026-09-08**, not merely decoded — it reset the panel
+  **OBSERVED FIRING 2026-09-08**, not merely decoded — it reset the panel
   during leak work, over an uptime whose counter already stood at 19. The log
   extract and the per-boot trap are in `PUSH-STREAM-AUTH.md` R4.
-  ✅ **Read the budget without touching the process** — `supervis` prints it into
+  **Read the budget without touching the process** — `supervis` prints it into
   a file on mtd17 that survives a reflash:
 
       grep -oE "BARRACUDA_RESTART-[0-9]+" /opt/tuxedo/configuration/SupervisionLog.txt | tail -1
 
   Read it **before** the first restart of a session, not after the last.
-  ⚠ **There is no free restart.** `kill -9` posts no message at all and *still*
+  **There is no free restart.** `kill -9` posts no message at all and *still*
   spends a unit (measured: `RESTART-1`, no `RECV_*` line), so the charge is for
   the relaunch, not the signal. A SIGTERM restart can spend **two**, because
   `sigHandler` often faults during its own cleanup and both signals count.
@@ -523,7 +521,7 @@ and left sitting there saying the opposite of the truth.
   booked window. Budget accordingly — a phase1 + phase2 + revert cycle spends
   three of the 24.
 
-  ⚠ **Two scans of this block concluded "unreachable" and both were wrong the
+  **Two scans of this block concluded "unreachable" and both were wrong the
   same way: they modelled only `B`/`BL`.** ARM dispatches a switch with
   `ldr pc, [pc, rN, lsl #2]` and a table of absolute addresses, which leaves no
   `B` or `BL` anywhere — so a branch scan is *structurally* blind to it and
@@ -534,7 +532,7 @@ and left sitting there saying the opposite of the truth.
   exactly those three slots. Same blindness as `ldr pc,[pc,rN,lsl #2]` read as a
   return, which section 2 already records — third time in one day.
 
-  ⚠ **AND THE CORRECTED SCAN WAS ALSO WRONG, WHICH IS THE SHARPER LESSON.** The
+  **AND THE CORRECTED SCAN WAS ALSO WRONG, WHICH IS THE SHARPER LESSON.** The
   first scan covered 29% of `.text` because `capstone.disasm()` stops at the
   first undecodable word; that was a real defect and fixing it gave 99.7%. The
   fixed scan then produced a conclusion that was wrong for an entirely unrelated
@@ -548,51 +546,54 @@ and left sitting there saying the opposite of the truth.
   shipped** — absent from the extracted v12 and v13 rootfs and from every image
   in `/work`. So `relaunchFtpCli` fires on its 600 s timer, the launch fails, and
   it logs. Continuously, through all 18 logged boots.
-  ✅ **It costs nothing that matters, checked rather than assumed:**
+  **It costs nothing that matters, checked rather than assumed:**
   `relaunchFtpCli` (0xc194) contains **no compare and no reference to the counter
   at 0x16be0** — it calls `launchFtpCli`, formats, and logs. So it does **not**
   spend the 24-relaunch budget; only Barracuda's three events do. And the log
   growth is ~7.6 kB/day against 57 MB free on mtd17, which is about 20 years.
-  ⚠ `/vidrec` is missing too but does **not** loop — it is launched once at boot
+  `/vidrec` is missing too but does **not** loop — it is launched once at boot
   with no retry timer. So "missing binary" alone does not predict the behaviour;
   the retry timer does.
-- 🚨 **THE PANEL HAS NO `find`, `diff`, `xargs`, `awk`, `tar` OR `gzip`, AND A
-  MISSING COMMAND LOOKS LIKE A NEGATIVE RESULT.** `sh` prints its error to stderr
-  and the pipeline yields nothing, so `find /var/www -type f` returns empty and
-  reads as "the directory is empty" — which is exactly the wrong conclusion drawn
-  from it once: `/var/www` actually holds an LTIB test page and a test CGI, with no
-  server installed to serve them. A `diff` of two config files would likewise report
-  "no differences" by printing nothing at all.
-  ✅ Present and usable: `sed`, `grep`, `tr`, `cut`, `sort`, `md5sum`, `dd`, `od`,
-  `hexdump`, `ls -R`, `readlink`. Enumerate with `ls -R` or a shell glob walk, and
-  compare by piping both sides to the *host* and diffing there.
-  ⚠ Same class as every other entry here: **verify the tool ran before believing
-  what its silence means.**
-- ⚠ **`pkill -f <pattern>` MATCHES YOUR OWN SSH COMMAND LINE AND KILLS THE SESSION.**
+- **`find`, `diff`, `xargs`, `awk`, `tar` AND `gzip` ARE NOT IN THE PANEL'S PATH,
+  AND A MISSING COMMAND LOOKS LIKE A NEGATIVE RESULT.** `sh` prints its error to
+  stderr and the pipeline yields nothing, so `find /var/www -type f` returns empty
+  and reads as "the directory is empty". That conclusion was drawn once: `/var/www`
+  holds an LTIB test page and a test CGI, with no server installed to serve them.
+  A `diff` of two config files would likewise print nothing and read as "no
+  differences".
+  **All six exist as busybox applets: call them `busybox find`, `busybox diff`,
+  `busybox awk`.** Only the PATH symlinks are missing. An earlier version of this
+  entry claimed the panel had no such tools at all, which was wrong — `command -v`
+  answering "not found" says nothing about what `busybox --list` holds, and that
+  list includes awk, find, diff, xargs, tar, gzip and `httpd`.
+  In PATH directly: `sed`, `grep`, `tr`, `cut`, `sort`, `md5sum`, `dd`, `od`,
+  `hexdump`, `ls`, `readlink`.
+  **Verify the tool ran before believing what its silence means**, and check
+  `busybox --list` before concluding a tool is unavailable.
+- **`pkill -f <pattern>` MATCHES YOUR OWN SSH COMMAND LINE AND KILLS THE SESSION.**
   `pkill -9 -f "qemu-arm-static.*Barracuda"` and `pkill -9 -f mqdrain.py` both
-  killed the shell running them, mid-script, twice in one session — the second time
-  after the first was already written down here, because the rule was recorded as
-  being about one specific pattern rather than about `-f` itself. Use `pkill -x
-  <exact-name>`, or make the pattern unable to match itself: `pkill -f "mqdrain[.]py"`.
-- 🚨 **`/proc/PID/mem` CANNOT BE READ ON THE PANEL — the kernel refuses, with a
+  killed the shell running them, mid-script, twice in one session; the second time
+  after the first was written down here, because the rule named one pattern rather
+  than `-f` itself. Use `pkill -x <exact-name>`, or make the pattern unable to
+  match itself: `pkill -f "mqdrain[.]py"`.
+- **`/proc/PID/mem` CANNOT BE READ ON THE PANEL — the kernel refuses, with a
   misleading error.** Every cross-process read returns **`ESRCH`**, which `dd`
-  prints as `No such process` even though the pid is right there in `/proc` and
-  serving traffic. Pre-2.6.39 `mem_read` requires the target to be
-  ptrace-attached **and stopped** by the reader. Measured on the unit against a
-  live Barracuda, at offset 0 as well as at a mapped address, so it is not an
-  addressing bug and no amount of offset-checking will fix it. Any instrument that
-  reads guest memory is therefore **bench-only**; on the panel the alternative is
-  ptrace, which stops the process and makes `supervis` spend relaunch budget.
-  ⚠ Do not reach for a shell rewrite when this bites: the panel has **no
-  interpreter at all** — no `python`, `python2`, `python3` or `perl`, only `dd`,
-  `od` and `hexdump` — but the obstacle is the read, not the language.
-  ⚠ Related, and the reason this was not caught by reading the image: **the panel's
+  prints as `No such process` even though the pid is in `/proc` and serving
+  traffic. Pre-2.6.39 `mem_read` requires the target to be ptrace-attached **and
+  stopped** by the reader. Measured on the unit against a live Barracuda, at
+  offset 0 and at a mapped address: not an addressing bug, and offset-checking
+  will not fix it. Any instrument that reads guest memory is **bench-only**; on
+  the panel the alternative is ptrace, which stops the process and makes
+  `supervis` spend relaunch budget. A shell rewrite does not help — the obstacle
+  is the read, not the language — and the panel has **no interpreter at all**, no
+  `python`, `python2`, `python3` or `perl`, only `dd`, `od` and `hexdump`.
+  Related, and why reading the image did not catch it: **the panel's
   Barracuda maps `/vidrec/lib/libjson.so.7` (md5 `610d5009`), not
   `/usr/lib/libjson.so.7.6.1` (md5 `6aa09429`)**, because
   `/etc/rc.d/init.d/startup` puts `/vidrec/lib` on `LD_LIBRARY_PATH`. Check
   `/proc/PID/maps` for which copy is loaded before trusting any library offset.
-  (For the registry offsets in `ALLOCATOR-REWORK.md` the two agree exactly —
-  verified — but that is a fact about those addresses, not a general licence.)
+  (For the registry offsets in `ALLOCATOR-REWORK.md` the two agree exactly, but
+  that is a fact about those addresses, not a general licence.)
 - **DO NOT read the relaunch budget out of the running `supervis`.** The counter
   is at `0x16be0` in `.bss` and the process is non-PIE with that page mapped
   `rw`, so it is at a real fixed address and looks readable. Reading it on
@@ -605,19 +606,18 @@ and left sitting there saying the opposite of the truth.
   `supervis` — `ptrace`, `SIGSTOP`, a debugger — is in that class.
 - **A flash wipes anything added over SSH.** `/opt/tuxedo/configuration`
   (mtdblock17) survives.
-- 🚨 **START THE EMULATOR WITH `emu/serve.sh`, NEVER A BARE `chroot`.** Barracuda
+- **START THE EMULATOR WITH `emu/serve.sh`, NEVER A BARE `chroot`.** Barracuda
   blocks on its POSIX message queues waiting for `/tuxedo`, which does not exist
   under emulation, so `serve.sh` also starts **`mqdrain.py`** to drain them.
   Without the drainer the server binds **all four listeners** and then answers
   **nothing** — `curl` hangs until timeout on plain HTTP as well as TLS.
-  ⚠ **`listeners=4/4` is not evidence the server serves**, and this failure
-  imitates a broken patch exactly: several A/B runs today read as "the patched
-  binary hangs" when the control hung identically. Whenever a run times out,
-  **run the control through the same path before believing anything about the
-  patch** — that one step separated an environment fault from a code fault.
-  ⚠ `serve-traced.sh` does NOT start the drainer; if you use it directly, start
+  **`listeners=4/4` is not evidence the server serves**, and this failure
+  imitates a broken patch: several A/B runs read as "the patched binary hangs"
+  when the control hung identically. Whenever a run times out, **run the control
+  through the same path before believing anything about the patch.**
+  `serve-traced.sh` does NOT start the drainer; if you use it directly, start
   `mqdrain.py` yourself afterwards.
-  ⚠ And do not clean up with `pkill -f "qemu-arm-static.*Barracuda"` — the pattern
+  Do not clean up with `pkill -f "qemu-arm-static.*Barracuda"` — the pattern
   matches the **ssh command line running it**, so it kills its own session and the
   connection dies mid-script. Use `pkill -x qemu-arm-static`.
 - **Prove request-path patches under `emu/` before flashing.** That is what
@@ -634,21 +634,21 @@ and left sitting there saying the opposite of the truth.
 
 ## 7. libjson
 
-Full working in `ALLOCATOR-REWORK.md`. The three that will bite a patch author:
+Full working in `ALLOCATOR-REWORK.md`. The ones that will bite a patch author:
 
-- 🚨 **`json_free` is NOT a `free()` wrapper, and it corrupts the heap on a
+- **`json_free` is NOT a `free()` wrapper, and it corrupts the heap on a
   pointer libjson did not issue.** libjson is built with `JSON_MEMORY_MANAGE`, so
   it keeps a global `std::map` of every pointer its C API hands out. `json_free`
   looks the pointer up, computes *was it registered* into a register, passes that
   to a **non-fatal** assert, and then **never branches on it** — an unregistered
   pointer makes it rebalance-for-erase and `operator delete` the **map's own
   header node** before it ever reaches the real `free()`. So "wrong allocator"
-  here is not a mismatched-free, it is guaranteed corruption, and it happens
-  *before* any message you might see. NULL is safe (early-out).
-  ⚠ Corollary for debugging: a crash from a `json_free` stub tells you **nothing**
-  about whether that site leaks or who owns the pointer. LEAK 29 spent a
-  measurement cycle on that inference.
-- 🚨 **A BAD POINTER TO `json_delete` HANGS, AND TAKES THE WHOLE SERVER WITH IT.**
+  here is not a mismatched-free but corruption, *before* any message you might
+  see. NULL is safe (early-out).
+  For debugging: a crash from a `json_free` stub tells you **nothing** about
+  whether that site leaks or who owns the pointer. LEAK 29 spent a measurement
+  cycle on that inference.
+- **A BAD POINTER TO `json_delete` HANGS, AND TAKES THE WHOLE SERVER WITH IT.**
   It is not a crash and there is nothing in any log. Because `json_delete` skips
   the registry erase when the pointer is not registered (below) and then calls
   `deleteJSONNode` anyway, a non-node makes it walk a child list forever. The
@@ -657,29 +657,27 @@ Full working in `ALLOCATOR-REWORK.md`. The three that will bite a patch author:
   blocks behind it. Measured: one API request against such a build timed out, and
   immediately afterwards plain HTTP on `:80` returned nothing either, with the
   process still alive and its log clean.
-  ✅ **The registry counter tells you which happened**, and it is the only cheap
-  way: if the node count is **unchanged** the delete ran (created +1, deleted −1);
-  if it went **up by one** the delete never erased anything, so the pointer was
-  never registered. `leakfix/jsoncount.py`, one request either side.
-  ⚠ And do not diagnose "is this register still the object" statically —
+  **The registry counter tells you which happened**, cheaply: if the node count
+  is **unchanged** the delete ran (created +1, deleted −1); if it went **up by
+  one** the delete never erased anything, so the pointer was never registered.
+  `leakfix/jsoncount.py`, one request either side.
+  Do not diagnose "is this register still the object" statically —
   `scratchpad/liveness.py` reconstructs executed blocks from a qemu trace and
   reported a register untouched across a path where the counter proves it was not
-  the registered pointer. A measured cross-check beats the tool.
-- ✅ **`json_delete` does NOT share `json_free`'s erase flaw, and the asymmetry is
-  diagnostic.**
-  It performs the same registry lookup but **branches on the result** — `cmp r1,
-  r0` / `beq 25b48` at libjson 0x25b30 skips the erase when `find()` returned
-  `end()` — before calling `deleteJSONNode` on the pointer regardless. So a bad
+  the registered pointer.
+- **`json_delete` does NOT share `json_free`'s erase flaw, and the asymmetry is
+  diagnostic.** It performs the same registry lookup but **branches on the
+  result** — `cmp r1, r0` / `beq 25b48` at libjson 0x25b30 skips the erase when
+  `find()` returned `end()` — before calling `deleteJSONNode` regardless. So a bad
   pointer handed to `json_delete` leaves the registry intact and only mis-frees
-  one object. Practical consequence when a delete stub misbehaves: a **hang or a
-  wrong result means the object was still live**, not that the registry was
-  corrupted; only `json_free` can corrupt it. LEAK 30's second attempt was read
-  this way.
-- ⚠ **glibc's two free-time messages mean different things.** `free(): invalid
+  one object. When a delete stub misbehaves, a **hang or a wrong result means the
+  object was still live**, not that the registry was corrupted; only `json_free`
+  can corrupt it. LEAK 30's second attempt was read this way.
+- **glibc's two free-time messages mean different things.** `free(): invalid
   pointer` is the chunk-alignment / arena-bounds check — the address is not a heap
   chunk. `double free or corruption` is the double-free check. Reading the first
   as the second sends you looking for a phantom earlier owner.
-- ⚠ **libjson exports bulk frees that Barracuda cannot reach, and they must stay
+- **libjson exports bulk frees that Barracuda cannot reach, and they must stay
   unreached.** `json_free_all` (0x20de0) and `json_delete_all` (0x2458c) free
   *everything registered process-wide*. They are absent from Barracuda's
   relocation table, and wiring one up to "free by scope" would corrupt the heap,

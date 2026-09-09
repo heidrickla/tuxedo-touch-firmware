@@ -5,7 +5,7 @@ Each iteration is a separate login plus the registering GET, which is what makes
 addSessionItem run. Reports the last attempt that succeeded, so the count is a
 measurement rather than "it broke at some point".
 
-⚠ The password is always the correct one. Three WRONG submissions permanently
+The password is always the correct one. Three WRONG submissions permanently
 disable every web account on this hardware; nothing here ever varies it.
 """
 import os

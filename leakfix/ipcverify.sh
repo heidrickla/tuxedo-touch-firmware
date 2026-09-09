@@ -27,7 +27,7 @@ echo "  listeners: $n/4"
 
 echo
 echo "=== 2. the web server still answers (PLAINTEXT ports only) ==="
-# ⚠ curl CANNOT be used against this panel's TLS ports. The target links
+# curl CANNOT be used against this panel's TLS ports. The target links
 # OpenSSL 1.0.0 and a modern curl on OpenSSL 3 refuses with
 #   error:0A000152:SSL routines::unsafe legacy renegotiation disabled
 # reporting HTTP 000, which reads exactly like "the server is dead". The TLS

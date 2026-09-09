@@ -16,7 +16,7 @@ marker in the guest's memory. setConsoleMessage's buffer is at guest VA
 0x55b7e4, so if the marker appears, the handler ran and the display path is
 complete -- meaning console mode needs no Barracuda change at all.
 
-⚠ The console handler reads its text at message + 14 (0x0E), NOT +0x0F where the
+The console handler reads its text at message + 14 (0x0E), NOT +0x0F where the
 type-21 layout puts it. Getting that wrong sends an empty string and the test
 would fail for the wrong reason.
 """

@@ -11,7 +11,7 @@ getCSRFToken1 (0x2b3bc) walks i = 1..getNoOfUsers() reading [table + 40*i], so
 INDEX 0 IS NEVER SEARCHED. If the writer stores at 0 and the reader starts at 1,
 that alone explains why a registered session is never found.
 
-⚠ The table pointer lives at guest VA 0x55b974, which is in the SECOND LOAD
+The table pointer lives at guest VA 0x55b974, which is in the SECOND LOAD
 segment. Seeking to it as a file offset lands in the read-only mapping and
 returns unrelated bytes -- that cost a wrong conclusion earlier today. The delta
 is resolved from /proc/<pid>/maps here rather than remembered.
