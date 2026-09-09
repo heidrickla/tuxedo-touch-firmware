@@ -892,6 +892,101 @@ EDITEARLY_SITES = ((0x34E00, 0x0A00002E),)
 WNMPGET_STUB = 0x69614
 WNMPGET_SITES = ()               # was ((0x290FC, 0xE5974004),) -- CRASHES, both allocators
 
+# LEAK 30 - WnmpDir_serviceField's API exit JUMPS PAST ITS OWN CLEANUP, leaking the
+# per-request JSON tree. Exactly one tree per API request.
+#
+# 🔑 FOUND BY COUNTING, NOT BY READING. libjson is built with JSON_MEMORY_MANAGE and
+# keeps a std::map of every pointer its C API issues, so the map's node count is the
+# number of outstanding allocations (docs/ALLOCATOR-REWORK.md). leakfix/jsoncount.py
+# reads it. Over 300 x /GetSceneList the NODE registry went 4 -> 304: exactly
+# 1.0000 leaked JSONNode tree per request, an integer match over 300 requests.
+#
+# That is the residual LEAKs 21 and 22 could not find, and their note called it:
+# "a dozen small chunks, which is the shape of a JSON TREE, not of two large
+# serialised strings. Freeing strings was the wrong target." It was a tree.
+#
+# 🚨 THE FIRST ATTEMPT AT THIS FIX TARGETED THE WRONG FUNCTION, AND THE COUNTER SAID
+# SO. WnmpDir_service (0x2a00c/0x2a078) reads exactly like the leak - one json_new,
+# one json_write, no json_delete - and it does run once per request. But patching it
+# moved the count by NOTHING: 69->1007 strings and 4->304 nodes in BOTH arms, with
+# the patched binary and its stub bytes verified present in the tree. That branch of
+# WnmpDir_service is simply never taken for /GetSceneList. Reading a plausible site
+# is not evidence it executes; the A/B is.
+#
+# The real path, found by tracing ALL of WnmpDir_serviceField (0x1eedc..0x29978) and
+# intersecting the executed translation-block starts with its call sites. Of ~350
+# json_new and ~330 json_write sites in that generated dispatcher, exactly TWO
+# libjson calls run per request, and NO json_delete, json_free or json_write at all:
+#
+#   1ef04  bl json_new       -> r7 = the request's root tree, REGISTERED      +1
+#   1f008  bl json_new_a     -> child, REGISTERED                            +1
+#   1f014  bl json_push_back    takes ownership and ERASES the child         -1
+#   ...
+#   2955c  b 29874           <- JUMPS STRAIGHT TO THE EPILOGUE           net +1
+#
+#   29860  mov r0, r6 ; bl json_delete    <- the vendor's own cleanup,
+#   29868  mov r0, r7 ; bl json_delete    <- SKIPPED by that branch
+#   29874  sub sp, fp, #40 ; ldm sp, {...pc}
+#
+# +1 per request is exactly what the counter measures. json_push_back's erase is
+# verified in libjson at 0x26020 (_Rb_tree_rebalance_for_erase + operator delete),
+# not assumed - without it this would predict +2 and the measurement would refute it.
+#
+# ✅ THIS IS A VENDOR BUG, NOT ONE WE INTRODUCED. Stock holds the identical
+# `b 29874` at 0x2955c. The neighbouring `b 65850` at 0x2954c IS ours (CAVE8), and it
+# faithfully reproduces the displaced `ldr r3,[r2]` before branching back to 0x29550
+# - checked, because a patch of ours sitting two instructions from a leak is exactly
+# the coincidence worth ruling out rather than assuming.
+#
+# ⚠ THE STUB DELETES r7 ONLY, NOT r6, so it does NOT simply jump to the vendor's
+# cleanup at 0x29860. On this path r6 is a STACK ADDRESS, not a tree - 0x1f024 sets
+# `sub r6, fp, #75` and 0x1f004 passes it to json_new_a as the value buffer. Reusing
+# the vendor's two-delete cleanup would hand json_delete a stack pointer, and
+# json_free/json_delete erase from the registry without branching on membership, so
+# that is heap corruption rather than a mismatched free (see LEAK 29 and
+# docs/ALLOCATOR-REWORK.md section 4).
+#
+# lr is expendable in the stub: the epilogue returns with `ldm sp, {...pc}` off the
+# frame, not through lr, so `blne json_delete` may clobber it. Same shape as
+# build_checkscene_stub.
+# 🚨 BUILT, MEASURED, AND NOT SHIPPED - the delete WEDGES the request. With the stub
+# in, the server starts, serves `/` with 302, and then the first /GetSceneList never
+# returns: the client times out reading the response. The process does NOT die - it
+# is still alive afterwards with no glibc abort, no segfault and nothing in its log
+# but the usual vendor noise - so this is not a mismatched free. It reads as a
+# use-after-free: r7 is still needed after 0x2955c, so the tree is not ownerless
+# there even though nothing ever deletes it.
+#
+# So the leak is CONFIRMED and its site is NOT. What holds:
+#   - exactly 1.0000 JSONNode trees leak per request (counter, 300 requests)
+#   - the tree is json_new @0x1ef04, and json_push_back @0x1f014 erases its child
+#   - the exit at 0x2955c does jump past the vendor's own json_delete pair @0x29860
+#   - stock has the identical branch, so this is a vendor bug, not ours
+# What does NOT hold: that r7 is dead at 0x2955c, or that this exit is where the
+# release belongs.
+#
+# 🔑 TWO SITES NOW REFUTED FOR THE SAME LEAK, EACH BY A DIFFERENT SIGNATURE, and the
+# signatures are worth keeping apart because they mean different things:
+#   - WnmpDir_service 0x2a084: the A/B moved the counter by NOTHING and the server
+#     stayed healthy -> the code never ran.
+#   - WnmpDir_serviceField 0x2955c: the request WEDGED -> the code ran and the object
+#     was still live.
+# A null result and a hang are different evidence. The first says "wrong path", the
+# second says "right path, wrong lifetime".
+#
+# Where the next attempt should start: find who still uses r7 after 0x2955c. The tree
+# is built at the very top of serviceField (0x1ef04, before any endpoint dispatch),
+# so it is the request-scoped root the whole dispatcher shares, and its real release
+# point is probably in the CALLER, after the response has been written. Read the
+# caller's frame rather than adding another delete inside serviceField.
+#
+# ⚠ Do not re-enable without re-running leakfix A/B on the bench. The site tuple and
+# stub are kept here, disabled, so the next attempt inherits the two refutations
+# instead of re-deriving them.
+RESPTREE_STUB = 0x696C0
+RESPTREE_SITES = ()              # was ((0x2955C, 0xEA0000C4),) -- WEDGES the request
+SERVICEFIELD_EPILOGUE = 0x29874
+
 STRIP_PARSE_STUB = 0x694EC
 STRIP_PARSE_SITES = (
     0x13B10, 0x16200, 0x166E8, 0x16954, 0x1712C, 0x19FCC, 0x1A010, 0x1A054,
@@ -1171,6 +1266,30 @@ def build_getescenes_stub():
         (g + 0x1C, blne_free, "blne free              @ malloc'd, so plain free"),
         (g + 0x20, 0xE8BD400E, "pop  {r1, r2, r3, lr}"),
         (g + 0x24, 0xE12FFF1E, "bx   lr"),
+    ]
+
+
+def build_resptree_stub():
+    """Delete the per-request tree the API exit jumps past, then run the epilogue.
+
+    Reached by `b` from 0x2955c, so it never returns to the site: it performs the
+    delete the vendor's own cleanup would have done and then branches on to the
+    epilogue at 0x29874, which is where the displaced branch was going.
+
+    Deletes r7 ONLY. The vendor cleanup at 0x29860 also deletes r6, but on this path
+    r6 holds `fp - 75`, a stack buffer, so reusing that code would hand json_delete a
+    stack pointer. No push: lr is expendable because the epilogue returns through
+    `ldm sp, {...pc}` off the frame rather than through lr.
+    """
+    g = RESPTREE_STUB
+    blne_del = (b_encode(g + 0x08, JSON_DELETE_PLT, link=True)
+                & 0x0FFFFFFF) | 0x10000000
+    return [
+        (g + 0x00, 0xE1A00007, "mov  r0, r7            @ the request's root tree"),
+        (g + 0x04, 0xE3500000, "cmp  r0, #0"),
+        (g + 0x08, blne_del, "blne json_delete"),
+        (g + 0x0C, b_encode(g + 0x0C, SERVICEFIELD_EPILOGUE),
+         "b    0x29874           @ the displaced branch"),
     ]
 
 
@@ -1600,6 +1719,7 @@ def main():
     editscene_sites = () if args.without_ipc else EDITSCENE_SITES
     editearly_sites = () if args.without_ipc else EDITEARLY_SITES
     wnmpget_sites = () if args.without_ipc else WNMPGET_SITES
+    resptree_sites = () if args.without_ipc else RESPTREE_SITES
     for site, want, what in ([(s, w, "bl json_delete in getEScenes")
                               for s, w in escenes_sites]
                              + [(s, w, "bl strlen in getEScenes")
@@ -1608,6 +1728,8 @@ def main():
                                 for s, w in str2_sites]
                              + [(s, w, "ldr r4 after printFieldControl")
                                 for s, w in wnmpget_sites]
+                             + [(s, w, "b to epilogue at the serviceField API exit")
+                                for s, w in resptree_sites]
                              + [(s, w, "beq at editSceneDetails parse-failed exit")
                                 for s, w in editearly_sites]
                              + [(s, w, "add sp at editSceneDetails exit")
@@ -1681,6 +1803,7 @@ def main():
     editscene = build_editscene_stub() if editscene_sites else []
     editearly = build_editearly_stub() if editearly_sites else []
     wnmpget = build_wnmpget_stub() if wnmpget_sites else []
+    resptree = build_resptree_stub() if resptree_sites else []
     if ipcbuf:
         if printf2[-1][0] + 4 > IPC_BUF_STUB:
             sys.exit("REFUSING: printf2 and ipc stubs overlap")
@@ -1708,6 +1831,11 @@ def main():
         sys.exit("REFUSING: cmp stubs and printf2 stub overlap")
     if printf2[-1][0] + 4 > CMPFREE_CAVE_END:
         sys.exit("REFUSING: stubs overrun their dead region")
+    if resptree:
+        if resptree[0][0] < WNMPGET_STUB + 0x40:
+            sys.exit("REFUSING: the resptree stub overlaps the wnmpget slot")
+        if resptree[-1][0] + 4 > CMPFREE_CAVE_END:
+            sys.exit("REFUSING: the resptree stub overruns its dead region")
     if cave10[-1][0] + 4 > FREESTR_STUB:
         sys.exit("REFUSING: cave10 and the freestr stub overlap")
     if freestr[-1][0] + 4 > CAVE10_END:
@@ -1891,7 +2019,7 @@ def main():
                                + ipcnewa + ipctree + ipcskip + ipctreea
                                + ipcerrnode + stripparse + escenes + escstr1 + escstr2
                                + checkscene + validpage + validstr + editscene
-                               + editearly + wnmpget):
+                               + editearly + wnmpget + resptree):
             rows.append((f"P15-leakfix-cave-{va:x}", va, rd(va), word,
                          note.split("@")[0].strip()))
         sites = [(PATCH_SITE, CAVE), (PATCH2_SITE, CAVE2), (PATCH3_SITE, CAVE3),
@@ -1983,6 +2111,10 @@ def main():
             rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
                          b_encode(site, WNMPGET_STUB),
                          "WnmpDir: json_free the module get out-param"))
+        for site, _w in resptree_sites:
+            rows.append((f"P15-leakfix-site-{site:x}", site, rd(site),
+                         b_encode(site, RESPTREE_STUB),
+                         "WnmpDir_serviceField: delete the tree its API exit skips"))
         def le(w):
             return struct.pack("<I", w).hex()
         for name, va, old, new, desc in rows:
@@ -1999,7 +2131,7 @@ def main():
                  + ipcbuf + ipcnewa + ipctree + ipcskip + ipctreea
                  + ipcerrnode + stripparse + escenes + escstr1 + escstr2
                  + checkscene + validpage + validstr + editscene + editearly
-                 + wnmpget)
+                 + wnmpget + resptree)
     # ONE list drives both the writes and the self-check below. They cannot
     # diverge, which is the failure this structure exists to prevent: the write
     # list was once edited on one line while it spanned two, silently dropping a
@@ -2029,6 +2161,9 @@ def main():
     site_writes += [(s, VALIDSTR_STUB, True) for s, _ in validstr_sites]
     site_writes += [(s, EDITSCENE_STUB, False) for s, _ in editscene_sites]
     site_writes += [(s, WNMPGET_STUB, False) for s, _ in wnmpget_sites]
+    # `b`, not `bl`: the stub runs the delete and then branches on to the epilogue
+    # the displaced instruction was heading for, so it never returns to the site.
+    site_writes += [(s, RESPTREE_STUB, False) for s, _ in resptree_sites]
     # `b`, not `bl`: the tree stub performs the displaced instruction and
     # branches back rather than returning through lr.
     if ipctree:

@@ -198,6 +198,21 @@ and left sitting there saying the opposite of the truth.
   0x35474, one slot low, and every subsequent GOT lookup then resolves to the
   **previous** symbol — a plausible-looking wrong answer, not an error. ✅ Always
   cross-check a computed GOT base against `readelf -Ws | grep GLOBAL_OFFSET_TABLE`.
+- ✅ **The 0x693DC–0x6975C code cave is a REAL NAMED VENDOR FUNCTION,
+  `HttpServer_getStatusCode` (size exactly 0x380 = 896 B) — and it is genuinely
+  dead, checked properly.** In stock nothing `bl`s its entry, and a byte search of
+  the whole file for the LE word `0x000693dc` finds **one** hit, in `.symtab`, i.e.
+  its own symbol-table entry, with **zero hits in any loaded section**. The `b
+  69628`…`b 69688` branches that a naive grep turns up are the function's own
+  internal switch arms, not external callers. ⚠ Do not mistake "a symbol exists
+  there" for "the code is live", and do not settle it with a disassembly grep —
+  use `scratchpad/wordref.py`, which maps every raw hit to a section and discounts
+  the symbol table. Our stubs have overwritten 437 of those 896 bytes and the panel
+  is healthy, which is the empirical half of the same answer.
+  ⚠ Consequence for reading a patched image: leftover stock bytes in the unused
+  part of the cave still **disassemble as instructions**, so a call-site census
+  over the region reports sites that nothing can reach. Two of the "16
+  `json_parse_unformatted` call sites" in this build are exactly that.
 - 🚨 **Symbol names go STALE where our own patches replaced a function body.**
   `0x6c8c0` still disassembles under the name `HttpServer_destructor`, but in v13
   the body is the **push-stream auth gate we installed** — it calls
@@ -572,6 +587,21 @@ and left sitting there saying the opposite of the truth.
   `supervis` — `ptrace`, `SIGSTOP`, a debugger — is in that class.
 - **A flash wipes anything added over SSH.** `/opt/tuxedo/configuration`
   (mtdblock17) survives.
+- 🚨 **START THE EMULATOR WITH `emu/serve.sh`, NEVER A BARE `chroot`.** Barracuda
+  blocks on its POSIX message queues waiting for `/tuxedo`, which does not exist
+  under emulation, so `serve.sh` also starts **`mqdrain.py`** to drain them.
+  Without the drainer the server binds **all four listeners** and then answers
+  **nothing** — `curl` hangs until timeout on plain HTTP as well as TLS.
+  ⚠ **`listeners=4/4` is not evidence the server serves**, and this failure
+  imitates a broken patch exactly: several A/B runs today read as "the patched
+  binary hangs" when the control hung identically. Whenever a run times out,
+  **run the control through the same path before believing anything about the
+  patch** — that one step separated an environment fault from a code fault.
+  ⚠ `serve-traced.sh` does NOT start the drainer; if you use it directly, start
+  `mqdrain.py` yourself afterwards.
+  ⚠ And do not clean up with `pkill -f "qemu-arm-static.*Barracuda"` — the pattern
+  matches the **ssh command line running it**, so it kills its own session and the
+  connection dies mid-script. Use `pkill -x qemu-arm-static`.
 - **Prove request-path patches under `emu/` before flashing.** That is what
   turned P13 from "cannot be known before it runs" into a boring flash.
 - **Anything that must work at boot gets executed under `qemu-user` in a chroot

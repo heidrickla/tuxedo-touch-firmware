@@ -292,8 +292,16 @@ correct free recovers its node for nothing.
 🚨 **And the counter found a leak the histogram could not name: exactly 1.0000
 JSONNode tree per request.** 300 requests, 300 trees, an integer match — one tree
 built per request and never `json_delete`d. That is a distinct defect from the
-string leaks, with an exact rate, and it is the strongest lead into the residual
-`/GetSceneList` cost. Tracking it down is the obvious next fix.
+string leaks, with an exact rate.
+
+✅ **The counter then earned its keep twice more, as a falsifier.** It located the
+tree (`json_new` at 0x1ef04, top of `WnmpDir_serviceField`) and then refuted two
+candidate fixes, each with a different signature: a fix at `WnmpDir_service` 0x2a084
+moved the count by *nothing* (that code never runs), and one at 0x2955c *wedged* the
+request (that code runs, but the tree is still live). An exact integer instrument
+distinguishes "wrong path" from "right path, wrong lifetime"; the page-quantised RSS
+slope that preceded it could do neither. Both attempts are recorded and disabled in
+`leakfix/mkapifix.py`; the leak stands, unfixed.
 
 ⚠ Do not quote this bench instance's byte slope. `leakprobe` reported 2957 B/request
 against the panel's measured 733, a 4× disagreement that is unexplained; the counter

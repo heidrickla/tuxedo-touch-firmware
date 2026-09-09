@@ -263,8 +263,30 @@ the pointer it tracks, so every correct free reclaims its node for nothing.
 
 🚨 **EXACTLY ONE JSONNode TREE LEAKS PER REQUEST — 300 requests, 300 trees.** An
 integer match, so this is a single tree built per request and never `json_delete`d.
-It is a distinct defect from the string leaks, it has an exact rate, and it is the
-best lead into the rest of this leak. **Next fix to chase.**
+It is a distinct defect from the string leaks and it has an exact rate.
+
+The tree is identified: `json_new` at **0x1ef04**, at the very top of
+`WnmpDir_serviceField` before any endpoint dispatch, with `json_push_back` at
+0x1f014 erasing its child (hence net +1, not +2). Of the ~350 `json_new` and ~330
+`json_write` sites in that generated dispatcher, tracing the whole function shows
+**only two libjson calls run per request, and no `json_delete`, `json_free` or
+`json_write` at all**.
+
+⚠ **Two candidate fix sites are now REFUTED, each by a different signature** — see
+LEAK 30 in [mkapifix.py](mkapifix.py), where both are kept disabled:
+
+| Site | Result | What it means |
+|---|---|---|
+| `WnmpDir_service` 0x2a084 | A/B moved the counter by **nothing**, server healthy | the code never runs on this path |
+| `WnmpDir_serviceField` 0x2955c | the request **wedges**; process survives, no abort | the code runs, but the object is still live |
+
+A null result and a hang are different evidence, and neither is a crash: nothing here
+was a mismatched free. 0x2955c genuinely does jump past the vendor's own
+`json_delete` pair at 0x29860 — **and stock has the identical branch, so the leak is
+the vendor's, not ours** — but r7 is not dead there. The tree is the request-scoped
+root the whole dispatcher shares, so its real release point is likely in the
+**caller**, after the response is written. Read the caller's frame; do not add a
+third delete inside `serviceField`.
 
 Background and the full derivation: [../docs/ALLOCATOR-REWORK.md](../docs/ALLOCATOR-REWORK.md)
 §3 and §7. ⚠ The counter is **bench-only** — the panel's 2.6.31 kernel refuses
