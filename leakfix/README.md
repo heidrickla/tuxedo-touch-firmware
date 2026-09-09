@@ -1173,12 +1173,42 @@ anonymous access with 401 on all four listeners and delivers frames when
 authenticated, and a paired control (400 requests versus the same interval idle)
 shows requests contribute no growth.
 
-## LEAK 31 — the REST arm/disarm handlers leak, all three. STATIC ONLY, not measured
+## LEAK 31 — the REST arm/disarm handlers leak, all three. MEASURED, rate NOT established
 
 Found 2026-09-09 within twenty minutes of installing a decompiler, in a function
-already read twice by hand that same day for a different question. Not measured, and
-deliberately not: quantifying it means arming and disarming a live alarm system,
-which is Lewis's call.
+already read twice by hand that same day for a different question. Measured on the
+live panel the same day, with Lewis's authorisation to arm and disarm.
+
+**The leak is real. The rate is not.** Two paired runs on the panel, 12 arm/disarm
+cycles each (24 handler calls), `leakfix/armrss.sh` and `leakfix/armrss2.sh`:
+
+| run | busy | idle control | attributable | per call |
+|---|---|---|---|---|
+| 1 | 392 kB / 633 s | 0 kB / 203 s (**not duration-matched**) | ~380 kB | ~16 kB |
+| 2 | 84 kB / 635 s | 4 kB / 636 s | 80 kB | **3.3 kB** |
+
+Barracuda held pid 2830 across both, so neither is void from a restart, and the panel
+was confirmed DISARMED at the end of each. The runs disagree by 4.7x for identical
+work, so only run 2 is quotable: run 1's control was a third of its test's duration,
+and run 1 began at 5500 kB while the heap was still ramping after a restart, which is
+this panel's documented post-restart behaviour. Run 2 began at 5904 kB, settled, and
+its control was matched by construction. **Take single-digit kB per call as an order
+of magnitude, not 16 kB and not 3.3 kB as a figure.**
+
+Two further reasons not to quote a rate from this. `VmRSS` is page-quantised at 4 kB,
+so 24 calls resolve to at best 20 pages of signal. And the busy phase is not only the
+24 calls: arming changes state, so Home Assistant polls and the push stream fires,
+and none of that happens during an idle control. 3.3 kB/call is therefore an upper
+bound on the handler's own cost, and it already exceeds what the static count can
+explain (below), which points at allocator arena behaviour rather than at bytes
+leaked.
+
+**The exact measurement was not available.** `jsoncount.py` reads libjson's registries
+and would give tree and string counts directly, but 2.6.31 refuses `/proc/PID/mem`
+with ESRCH, so it cannot run on the panel; and the bench cannot run the arm path at
+all, because `setarmwithcode` `mq_send`s to the alarm bus and waits for a `/tuxedo`
+reply that does not exist under emulation. See "How to get an exact number" below --
+five family members never touch the bus and are hammerable on the bench.
 
 `setarmwithcode` @`0x1afc8` (0x17c bytes), `setdisarmwithcode` @`0x1ae50` (0x178) and
 `setPartitionArmed` @`0x1c958` (0x180) share one shape. Counted from the
@@ -1194,8 +1224,27 @@ disassembly, not from the decompiler:
 | `json_free` / `json_delete` / `free` | **0** | **0** | **0** |
 
 Six nodes created and four absorbed by `push_back`, so **two roots leak per call**,
-plus **three serialised strings**, plus almost certainly the `Base64Encode` buffer —
+plus **two serialised strings**, plus almost certainly the `Base64Encode` buffer —
 the malloc'd-buffer pattern LEAK 20 already fixed in `getEScenes`.
+
+**Correction, 2026-09-09: two strings, not three.** The count above says `json_write`
+x3 and that is right, but the third one is the RETURN VALUE, not a leak. Every one of
+these functions ends
+
+    bl json_write ; mov sp,r7 ; sub sp,fp,#28 ; ldm sp,{r4,r5,r6,r7,fp,sp,pc}
+
+with nothing touching r0 between the call and the return, so the caller receives that
+string and owns it. Ghidra types the functions `void` — that is Ghidra guessing, and
+believing it would have double-freed the response body on the first fix. The census
+counts *calls* and cannot see where a result goes, which is exactly the caveat this
+file already recorded, now with a concrete instance.
+
+Ownership then propagates and nothing catches it: the caller is `set` @`0x15a00`, the
+REST write dispatcher, which contains **no** `json_free`, `json_delete` or `free` of
+any kind and returns the string straight up to `WnmpModule`'s dispatch — Barracuda
+framework code, and already established as the layer that never frees `json_write`
+results. So the string is still leaked; it is leaked one or two frames higher, and a
+fix belongs there rather than in nineteen handlers.
 
 This is the security-operation path. Home Assistant arms and disarms through it, so
 it runs on every alarm state change, not only when someone opens a web page.
@@ -1208,11 +1257,14 @@ never read for frees. `setarmwithcode` was read twice the same day for the
 
 **Before fixing:** these are `json_write` results, so `json_free` and never `free` —
 `json_free` is not a `free()` wrapper, and the wrong one corrupts libjson's registry
-rather than mismatching an allocator (`docs/ALLOCATOR-REWORK.md` §4). The rate can be
-confirmed exactly with `leakfix/jsoncount.py` on the bench, or on the panel the next
-time Lewis arms it, which costs one arm/disarm cycle instead of a campaign.
+rather than mismatching an allocator (`docs/ALLOCATOR-REWORK.md` §4). And free only
+the first two: the third `json_write` is the reply body the caller is about to send,
+so freeing it in the handler is a use-after-free on every REST write, not a leak fix.
 
-### LEAK 31 is a FAMILY of 19, not three functions
+### LEAK 31 is a FAMILY of 16, not three functions
+
+(The census found 19; three of them turned out to be dead code. The table below is
+the census output as it stood, with the correction recorded under it.)
 
 `leakfix/alloccensus.py` counts allocating calls against freeing calls for every
 function in the image, cross-references `patches.tsv` so shipped fixes are marked,
@@ -1245,11 +1297,62 @@ That is the REST write API more or less entire: arming, disarming, door locks,
 lights, thermostat set-point and mode, occupancy, scenes, device registration. Every
 state-changing call the Home Assistant integration can make is on this list.
 
-Three were confirmed by reading the disassembly. **The other sixteen share the
-signature and have not been read**, and the census is explicit that a signature is
-not a verdict: a function may return its allocation, store it somewhere that
-outlives the call, or hand it to something that takes ownership. `setDoorLock` in
-particular deserves reading before anything is written, being a lock.
+### All nineteen now read. The family is 16, not 19
+
+Read 2026-09-09 with `Decomp.java` over the whole list. Three results changed it.
+
+**1. The last `json_write` is returned, in 18 of 19.** Detailed above for the arm
+handlers; it holds for every member with one variant. `getDeviceStatusFromFile`
+@`0x1724c` stores it through an out-pointer (`str r0,[r9]`) and returns 0, which is
+the same transfer by a different route. So every member leaks one fewer string than
+the census counts, and no member's trailing `json_write` may be freed in place.
+
+**2. Three members are dead code and must come off the list.**
+`BLightStatusToOtherTuxedos` @`0x13064`, `DLightStatusToOtherTuxedos` @`0x12f18` and
+`uploadDevicesToOtherTuxedos` @`0x12c54` have **zero** `bl` callers and **zero** data
+references in any loaded section. That evidence is only worth stating because the
+method was validated first: run the same two checks against `setarmwithcode`, which
+24 live arm cycles prove runs, and they find its caller at `0x15d60` (inside `set`)
+— so "no references" here means dead, not "the search was blind".
+
+**3. Those three dead functions contain a use-after-free**, and it is worth recording
+because if anything ever calls them it is worse than a leak:
+
+    curl_easy_init -> curl_easy_setopt(handle, URL) -> curl_easy_cleanup(handle)
+                   -> curl_easy_escape(handle, ...)   <- handle already destroyed
+
+All three do this. They also never call `curl_easy_perform`, so they build a URL in a
+256-byte stack buffer, set it as an option, destroy the handle, then `strcat` more
+onto a buffer nobody sends — with `strcat` of escaped JSON into `char[256]` and no
+bound. They allocate, leak per loop iteration, and accomplish nothing. Dead, so not
+exploitable; do not "fix" them, delete them if anything ever touches this area.
+
+`setDoorLock` was read first, being a lock. It has the family shape and one extra
+`json_write`: two root trees, three `json_write` calls of which the third is
+returned, and the `Base64Encode` buffer. Its first root pointer is overwritten by a
+later assignment before the function returns, so that tree is unreachable, not merely
+unfreed.
+
+### How to get an exact number
+
+The arm path cannot be counted on the bench (alarm bus) or on the panel (ESRCH), but
+**five family members never touch the alarm bus**: `setAddIPURL`, `setUpdateIPURL`,
+`setViewIPURL`, `setAddDevMAC`, `setClientUnregister`. Those are hammerable under
+emulation with `jsoncount.py`, which counts libjson's registries exactly instead of
+inferring from 4 kB pages.
+
+`setViewIPURL` (endpoint `ViewIPURL`) is the one to use: it is read-only — it calls
+`getRegisteredDevNodes()`, iterates, builds a reply, and writes nothing — whereas the
+other four mutate persistent config. It is also the richer target, because
+`getRegisteredDevNodes()` is the path through `readCRCJSONFile` @`0x32280`, the 45
+`json_as_string` against one `json_delete` that is the biggest single allocator in
+the image, and its tree is not freed here either. One measurement covers the family
+shape and that open question together.
+
+Blocked on credentials: `/tmp/pw.txt` on the bench is empty, so `leakprobe.py` cannot
+authenticate, and unauthenticated requests are rejected at the auth gate — which is
+what made an earlier raw-HTTP attempt return 0.000 per call against a control known
+to be 1.0000.
 
 The largest single candidate is not in the family: **`readCRCJSONFile` @`0x32280`,
 45 `json_as_string` against one `json_delete`.** It is reached from

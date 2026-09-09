@@ -44,7 +44,13 @@ the value.
 It found LEAK 31 within twenty minutes of being installed, in a function that had
 already been read twice by hand the same day for a different question. The census
 built on top of it, `leakfix/alloccensus.py`, then turned that single finding into a
-family of nineteen.
+family of nineteen — sixteen after reading all of them, three being dead code.
+
+Reading all nineteen is also what caught the thing that would have broken the fix:
+the trailing `json_write` in eighteen of them is the RETURN VALUE, and Ghidra types
+those functions `void`. Trusting the decompiler's signature would have freed the
+reply body on every REST write. The check that settled it was four instructions of
+disassembly, which is `TRAPS.md` section 2 doing the job the decompiler cannot.
 
 ## What it does not do
 

@@ -22,7 +22,15 @@ def sections(path):
             continue
         try:
             rest = line.split("]", 1)[1].split()
-            name, _typ, addr, off, size = rest[0], rest[1], rest[2], rest[3], rest[4]
+            name, typ, addr, off, size = rest[0], rest[1], rest[2], rest[3], rest[4]
+            # NOBITS sections hold no file bytes, but readelf still prints an
+            # sh_offset for them, and .bss's overlaps .symtab in this image
+            # (.bss 0x54ac34+0x2ee8 against .symtab 0x54b8fc+0x12c70). Keeping them
+            # made every symbol-table st_value field resolve to .bss and count as a
+            # live data reference -- the exact opposite of the truth, and it briefly
+            # turned three dead functions into a dispatch table that does not exist.
+            if typ == "NOBITS":
+                continue
             secs.append((name, int(addr, 16), int(off, 16), int(size, 16)))
         except (IndexError, ValueError):
             continue

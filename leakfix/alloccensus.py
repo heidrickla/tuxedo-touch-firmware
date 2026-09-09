@@ -18,6 +18,18 @@ So the output is ranked for reading, and every entry needs the same triage the
 shipped fixes got. Two of the three arm handlers in LEAK 31 were confirmed by
 reading; the counts only said where to look.
 
+How much the counts overstate, measured on the family this found: reading all
+nineteen entries dropped three as dead code (no callers, no data references) and cut
+every remaining one by a string, because the LAST json_write in eighteen of them is
+the function's return value. The first bullet above is not a rare case -- it was the
+majority case. Net: 19 candidates, 16 real, each one string smaller than its row
+here says. Check the epilogue before believing a row:
+
+    bl json_write ; <stack teardown that never writes r0> ; ldm sp,{...,pc}
+
+means the caller owns that one. Ghidra types those functions void, so its signature
+is not the answer to this question.
+
     python leakfix/alloccensus.py <objdump-output>
     arm-linux-gnueabi-objdump -d Barracuda > /tmp/bd.txt
 
