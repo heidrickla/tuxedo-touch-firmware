@@ -181,6 +181,31 @@ and left sitting there saying the opposite of the truth.
   1,744 reachable functions as uncallable.
 - ARM immediates are 8-bit rotated: **1125 and 1126 are not encodable**, so a
   `cmp #imm` scan cannot see them. Check the literal pool.
+- ⚠ **`objdump -d` disassembles only executable sections, so a grep of the dump
+  cannot prove a reference does not exist.** On Barracuda it emits `.init`,
+  `.plt`, `.text`, `.fini` and nothing else — the 0x4cba04-byte `.rodata`, plus
+  `.data` and `.got`, are **absent from the dump entirely**. So "grep found no
+  reference to 0xNNNN in bd.txt" excludes only *code* references; a pointer table
+  in `.rodata` or a GOT slot is invisible. To prove absence, byte-search the file
+  for the little-endian word and map hits to sections, **restricting to LOADED
+  ranges** — hits inside `.symtab` are `st_value` fields, not data. A verifier
+  reached the right conclusion about 0x3a2a0 this way after the code-only grep
+  could not have established it.
+- ⚠ **In `add rN, pc, rN`, `pc` is THAT instruction's address + 8** — not the
+  previous instruction's. Getting the GOT base for libjson from `add sl, pc, sl`
+  at 0x2100c means 0x21014 + literal, giving 0x35478, which is exactly
+  `_GLOBAL_OFFSET_TABLE_`. Taking `pc` from the neighbouring instruction gives
+  0x35474, one slot low, and every subsequent GOT lookup then resolves to the
+  **previous** symbol — a plausible-looking wrong answer, not an error. ✅ Always
+  cross-check a computed GOT base against `readelf -Ws | grep GLOBAL_OFFSET_TABLE`.
+- 🚨 **Symbol names go STALE where our own patches replaced a function body.**
+  `0x6c8c0` still disassembles under the name `HttpServer_destructor`, but in v13
+  the body is the **push-stream auth gate we installed** — it calls
+  `HttpDir_authenticateAndAuthorize`, compares against `simpleDebugger+0x20` and
+  calls `AuthenticatedUser_get1`. The symbol table was not rewritten, so objdump
+  keeps printing the dead function's name over our code. Anything reasoning about
+  "which functions the patch changed" by symbol name will mislabel the biggest
+  hunks — diff the bytes (`cmp -l`) and word-align, do not trust the labels.
 - 🚨 **A COMPILER-GENERATED BINARY-SEARCH CHAIN ROUTES VALUES BY RANGE, SO
   ENUMERATING `cmp`/`beq` PAIRS SILENTLY MISSES THEM.** `gettuxedoIPCCommFunc`
   was documented for a release as dispatching "42 message types" with **no case
@@ -516,6 +541,25 @@ and left sitting there saying the opposite of the truth.
   ⚠ `/vidrec` is missing too but does **not** loop — it is launched once at boot
   with no retry timer. So "missing binary" alone does not predict the behaviour;
   the retry timer does.
+- 🚨 **`/proc/PID/mem` CANNOT BE READ ON THE PANEL — the kernel refuses, with a
+  misleading error.** Every cross-process read returns **`ESRCH`**, which `dd`
+  prints as `No such process` even though the pid is right there in `/proc` and
+  serving traffic. Pre-2.6.39 `mem_read` requires the target to be
+  ptrace-attached **and stopped** by the reader. Measured on the unit against a
+  live Barracuda, at offset 0 as well as at a mapped address, so it is not an
+  addressing bug and no amount of offset-checking will fix it. Any instrument that
+  reads guest memory is therefore **bench-only**; on the panel the alternative is
+  ptrace, which stops the process and makes `supervis` spend relaunch budget.
+  ⚠ Do not reach for a shell rewrite when this bites: the panel has **no
+  interpreter at all** — no `python`, `python2`, `python3` or `perl`, only `dd`,
+  `od` and `hexdump` — but the obstacle is the read, not the language.
+  ⚠ Related, and the reason this was not caught by reading the image: **the panel's
+  Barracuda maps `/vidrec/lib/libjson.so.7` (md5 `610d5009`), not
+  `/usr/lib/libjson.so.7.6.1` (md5 `6aa09429`)**, because
+  `/etc/rc.d/init.d/startup` puts `/vidrec/lib` on `LD_LIBRARY_PATH`. Check
+  `/proc/PID/maps` for which copy is loaded before trusting any library offset.
+  (For the registry offsets in `ALLOCATOR-REWORK.md` the two agree exactly —
+  verified — but that is a fact about those addresses, not a general licence.)
 - **DO NOT read the relaunch budget out of the running `supervis`.** The counter
   is at `0x16be0` in `.bss` and the process is non-PIE with that page mapped
   `rw`, so it is at a real fixed address and looks readable. Reading it on

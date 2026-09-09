@@ -17,16 +17,37 @@ crash we had already suffered.
 `libjson.so.7.6.1` is compiled with **`JSON_MEMORY_MANAGE`**. It keeps a global
 registry of every pointer its C interface hands out, and it **exports bulk frees**:
 
-    json_free_all      libjson VA 0x20de0   (544 B, void signature)
-    json_delete_all    libjson VA 0x2458c   (544 B, void signature)
+    json_free_all      libjson VA 0x20de0   (544 B)
+    json_delete_all    libjson VA 0x2458c   (544 B)
     auto_expand::purge        0x156e8       frees every registered string
     auto_expand_node::purge   0x1569c       deletes every registered node
 
+⚠ Both **read no argument register** (r0 is redefined at 0x20df0 / 0x2459c before
+any read), which is consistent with `void json_free_all(void)` and equally with a
+one-argument variant whose parameter is dead. No header or debug info in the tree
+settles the declared prototype. On AAPCS the distinction is operationally moot —
+calling with zero arguments is safe either way — but do not write "void signature"
+as though it were proven.
+
 Two registries, both `std::map`, singletons at `0x35cd4` (strings) and `0x35c9c`
-(nodes). Every string-returning API call registers unconditionally through one
-choke point, **`toCString` @0x27d78** — malloc, then an insert with no branch that
-could skip it. So `json_as_string`, `json_write`, `json_write_formatted`,
-`json_name` and `json_strip_white_space` results are all tracked.
+(nodes), reached from GOT slots 0x358a4 and 0x35978 (`R_ARM_GLOB_DAT` →
+`jsonSingletonSTRING_HANDLER::getValue()::single` and `…NODE_HANDLER…`). GOT base is
+0x35478, matching `_GLOBAL_OFFSET_TABLE_` in the symbol table.
+
+Every string-returning API call registers unconditionally through one choke point,
+**`toCString` @0x27d78** — malloc, then an insert with no branch that could skip it.
+So `json_as_string`, `json_write`, `json_write_formatted`, `json_name` and
+`json_strip_white_space` results are all tracked. Nodes register on a *separate*
+path — `operator new` plus an `internalJSONNode`/`JSONNode` constructor — so there
+is no single unified allocation helper spanning both.
+
+Each registry is a function-local static, so its first use runs the usual
+`__cxa_guard_acquire` / `__aeabi_atexit` pair (0x20e04 / 0x20ec8 in `json_free_all`)
+to construct it and register its destructor. That is why `purge` has four call
+sites, not two: the two bulk frees plus the two atexit destructors `__tcf_8`
+(0x20244) and `__tcf_9` (0x203b4). Everything registered is purged at process exit
+anyway — which is harmless, and is also why the leak never shows up as a shutdown
+complaint.
 
 All four verified present in `usr/lib/libjson.so.7.6.1` at exactly those addresses
 (`nm -D --defined-only`).
@@ -100,24 +121,45 @@ another in-flight request still holds.** `json_free_all()` is process-wide; the
 registries are unlocked; the scope we want is per-request and the tool is
 per-process. Those cannot be reconciled without rebuilding libjson.
 
-## 3. Why a bump arena is not even implementable here
+## 3. A bump arena cannot be scoped where it would need to be
 
 `json_as_string` / `json_write` / `json_new` **do not allocate in Barracuda.** They
 allocate *inside* libjson, through libjson's own PLT — `toCString` @0x27dbc,
 `private_RemoveWhiteSpace` @0x1cda0/0x1d138, the `internalJSONNode` constructors,
-`jsonChildren::inc`. Barracuda only ever sees the returned pointer. There is
-nothing in Barracuda to redirect to a bump allocator.
+`jsonChildren::inc`. Barracuda only ever sees the returned pointer. So there is
+nothing *in Barracuda* to redirect to a bump allocator.
 
-The only real form of the idea is replacing libjson — and that has the worst blast
-radius on this unit:
+⚠ **The allocator is nonetheless replaceable — just not at a useful scope.** Every
+allocator reference in both binaries is a lazily-bound `R_ARM_JUMP_SLOT`
+(libjson: malloc 0x35570, realloc 0x3562c, free 0x3566c, `_Znwj` 0x35624, `_ZdlPv`
+0x356d8; Barracuda: 0x55a420 / 0x55a540 / 0x55a5ac), libjson has **no `DT_FLAGS`
+entry at all** — no `DF_SYMBOLIC`, no `DF_BIND_NOW` — and Barracuda is a non-PIE
+`EXEC` with a normal interpreter. So one `LD_PRELOAD` definition would interpose for
+both. **But interposition is process-wide**: it replaces malloc/free for Barracuda's
+own allocations, libstdc++, libxml2, libcurl and libssl too, and cannot by itself
+tell "this allocation belongs to request N" from "this one must outlive it". It
+gives the wrong scope, not an unimplementable one — which is worth stating
+precisely, because "impossible" invites someone to disprove it and then build the
+dangerous thing.
+
+The only form that reaches libjson scope is replacing libjson — and that has the
+worst blast radius on this unit:
 
 * `libjson.so.7` is in `DT_NEEDED` of **`/tuxedo`**, `vidrec/vidApp` and
   `audioapp`, not only Barracuda. `/tuxedo` owns the alarm bus.
 * There are **two different copies**: `usr/lib/libjson.so.7.6.1` (md5 `6aa09429`)
-  and `vidrec/lib/libjson.so.7` (md5 `610d5009`), and
-  `/etc/rc.d/init.d/startup` puts `/vidrec/lib` on `LD_LIBRARY_PATH` — so you can
-  patch the copy a given process does not load. Both are byte-identical in
-  `json_free`, but any offset-level work must be redone against whichever is mapped.
+  and `vidrec/lib/libjson.so.7` (md5 `610d5009`), and `/etc/rc.d/init.d/startup`
+  puts `/vidrec/lib` on `LD_LIBRARY_PATH` — so you can patch the copy a given
+  process does not load.
+  🚨 **The panel's Barracuda maps the `/vidrec` copy, not the `usr/lib` one** —
+  read out of `/proc/PID/maps` on the unit, not inferred. Anyone reasoning from
+  `usr/lib/libjson.so.7.6.1` is reading a library the web server does not load.
+  ✅ **For this work it makes no difference, and that was checked rather than
+  hoped:** the two have identical section tables (names, addresses, sizes), a
+  byte-identical `json_free`, and the same addresses for both registries, both
+  init guards and both bulk frees. They differ by 499 bytes of non-loaded content.
+  So one address set serves both — but re-check that before trusting it for a
+  *different* offset.
 
 ## 4. This explains the LEAK 29 crash, which we had already suffered
 
@@ -187,8 +229,81 @@ improvement in kind:**
 * a naive reset at that boundary would wrongly free **HttpSessions** (malloc
   0x71980), **AuthenticatedUser session attributes** (0x65914/0x65a58),
   **push-stream PushConNodes** (0x7b0c8/0x79fa0) and the retained **HttpAllocator
-  request buffer** (0x6a57x) — all allocated during a request and all required to
+  request buffer** (0x6a574) — all allocated during a request and all required to
   outlive it.
+* ⚠ **the boundary nests.** `HttpResponse_incOrForward` (0x6e5c4) carries a
+  forward/redirect depth counter tested against 9 (`cmp r3, #9` at 0x6e5e4 and
+  0x6e608, `baFatalEf` at 0x6e694 on overflow), so `serviceRequest` re-enters up to
+  ten deep. A request-scoped arena would have to be a **stack** of scopes, and a
+  reset on the inner return would free the outer request's allocations.
+
+### How much would it even recover, and where the 733 B actually goes
+
+The `/GetSceneList` histogram **does** reconcile with the measured slope, contrary to
+a claim raised during this investigation that 453 B/request were unattributed. That
+figure came from summing only the three chunks `chunkdiff` could name by content
+(120 + 96 + 64 = 280) while ignoring the per-class counts. Summing the whole
+histogram over its 300 requests:
+
+    chunk   count    B/req
+       32    1243    132.6
+      120     302    120.8
+       40     895    119.3
+       64     556    118.6
+       96     298     95.4
+       16     843     45.0
+       24     379     30.3
+    ----------------------
+              total   662.0   accounted  (90.3% of the 733 B/req slope)
+                       71.0   unattributed
+
+So the bookkeeping is sound to within 10%, and the arena's payoff *can* be costed.
+The 96 B Base64 chunk is plain `malloc` and outside a libjson arena; most of the
+rest is libjson-issued, putting recovery around 70–85%.
+
+🔑 **And the largest class is the registry overhead this investigation predicted.**
+A `_Rb_tree_node<pair<void* const, void*>>` is 16 B of base plus an 8 B pair = 24 B,
+which glibc serves from a **32 B** chunk — and 32 B is the biggest single class at
+4.14 chunks/request. That is the shape of "every leaked string also leaks its
+registry node". It also lines up with the older direct count of ~5.2 unfreed
+`json_as_string` results per request, measured before some of the shipped frees
+landed.
+
+✅ **Predicted ≈4.1 outstanding libjson strings per request, then measured it.**
+300 × `/GetSceneList` on the bench, build `0066ad95`, via `leakfix/jsoncount.py`:
+
+    strings   69 ->  1007    =  938 / 300 =  3.1267 per request
+    trees      4 ->   304    =  300 / 300 =  1.0000 per request
+                                          ------------------
+    registry nodes total                     4.1267 per request
+    32 B chunks in the histogram             4.1433 per request   (0.40% apart)
+
+⚠ **The prediction was wrong in its literal form** — strings alone are 3.13, not
+4.14. It is right in substance once **both** registries are counted: the strings map
+holds `pair<void*, void*>` and the nodes map `pair<void*, JSONNode*>`, both 8-byte
+pairs, so both produce 24 B tree nodes in 32 B chunks and both feed the same class.
+Summed, they land on the observed 4.1433 to within 0.4%.
+
+🔑 So the largest class in the biggest remaining leak is **132 B/request of pure
+libjson bookkeeping**, and no per-site stub can target it directly: a registry node
+is only released by a real `json_free`/`json_delete` on the pointer it tracks. Each
+correct free recovers its node for nothing.
+
+🚨 **And the counter found a leak the histogram could not name: exactly 1.0000
+JSONNode tree per request.** 300 requests, 300 trees, an integer match — one tree
+built per request and never `json_delete`d. That is a distinct defect from the
+string leaks, with an exact rate, and it is the strongest lead into the residual
+`/GetSceneList` cost. Tracking it down is the obvious next fix.
+
+⚠ Do not quote this bench instance's byte slope. `leakprobe` reported 2957 B/request
+against the panel's measured 733, a 4× disagreement that is unexplained; the counter
+deltas are exact integers and agree with the panel-derived histogram, so they are the
+trustworthy half of this run.
+
+⚠ Minor correction to the README while here: the 64 B class runs at **1.85
+chunks/request**, not the "one of each per request" recorded for the three named
+chunks. There is a second 64 B allocation beyond the named
+`{"Status":"Sucess"…}` one.
 
 ## 6. Decision, and the asymmetry that drives it
 
@@ -203,22 +318,51 @@ relaunch budget is cumulative per boot. A corruption that crashes Barracuda on
 every API request reaches the ceiling in minutes. That asymmetry, not the
 engineering elegance, is what decides it.
 
-## 7. ✅ What the investigation DID hand us: a zero-risk exact leak counter
+## 7. ✅ What the investigation DID hand us: an exact leak counter (bench only)
 
 `json_free` decrements the registry tree's size word at `[r4,#20]` (0x210a4, seen in
-the listing above); `json_free_all` zeroes it at 0x20e3c. The map itself is reached
-by a GOT-relative load (`ldr r4, [sl, r9]` at 0x21030), so its address is
-recoverable from the process without running any code. **Reading that word before
+the listing above); `json_free_all` zeroes it at 0x20e3c. **Reading that word before
 and after N requests gives an exact count of outstanding libjson strings** — no
 patching, no freeing, nothing on the request path. `heapwalk.py` and `chunkdiff.py`
-already read guest memory through `/proc/pid/mem`, so the instrument is a few
-lines.
+already read guest memory through `/proc/pid/mem`, so the instrument is a few lines.
+
+✅ **The addresses, so this never has to be re-derived** — library-relative, add the
+`libjson.so.7.6.1` load base from `/proc/PID/maps`:
+
+    strings outstanding   base + 0x35ce8      (registry 0x35cd4 + 20)
+    nodes   outstanding   base + 0x35cb0      (registry 0x35c9c + 20)
+    init guards           base + 0x35a90 (strings), 0x35a94 (nodes)
+
+Offset 20 is `_M_node_count`, and this is confirmed twice over rather than assumed:
+the code computes `end()` as `map+4` before calling `_Rb_tree_rebalance_for_erase`,
+and **both singletons have `st_size` exactly 24** — which is the only layout that
+fits (4 pad + 16 `_Rb_tree_node_base` header + 4 count). Read the guard word first:
+zero means the singleton is not constructed yet and the count is trivially 0.
+
+Implemented as [`leakfix/jsoncount.py`](../leakfix/jsoncount.py), working — the
+numbers in §3 are its output.
+
+🚨 **It cannot be run on the panel, and the reason is the kernel.** On 2.6.31
+`/proc/PID/mem` refuses every cross-process read with **`ESRCH`** — measured against
+the live Barracuda, at offset 0 as well as at a mapped address, so it is not an
+addressing mistake. `mem_read` before 2.6.39 requires the target to be
+ptrace-attached *and stopped* by the reader, and stopping Barracuda makes `supervis`
+relaunch it, spending budget. The panel also has **no interpreter at all** — no
+`python`, `python2`, `python3` or `perl`, only `dd`, `od` and `hexdump` — so a shell
+port buys nothing, because the obstacle is the read, not the language.
+
+⚠ So "zero-risk instrument" was too strong as first written. It is zero-risk **and
+bench-only**. That is still worth having: the bench runs the same build as the panel
+(`0066ad95`) and its counter output reconciles with the panel-derived histogram to
+0.4%, so bench counts are good evidence about panel behaviour — but they are not a
+panel measurement, and nothing here licenses reporting them as one.
 
 That replaces content-guessing with a number, and it settles a question two null
 results left open: **every leaked string also leaks its registry node** — a
 `map<void*,void*>` node is 24 B of payload in a 32-byte chunk. So a leaked libjson
-string leaks *twice*, and part of the residual histogram we have been chasing is
-registry overhead rather than payload. Testable directly.
+string leaks *twice*, and the largest class in the `/GetSceneList` histogram is
+consistent with being registry overhead rather than payload. §3 turns that into the
+numeric prediction to test it against.
 
 ---
 
@@ -244,6 +388,13 @@ from the investigation's report, because the adversarial verify pass never retur
 | Barracuda cannot reach the bulk frees | `objdump -R`: 24 libjson JUMP_SLOTs, neither bulk free present |
 | libjson exports the bulk frees | `nm -D --defined-only` on `libjson.so.7.6.1` |
 | `json_free` erases without branching on membership | `objdump -d` of 0x21000–0x210c8 |
+| registry addresses and the count at offset 20 | `objdump -R` on the two GOT slots; `readelf -Ws` for addresses and `st_size` 24 |
+| the boundary nests | `objdump -d` of `HttpResponse_incOrForward` 0x6e5c4 |
+| singleton lazy-init registers an atexit dtor | `objdump -d` of `json_free_all`: guard 0x20e04, `__aeabi_atexit` 0x20ec8 |
+| the panel maps the `/vidrec` copy | `grep libjson /proc/PID/maps` on the unit; md5 `610d5009` |
+| the two copies agree on every address used | `readelf -Ws`, `objdump -h`, and a byte diff of `json_free` |
+| `/proc/PID/mem` is unreadable on the panel | `dd` on the unit → `ESRCH` at offset 0 and at a mapped address |
+| the counter's numbers | `leakfix/jsoncount.py`, 300 × `/GetSceneList`, bench `0066ad95` |
 
 The 20-thread census was measured on the panel itself
 (`/proc/PID/task/*/stat` field 2), corroborated by the wchan census.

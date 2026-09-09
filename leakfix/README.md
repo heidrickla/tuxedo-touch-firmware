@@ -231,11 +231,44 @@ chain rather than the scene tree:
      96 B   H+wsszVIJ5tJnSFfrHo4KvKnmG8yASStfm8W+807n...==
      64 B   {"Status":"Sucess","Result":{"Response":"No scenes found...
 
-one of each per request. So the response is serialised, Base64'd, wrapped and
+So the response is serialised, Base64'd, wrapped and
 formatted, and **every stage is abandoned**. The 120 B chunk is the
 `json_write_formatted` result `getEScenes` hands back through its out-param at
 0x165f0 — the one allocation whose fate is decided by the CALLER, which is why the
 handler-side analysis below could not account for it.
+
+✅ **The histogram reconciles with the slope — 662 of 733 B/request, 90.3%** — so
+this leak is accounted for, not merely observed. Per-class rates, which matter
+because the named chunks are not all one-per-request:
+
+    32 B 132.6   120 B 120.8   40 B 119.3   64 B 118.6
+    96 B  95.4    16 B  45.0   24 B  30.3    -> 662.0 B/req, 71 B unattributed
+
+⚠ 120 B and 96 B do run at ~1.0/request, but **64 B runs at 1.85/request** — there
+is a second 64 B allocation beyond the named `{"Status":"Sucess"…}` one.
+🔑 **The 32 B class is the largest, at 4.14 chunks/request, and it is libjson
+REGISTRY OVERHEAD, not payload — MEASURED, not inferred.** libjson keeps a `std::map`
+of every pointer its C API issues; a node is 16 B of `_Rb_tree_node_base` plus an
+8 B pair = 24 B, which glibc serves from a 32 B chunk. Counting the two registries
+directly with [jsoncount.py](jsoncount.py) over 300 × `/GetSceneList`:
+
+    strings   69 -> 1007   =  3.1267 /request
+    trees      4 ->  304   =  1.0000 /request
+                             -------
+    registry nodes            4.1267 /request   vs 4.1433 observed  (0.40% apart)
+
+So **132 B/request of this leak is pure bookkeeping**, and no per-site stub reaches
+it directly — a registry node is freed only by a real `json_free`/`json_delete` on
+the pointer it tracks, so every correct free reclaims its node for nothing.
+
+🚨 **EXACTLY ONE JSONNode TREE LEAKS PER REQUEST — 300 requests, 300 trees.** An
+integer match, so this is a single tree built per request and never `json_delete`d.
+It is a distinct defect from the string leaks, it has an exact rate, and it is the
+best lead into the rest of this leak. **Next fix to chase.**
+
+Background and the full derivation: [../docs/ALLOCATOR-REWORK.md](../docs/ALLOCATOR-REWORK.md)
+§3 and §7. ⚠ The counter is **bench-only** — the panel's 2.6.31 kernel refuses
+`/proc/PID/mem` with `ESRCH` unless the target is ptrace-stopped.
 
 ⚠ **This is the API surface, so today's `cmd=140`/`cmd=141` fixes do not touch
 it** — different auth, different path. It is the largest single leak known in the
