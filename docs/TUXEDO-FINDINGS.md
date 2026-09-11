@@ -149,8 +149,22 @@ at `0x8ab10` — `{u16 id, u16 parent, u32 name, u32 help}` — reached as `modu
 from `WnmpModule_constructor`. `leakfix/fieldpaths.py` reconstructs every full path
 by following `parent` to the root: **75 records, 63 leaf endpoints.** An endpoint
 absent from that table cannot resolve whoever calls it; one present is reachable
-whether or not the client mentions it. The two lists agree, which is worth stating
-as a result rather than assuming it.
+whether or not the client mentions it.
+
+**The two lists agree in one direction only** — checked with `leakfix/cmplists.py`,
+49 client names against 63 server leaves, not by eye:
+
+- **0** endpoints the client calls fail to resolve. Every call the vendor's own
+  client makes is routed, so the client list contains nothing dead.
+- **14** endpoints the server routes are **absent from the client list**:
+  `AutomationTest`, `System/GetEvent`, `System/GetStatus`,
+  `System/GetOnetouchEvent`, the four `System/ZwaveIPCommunication/*` device
+  commands, and both `ZwaveSync` trees including the `*enc` variants.
+
+Every one of those 14 sits under `System/` or is `AutomationTest` — i.e. **exactly
+the prefixes that branch away from `serviceField`** (below). A reimplementation built
+from the client list alone would miss the entire second regime, which is the reason
+to derive the surface from the server rather than the client.
 
 **The split that matters to a reimplementation.** `WnmpDir_service` @`0x29978` tests
 the path with three `strncmp`s and **branches away on a match**, so the big generated
