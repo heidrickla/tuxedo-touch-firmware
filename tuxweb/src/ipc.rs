@@ -163,6 +163,15 @@ pub mod cmd {
     /// Registering DISCARDS every queued reply: `registerclient`'s first act is
     /// `osal_MqFlush`.
     pub const REGISTER: u32 = 500;
+    /// The other half of 500, and what makes a window leave no trace.
+    ///
+    /// `unregisterclient()` @`0x13c00c` unconditionally zeroes BOTH
+    /// `clients_connected` and `F7_Mesgs_enabled`. It is NOT a refcount, so one 501
+    /// switches the broadcast firehose off for every consumer, not just for the
+    /// sender -- the same byte a Home or Back press clears. Send it to leave the
+    /// panel as it was found; do not send it while anything else is expected to
+    /// still be watching.
+    pub const UNREGISTER: u32 = 501;
 }
 
 // -- reply -> legacy frame text ------------------------------------------

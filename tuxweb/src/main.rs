@@ -21,6 +21,7 @@ mod ipc;
 mod login;
 mod mq;
 mod proxy;
+mod register;
 mod shim;
 
 use std::fs::File;
@@ -179,6 +180,35 @@ fn main() {
     // Deliberately not behind a cfg: the check is worth having on the panel.
     if args.get(1).map(String::as_str) == Some("--panic-test") {
         panic!("deliberate panic to verify /tmp/tuxweb-panic.txt is written");
+    }
+
+    // Stage 7a: the first stage that writes to the alarm bus.
+    //   tuxweb --stage7a <session> [watch-secs]
+    // Not reachable from the supervis launch path -- that branch is keyed on argv[0]
+    // being "Barracuda" and is handled below -- so this can only be run deliberately.
+    if args.get(1).map(String::as_str) == Some("--stage7a") {
+        let session: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60);
+        let cfg = register::Config {
+            session,
+            watch: std::time::Duration::from_secs(secs),
+            log: "/tmp/stage7a.tsv".into(),
+        };
+        match register::run(&cfg) {
+            Ok(o) => {
+                println!(
+                    "stage7a: register={} received={} decoded={} saw504={} unregister={}",
+                    o.sent_register, o.received, o.decoded, o.saw_504, o.sent_unregister
+                );
+                // The unregister is the part that leaves the panel as it was found,
+                // so a run that could not send it is a failure even if it received.
+                std::process::exit(if o.sent_unregister { 0 } else { 1 });
+            }
+            Err(e) => {
+                eprintln!("stage7a: {e}");
+                std::process::exit(2);
+            }
+        }
     }
 
     // Invoked under the vendor's own name, or told to explicitly: hand over.

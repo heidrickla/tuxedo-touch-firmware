@@ -79,6 +79,45 @@ impl Queue {
         Ok(Queue { fd, name: name.to_string() })
     }
 
+    /// Send one message. Stage 7a and later only; stage 6 must never reach this.
+    ///
+    /// `mq_send` takes the length to send and the queue refuses anything LARGER
+    /// than its `msgsize` with EMSGSIZE -- it does not pad. The command queue's
+    /// geometry is 404 (`ipc::COMMAND_LEN`) against the reply queue's 556, so
+    /// sending a reply-sized buffer here fails, and the error says so rather than
+    /// stalling.
+    ///
+    /// No timeout variant: `mq_send` on a queue that is not full returns at once,
+    /// and a full command queue means `/tuxedo` has stopped draining it, which is a
+    /// condition to report rather than to block on.
+    pub fn send(&self, msg: &[u8]) -> Result<(), String> {
+        let n = unsafe {
+            libc::mq_send(self.fd, msg.as_ptr() as *const libc::c_char, msg.len(), 1)
+        };
+        if n == 0 {
+            return Ok(());
+        }
+        let e = std::io::Error::last_os_error();
+        Err(match e.raw_os_error() {
+            Some(libc::EMSGSIZE) => format!(
+                "{}: refused a {}-byte message; the queue's msgsize is {} -- \
+                 size the command from the queue, not from a constant",
+                self.name,
+                msg.len(),
+                self.attr().map(|a| a.msgsize).unwrap_or(-1)
+            ),
+            Some(libc::EBADF) => format!(
+                "{}: not open for writing -- Queue::open was given read_only = true",
+                self.name
+            ),
+            Some(libc::EAGAIN) => format!(
+                "{}: the queue is FULL; /tuxedo has stopped draining it",
+                self.name
+            ),
+            _ => format!("{}: {e}", self.name),
+        })
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
