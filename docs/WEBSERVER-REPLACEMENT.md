@@ -2473,18 +2473,38 @@ The window was taken on v14 with Lewis at the touchscreen. This is a crash, not 
 `panic = "abort"` in `Cargo.toml` makes `SIGABRT` the signature of a Rust panic, so
 this is tuxweb — or the image it `exec`d — faulting, not the deadman doing its job.
 
-**What the empty log rules out.** `cutover.tsv` is created *after* the queue open and
-the `SOLE READER` print, and `log_line` runs only once a message arrives. Zero bytes
-therefore puts the fault outside decode: `Reply::parse` guards its length,
-`state_byte` uses `.first()`, and `log_line` never ran at all.
+**What the empty log does NOT rule out — corrected.** An earlier draft of this entry
+argued that 0 bytes puts the fault outside decode, since `log_line` runs only once a
+message arrives. That is wrong. `log.write_all` happens *after* `log_line` returns,
+so a panic **inside** `log_line` or `Reply::parse` leaves the file at exactly 0 bytes
+as well. The empty log is equally consistent with "nothing arrived" and "the first
+thing that arrived killed it", and it does not choose between them.
 
-**Leading hypothesis, untested.** `fail()` and the deadman both call
-`hand_back_to_vendor`, which `exec`s `/opt/webserver/vendor/Barracuda` under `arg0`
-`/opt/webserver/Barracuda`. After that `exec` the process is *named* `Barracuda`, so
-supervis attributes the signal to Barracuda either way — the `SIGABRT`/`SIGSEGV` pair
-may be the **exec'd vendor** dying rather than tuxweb. The vendor inheriting tuxweb's
-open message-queue descriptors is the obvious candidate, and it is checkable on the
-bench.
+**Two hypotheses, both refuted on the bench.**
+
+*Not an idle-loop fault.* The **exact** panel binary — md5 `ca450c37…`, matched
+against `/work/tuxweb-check/…` — was run under qemu as ARM with `arg0` `Barracuda`,
+against a real 556-byte queue nobody wrote to, for 150 s, well past the 72 s mark. It
+printed the consumed marker, the armed 900 s deadman and `SOLE READER`, and
+**survived with no crash**. The cutover loop does not fault on its own.
+
+*Not a missing supervision heartbeat.* tuxweb never opens
+`/g_mqSupervisionThreadIn`, which looked like the answer until §1.2's own finding
+settled it: Barracuda's only sender on that queue is `sigHandler`, so **the web server
+does not heartbeat and never did** — supervis is not waiting for one. `SupervisTimeout`
+relaunches on `getProcessPid("Barracuda") == 0` or `get_num_fds > 800`, and a
+one-queue cutover meets neither.
+
+*Still open.* `fail()` and the deadman both `exec` the vendor under `arg0`
+`/opt/webserver/Barracuda`, so after that `exec` the process is *named* `Barracuda`
+and supervis attributes any signal to Barracuda — the `SIGABRT`/`SIGSEGV` pair may be
+the **exec'd vendor** dying rather than tuxweb itself.
+
+**The blocker is observability, not more hypotheses.** supervis launches via
+`system("… &")`, so the cutover's stdout and stderr go nowhere and the Rust panic
+message — the one thing that would name the file and line — is lost. The next change
+is a panic hook that writes message and location to a file before aborting. Until
+that exists, another window produces the same uninformative result.
 
 **Do not spend another window on this yet.** `emu/cutover-test.sh` passes because it
 *injects* four replies; the panel sends real ones and the rig received none at all.

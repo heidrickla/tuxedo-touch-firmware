@@ -129,8 +129,57 @@ fn passthrough(argv0: &str, forward: &[String]) -> ! {
     std::process::exit(2);
 }
 
+/// Write a panic's message and location to a file before the process aborts.
+///
+/// `supervis` launches us with `system("/opt/webserver/Barracuda &")`, so stdout and
+/// stderr go nowhere reachable. With `panic = "abort"` a panic is therefore a bare
+/// `SIGABRT` line in `SupervisionLog.txt` and nothing else: the 2026-09-11 stage-6
+/// window died exactly that way and left no file, line or message behind, which is
+/// why its cause is still open. The hook is installed before ANY other work in
+/// `main`, so it covers argument parsing, the marker, the queue open and the receive
+/// loop alike.
+///
+/// Best-effort by construction: a panic handler that can itself panic, or that
+/// blocks, is worse than none. Nothing here unwraps, and the file is truncated on
+/// open so one window's evidence can never be read as another's.
+fn install_panic_log(path: &str) {
+    let path = path.to_string();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<no location>".into());
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string panic payload>".into()
+        };
+        let line = format!("tuxweb PANIC at {loc}: {msg}\n");
+        eprint!("{line}");
+        if let Ok(mut f) = std::fs::File::create(&path) {
+            let _ = f.write_all(line.as_bytes());
+            let _ = f.flush();
+        }
+    }));
+}
+
 fn main() {
+    // The first statement in the program: a panic before this point is invisible.
+    install_panic_log("/tmp/tuxweb-panic.txt");
+
     let args: Vec<String> = std::env::args().collect();
+
+    // Prove the panic log works, on the machine that will have to rely on it.
+    // A diagnostic nobody has seen fire is not a diagnostic -- the stage-6 window
+    // was lost precisely because the failure left no message, and shipping an
+    // unverified replacement for that would repeat the mistake with more steps.
+    // Deliberately not behind a cfg: the check is worth having on the panel.
+    if args.get(1).map(String::as_str) == Some("--panic-test") {
+        panic!("deliberate panic to verify /tmp/tuxweb-panic.txt is written");
+    }
 
     // Invoked under the vendor's own name, or told to explicitly: hand over.
     // Checked before anything else so no other argument parsing can shadow it.
