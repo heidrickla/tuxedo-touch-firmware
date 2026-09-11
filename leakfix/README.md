@@ -1211,6 +1211,59 @@ anonymous access with 401 on all four listeners and delivers frames when
 authenticated, and a paired control (400 requests versus the same interval idle)
 shows requests contribute no growth.
 
+## LEAK 30 ROOT CAUSE FOUND 2026-09-11 — and why every earlier fix wedged
+
+The leak is one exit in `WnmpDir_serviceField`, and the reason three attempts to fix
+it wedged the request is that **r6 is not always a tree**.
+
+`leakfix/exits.py` enumerates every branch to the epilogue tail at `0x29874`:
+**124 exits delete both trees first; 3 do not.** The one that matters is `0x29040`,
+the module-dispatch path every `/API_REV01` request takes:
+
+```
+29018  ldr pc, [ip, #16]          ; indirect call into the module method
+29020  mov r4, r0                 ; r4 = the handler's reply string
+29034  bl  HttpResponse_printf    ; send it
+2903c  bl  free                   ; frees the BYTES only
+29040  b   29874                  ; skips BOTH json_delete calls
+```
+
+Two defects in four instructions: `free` releases the bytes but leaves libjson's
+string-registry entry stranded (it is not a `json_free`), and the branch skips the
+deletes.
+
+**Why the obvious fix breaks the panel.** The clean epilogue is
+
+```
+29860  mov r0, r6 ; bl json_delete
+29868  mov r0, r7 ; bl json_delete
+29870  mov sp, r8          <-- !!
+29874  sub sp, fp, #40 ; ldm sp, {...pc}
+```
+
+- **`r8` is overloaded.** `0x1eef4` sets `r8 = r2 + 8`, the REQUEST pointer. Only
+  paths that `alloca` later do `mov r8, sp` (11 of them). At `0x28fe0` r8 is used as
+  the request, so `mov sp, r8` there would set the stack pointer to a request
+  pointer. Branching to `0x29860` instead of `0x29874` therefore corrupts the stack —
+  which is what "moving the free wedges the request" was.
+- **`r6` is not set on this path.** All 125 writes to r6 are `mov r6, r0` after a
+  `json_new`, and the FIRST is at `0x1f254` — but the branches reaching this exit
+  come from `0x1f118`, `0x1f190` and `0x1f1c4`, all earlier. So r6 still holds the
+  caller's callee-saved value, and `json_delete(r6)` here is a wild free.
+- **`r7` IS always valid**, set at `0x1ef0c` from the `json_new` at `0x1ef04`, before
+  every branch that reaches this exit.
+
+**So the correct fix is: `json_free` instead of `free`, and delete r7 ONLY.**
+It cannot be done in place — there is no room — so it needs a cave that does
+`json_free(r4)`, `json_delete(r7)`, then `b 29874`, leaving sp alone.
+
+**The measurement agrees, which is the check that matters.** `/GetSceneList` leaks
+exactly **1.0000 trees per request** — that is r7, and only r7. If r6 were also a
+live tree being skipped here the figure would be 2. `/GetSecurityStatus` leaks **0**,
+so it leaves by one of the 124 clean exits. And the family's **3** trees are r7 plus
+the two roots each handler leaks on its own, which is what the `setarmwithcode`
+reading predicted.
+
 ## LEAK 31 — the REST arm/disarm handlers leak, all three. MEASURED, rate NOT established
 
 Found 2026-09-09 within twenty minutes of installing a decompiler, in a function
