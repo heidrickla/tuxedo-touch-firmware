@@ -2445,7 +2445,7 @@ holds only the part that needs someone at the panel.
 | safety scaffolding | **PASSES** under `emu/cutover-test.sh`: sole-reader read-only open, four injected replies decoded and kept raw, **the deadman fired and handed the panel back by `execve`**, a missing vendor refused to start at all, a missing queue handed back rather than creating one. |
 | `phase1` passthrough | **PASSES on v14 and reverted.** `comm` stayed `Barracuda`, `cmdline` stayed `/opt/webserver/Barracuda`, and `exe` read `/opt/webserver/vendor/Barracuda` — the execve happened and everything `supervis` inspects was unchanged. 4/4 listeners, HTTP 302, and the P13 gate still returned 401 on `:80`, `:443` and `:9443` through the passthrough. |
 | revert | clean. Vendor md5 back to `0066ad95`, `vendor/` gone, marker absent, and `verify-panel.sh` 291 checks 0 failures afterwards. |
-| relaunch budget | **0 of 24 used**, so a window costing three is affordable. |
+| relaunch budget | read as **0 of 24** at the time; that reading was WRONG (see the phase2 entry below) — the true count was 4, and it is 7 after the window. |
 
 `phase1` was reverted deliberately rather than left installed. It gains nothing until
 `phase2`, and leaving a modified boot path on a live alarm panel with no window
@@ -2455,6 +2455,54 @@ booked is risk without benefit.
 touchscreen.** The window is 900 s absolute from the moment the cutover starts,
 unextendable from inside, after which the deadman returns the panel to the vendor by
 itself.
+
+#### phase2 RAN 2026-09-11 AND THE CUTOVER CRASHED — §5.1 is NOT answered
+
+The window was taken on v14 with Lewis at the touchscreen. This is a crash, not a
+"no":
+
+| | |
+|---|---|
+| marker | consumed — `cutover pid 7344`, no passthrough warning |
+| `/tmp/cutover.tsv` | **created 19:35, 0 bytes** — the queue opened and the log opened |
+| messages received | **0**, across ~72 s of keys being pressed |
+| death | `SIGABRT` 19:35:32, `SIGSEGV` 19:35:33, `RESTART-7` 19:35:38 |
+| deadman | **did NOT fire** — `DEFAULT_WINDOW` is 900 s and a test asserts it |
+| after | no `Barracuda` at all until started by hand at 19:45, which came up 4/4 at once |
+
+`panic = "abort"` in `Cargo.toml` makes `SIGABRT` the signature of a Rust panic, so
+this is tuxweb — or the image it `exec`d — faulting, not the deadman doing its job.
+
+**What the empty log rules out.** `cutover.tsv` is created *after* the queue open and
+the `SOLE READER` print, and `log_line` runs only once a message arrives. Zero bytes
+therefore puts the fault outside decode: `Reply::parse` guards its length,
+`state_byte` uses `.first()`, and `log_line` never ran at all.
+
+**Leading hypothesis, untested.** `fail()` and the deadman both call
+`hand_back_to_vendor`, which `exec`s `/opt/webserver/vendor/Barracuda` under `arg0`
+`/opt/webserver/Barracuda`. After that `exec` the process is *named* `Barracuda`, so
+supervis attributes the signal to Barracuda either way — the `SIGABRT`/`SIGSEGV` pair
+may be the **exec'd vendor** dying rather than tuxweb. The vendor inheriting tuxweb's
+open message-queue descriptors is the obvious candidate, and it is checkable on the
+bench.
+
+**Do not spend another window on this yet.** `emu/cutover-test.sh` passes because it
+*injects* four replies; the panel sends real ones and the rig received none at all.
+Reproduce with real queue traffic on the bench first — that is where stderr, a
+backtrace and free iteration are, and none of it needs the panel or a person.
+
+Two corrections this window produced, both in the runbook rather than in tuxweb:
+
+- **The relaunch counter under-read, in the unsafe direction.** `phase0` printed
+  `0 of 24, 24 left` when the true count was **4**. `BARRACUDA_RESTART-` is eighteen
+  characters and the `awk` used `RSTART + 19` / `RLENGTH - 19`, so every single-digit
+  count read as `0`, and `RESTART-12` would have read as `2`. Fixed in
+  `emu/stage6-panel.sh` and verified against the log (`old 0, new 7, log says 7`).
+  The budget now stands at **7 of 24**.
+- **Nobody needed to be at the touchscreen for the stimulus.** Keys were pressed
+  throughout and nothing arrived, so keypresses were never the variable. What makes
+  `/tuxedo` emit on `Q_ServCmdTrsmtr` has to be established on the bench before
+  booking a person again.
 
 #### The shim CANNOT be served from queue replies alone — corrected 2026-09-07
 

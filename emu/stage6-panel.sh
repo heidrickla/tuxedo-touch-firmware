@@ -165,11 +165,19 @@ phase0() {
         #
         # supervis writes "######## SYSTEM START ########" at each boot, so reset
         # the count at every such line and keep the last value after it.
+        # OFF BY ONE, FIXED 2026-09-11 -- this read ZERO on a panel that had spent
+        # four, and printed "0 of 24, 24 left" in the pre-flight immediately
+        # before a window. "BARRACUDA_RESTART-" is EIGHTEEN characters, not
+        # nineteen: RSTART+19 starts one past a single-digit count and
+        # substr(pos, RLENGTH-19) then asks for zero characters, so every
+        # one-digit count reported as 0 and "RESTART-12" would have reported 2.
+        # Under-reporting is the UNSAFE direction on the counter that guards the
+        # 24-relaunch hardware reset. Count the characters before trusting substr.
         used=$($BB awk '
             /SYSTEM START/ { n = 0; next }
             /BARRACUDA_RESTART-/ {
                 if (match($0, /BARRACUDA_RESTART-[0-9]+/))
-                    n = substr($0, RSTART + 19, RLENGTH - 19) + 0
+                    n = substr($0, RSTART + 18, RLENGTH - 18) + 0
             }
             END { print n + 0 }' "$SLOG" 2>/dev/null)
         [ -n "$used" ] || used=0
