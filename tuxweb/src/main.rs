@@ -187,35 +187,73 @@ fn main() {
     // Not reachable from the supervis launch path -- that branch is keyed on argv[0]
     // being "Barracuda" and is handled below -- so this can only be run deliberately.
     let stage = args.get(1).map(String::as_str);
-    if stage == Some("--stage7a") || stage == Some("--stage7b") {
+    if matches!(stage, Some("--stage7a" | "--stage7b" | "--stage7c" | "--stage7d")) {
         let session: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
         let secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60);
-        // 7b adds the four read-only queries; 7a sends nothing but the pair. Both
-        // go through one code path so there is no route that sends and then skips
-        // the unregister.
-        let queries = if stage == Some("--stage7b") {
-            vec![
-                ipc::cmd::PARTITION_STATUS,
-                ipc::cmd::ALL_ZONE_STATUS,
-                ipc::cmd::HOME_PART_DETAILS,
-                ipc::cmd::EVENT_LOG_UPLOAD,
-            ]
-        } else {
-            Vec::new()
+        // Every stage goes through one register/watch/unregister path, so there is
+        // no route that sends something and then skips the 501.
+        let (name, queries, after_watch) = match stage {
+            // 7a: nothing but the register pair.
+            Some("--stage7a") => ("stage7a", Vec::new(), Vec::new()),
+            // 7b: the four read-only queries.
+            Some("--stage7b") => (
+                "stage7b",
+                vec![
+                    ipc::cmd::PARTITION_STATUS,
+                    ipc::cmd::ALL_ZONE_STATUS,
+                    ipc::cmd::HOME_PART_DETAILS,
+                    ipc::cmd::EVENT_LOG_UPLOAD,
+                ],
+                Vec::new(),
+            ),
+            // 7c: console mode during the watch, then BACK -- which ends the
+            // broadcast, so it goes after. HOME is NOT sent: 503 returns the panel
+            // to the home screen, which is a visible change to make deliberately
+            // and one at a time, not as a side effect of a console test.
+            Some("--stage7c") => (
+                "stage7c",
+                vec![ipc::cmd::CONSOLE_MODE],
+                vec![ipc::cmd::BACK],
+            ),
+            // 7d: ONE arming command per invocation, named on the command line.
+            // The stage plan is explicit -- "one command per attempt, verified on
+            // the touchscreen and in the push stream before the next" -- so there
+            // is deliberately no way to ask for the whole sequence at once.
+            Some("--stage7d") => {
+                let code: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let known = [
+                    ipc::cmd::ARM_AWAY,
+                    ipc::cmd::ARM_STAY,
+                    ipc::cmd::DISARM,
+                    ipc::cmd::ARM_NIGHT,
+                ];
+                if !known.contains(&code) {
+                    eprintln!(
+                        "stage7d: needs ONE arming command as the 4th argument: \
+                         {} ARM_AWAY, {} ARM_STAY, {} DISARM, {} ARM_NIGHT",
+                        ipc::cmd::ARM_AWAY, ipc::cmd::ARM_STAY,
+                        ipc::cmd::DISARM, ipc::cmd::ARM_NIGHT
+                    );
+                    eprintln!("stage7d: usage: tuxweb --stage7d <session> <secs> <code>");
+                    std::process::exit(2);
+                }
+                ("stage7d", vec![code], Vec::new())
+            }
+            _ => unreachable!(),
         };
-        let name = if queries.is_empty() { "stage7a" } else { "stage7b" };
         let cfg = register::Config {
             session,
             watch: std::time::Duration::from_secs(secs),
             log: format!("/tmp/{name}.tsv"),
             label: name.to_string(),
+            after_watch,
             queries,
         };
         match register::run(&cfg) {
             Ok(o) => {
                 println!(
-                    "{name}: register={} queries={} received={} decoded={} saw504={} unregister={}",
-                    o.sent_register, o.queries_sent, o.received, o.decoded,
+                    "{name}: register={} queries={} after={} received={} decoded={} saw504={} unregister={}",
+                    o.sent_register, o.queries_sent, o.after_sent, o.received, o.decoded,
                     o.saw_504, o.sent_unregister
                 );
                 let types: Vec<String> =

@@ -44,12 +44,18 @@ pub struct Config {
     /// what leaves the panel as it was found, so there must not be a second code
     /// path that can send queries and skip it.
     pub queries: Vec<u32>,
+    /// Commands sent AFTER the watch and before the 501. This is where HOME and
+    /// BACK belong: they zero `F7_Mesgs_enabled`, so anything sent here ends the
+    /// broadcast, and nothing after it can be observed. Deliberately a separate
+    /// field from `queries` so the guard on that list stays absolute.
+    pub after_watch: Vec<u32>,
 }
 
 #[derive(Debug)]
 pub struct Outcome {
     pub sent_register: bool,
     pub queries_sent: usize,
+    pub after_sent: usize,
     pub received: usize,
     pub decoded: usize,
     pub saw_504: bool,
@@ -118,6 +124,7 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
     let mut out = Outcome {
         sent_register: false,
         queries_sent: 0,
+        after_sent: 0,
         received: 0,
         decoded: 0,
         saw_504: false,
@@ -181,6 +188,18 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
     }
 
     out.types = tally.into_iter().collect();
+
+    // After the watch: HOME/BACK and anything else whose effect is not observable
+    // here by design. Ordered last because they end the broadcast.
+    for code in &cfg.after_watch {
+        let note = if kills_firehose(*code) { "  (ends the broadcast)" } else { "" };
+        println!("{}: sending post-watch command {}{}", cfg.label, code, note);
+        match commands.send(&command(cfg.session, *code)) {
+            Ok(()) => out.after_sent += 1,
+            Err(e) => println!("{}: post-watch command {code} failed: {e}", cfg.label),
+        }
+        std::thread::sleep(Duration::from_millis(400));
+    }
 
     println!("{}: sending 501 UNREGISTER", cfg.label);
     match commands.send(&command(cfg.session, cmd::UNREGISTER)) {
@@ -277,6 +296,7 @@ mod tests {
             label: "test".into(),
             log: "/tmp/stage7a-should-not-exist".into(),
             queries: vec![cmd::PARTITION_STATUS],
+            after_watch: Vec::new(),
         };
         let e = run(&cfg).unwrap_err();
         assert!(e.contains("non-zero"), "{e}");
