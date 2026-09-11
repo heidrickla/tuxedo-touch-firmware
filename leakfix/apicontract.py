@@ -33,6 +33,8 @@ TEXT_BIAS = 0x8000
 LINE = re.compile(r"^\s*([0-9a-f]+):\s+[0-9a-f]+\s+(.*)$")
 LDR_LIT = re.compile(r"ldr\s+(r\d+),\s*\[pc,\s*#-?\d+\]\s*@\s*([0-9a-f]+)")
 CALL = re.compile(r"bl\s+[0-9a-f]+\s+<([^>@]+)@?[^>]*>")
+MOV_REG = re.compile(r"mov\s+(r\d+),\s*(r\d+)\s*$")
+TREE_REG = "r7"
 
 
 def cstr(buf, va, limit=96):
@@ -61,6 +63,7 @@ def main():
     buf = open(bin_path, "rb").read()
 
     pending = {}          # register -> resolved string
+    r0src = {}            # register -> register it was last copied from
     current = None
     out = {}              # endpoint -> [params in order]
     order = []
@@ -78,6 +81,11 @@ def main():
             pending[reg] = cstr(buf, va) if va else None
             continue
 
+        mv = MOV_REG.search(text)
+        if mv:
+            r0src[mv.group(1)] = mv.group(2)
+            continue
+
         cm = CALL.search(text)
         if not cm:
             continue
@@ -90,9 +98,17 @@ def main():
                 out[current] = []
                 order.append(current)
         elif fn == "json_get" and arg1 and current:
-            if arg1 not in out[current]:
+            # Only count a json_get whose OBJECT is the request tree. In
+            # serviceField that is r7 (set by `mov r7, r0` right after the
+            # json_new at 0x1ef04). WnmpDir_service also calls json_get, but on
+            # the registered-device records from getRegisteredDevNodes -- those
+            # are PublicKey/PrivateKey/DeviceMAC field reads, not request
+            # parameters, and counting them would publish device-record fields as
+            # an API contract.
+            if r0src.get("r0") == TREE_REG and arg1 not in out[current]:
                 out[current].append(arg1)
         pending.pop("r1", None)
+        r0src.pop("r0", None)
 
     withp = [n for n in order if out[n]]
     without = [n for n in order if not out[n]]

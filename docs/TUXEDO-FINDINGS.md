@@ -238,6 +238,22 @@ validated by a block shared with the light path before the door-lock block reads
 present-in-code, not as reachable endpoints, until each is routed and driven — the
 same standard the rest of this file uses.
 
+**The extractor requires the `json_get` object to be the request tree** (`r7`, set
+by `mov r7, r0` after the `json_new` at `0x1ef04`), which is a checked constraint
+rather than an assumption. It matters: run the same pass over `WnmpDir_service` and
+the *unconstrained* version reports `AutomationTest` taking `PublicKey`,
+`PrivateKey`, `DeviceMAC` — which are **not request parameters at all**, but field
+reads against the registered-device records returned by `getRegisteredDevNodes`.
+Publishing those as an API contract would have been wrong. With the constraint
+applied, `serviceField`'s 32 endpoints are unchanged and `WnmpDir_service` yields
+**zero**.
+
+So the second regime's parameters are **not** recoverable by this method, and that
+is a finding rather than a gap in the tool: `WnmpDir_service` performs no
+`json_get` against a request tree, so those endpoints take their input by some other
+route (query string, or their own decrypt-and-parse). Anyone reimplementing
+`System/` or `Administration/` has to establish that separately.
+
 ### Two absences, established by enumeration
 
 **No version, model or firmware endpoint.** There is nothing to query. Any
