@@ -62,8 +62,14 @@ listeners() { netstat -lnt 2>/dev/null | grep -cE ':(80|443|6280|9443) '; }
 wait_new_pid() {
     # A port opening proves nothing: the predecessor holds all four until it
     # dies, so the wait returns instantly. Wait for a DIFFERENT pid.
-    old="$1"; i=0
-    while [ $i -lt 30 ]; do
+    #
+    # Second argument is the number of half-second ticks to wait, because the two
+    # kills respawn at very different speeds: SIGTERM takes supervis's reported
+    # path and relaunches in ~5 s, SIGKILL posts no message and took ~90 s when it
+    # was measured on this panel. A 15 s wait is right for the first and guarantees
+    # a spurious "did not relaunch" for the second.
+    old="$1"; ticks="${2:-30}"; i=0
+    while [ $i -lt "$ticks" ]; do
         now=$(pids_named Barracuda | tr '\n' ' ')
         for p in $now; do
             case " $old " in *" $p "*) ;; *) echo "$p"; return 0 ;; esac
@@ -189,7 +195,13 @@ phase0() {
     else
         echo "  $SLOG MISSING -- cannot read the budget, track it by hand"
     fi
-    echo "  a full phase1 + phase2 + revert spends THREE of the 24"
+    # Was "THREE", counting one per kill. A SIGTERM restart is charged TWO: the
+    # signal posts message 7, and sigHandler's long cleanup frequently faults
+    # partway and posts message 8, each advancing the counter (the live log steps
+    # RESTART-17 -> RESTART-19 with no 18, and this runbook's own window stepped
+    # RESTART-5 -> RESTART-7). Only phase2's SIGKILL costs one. Under-estimating
+    # the budget is how a window starts that cannot afford to finish.
+    echo "  budget cost: phase1 SIGTERM 2 + phase2 SIGKILL 1 + revert SIGTERM 2 = FIVE"
     echo "  the count is per BOOT and a reboot clears it"
 
     say "current state"
@@ -253,9 +265,29 @@ phase2() {
     : > "$MARKER" || fail "cannot write $MARKER"
     echo "  marker written -- the NEXT relaunch is the window, and only the next"
 
+    # SIGKILL, NOT SIGTERM -- this is what made the 2026-09-11 window log zero.
+    #
+    # SIGTERM runs Barracuda's sigHandler, whose cleanup list includes
+    # sendUnregisterCommand. That reaches /tuxedo's unregisterclient(), which
+    # unconditionally zeroes F7_Mesgs_enabled (0xd2f269) -- and that byte gates the
+    # very top of wsltHandleRawDataFromPanel, which returns immediately when it is
+    # 0. So a polite kill switches the broadcast firehose OFF a few seconds before
+    # the cutover opens the queue, and the window then holds a queue that /tuxedo
+    # will never write to. Nothing about sole-reader semantics is being tested at
+    # that point.
+    #
+    # SIGKILL cannot run sigHandler, so no unregister is sent and the flag survives
+    # whatever the dying vendor had set. It is also CHEAPER on the budget: a SIGTERM
+    # restart is charged 2 (the signal, then the frequent fault partway through that
+    # long cleanup -- which is exactly the RESTART-5 -> RESTART-7 step this window
+    # left in the log), against 1 for SIGKILL.
+    #
+    # The cost is latency: ~90 s to respawn, measured, against ~5 s for SIGTERM.
+    # Hence the longer wait. See PUSH-STREAM-AUTH.md.
     old=$(pids_named Barracuda | tr '\n' ' ')
-    for p in $old; do kill "$p" 2>/dev/null; done
-    new=$(wait_new_pid "$old") || fail "supervis did not relaunch within 15s"
+    for p in $old; do kill -9 "$p" 2>/dev/null; done
+    echo "  SIGKILL sent; supervis respawns on the unreported path, ~90s"
+    new=$(wait_new_pid "$old" 300) || fail "supervis did not relaunch within 150s"
     echo "  cutover pid $new"
     [ -e "$MARKER" ] && echo "  WARNING marker still present -- it was NOT consumed, so this is a passthrough"
 
