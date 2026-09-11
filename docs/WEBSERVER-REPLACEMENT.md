@@ -2451,12 +2451,41 @@ holds only the part that needs someone at the panel.
 `phase2`, and leaving a modified boot path on a live alarm panel with no window
 booked is risk without benefit.
 
-**So the only thing left is `phase2`, and the only thing it needs is someone at the
+**Stage 6 is answered; see the window results below.** Historical note: the only thing left was `phase2`, needing someone at the
 touchscreen.** The window is 900 s absolute from the moment the cutover starts,
 unextendable from inside, after which the deadman returns the panel to the vendor by
 itself.
 
-#### phase2 RAN 2026-09-11 AND THE CUTOVER CRASHED — §5.1 is NOT answered
+#### §5.1 IS ANSWERED — YES, second window, 2026-09-11
+
+**A process other than Barracuda, holding `/Q_ServCmdTrsmtr` as sole reader, receives
+`/tuxedo`'s replies.** Measured, on v14:
+
+```
+29 messages received as SOLE READER
+msgTypes:  21 x 23   (partition status)
+           18 x 6    (home partition details)
+decode:    29 OK, 0 SHORT
+panic:     none -- no crash
+```
+
+The stimulus was arm/disarm from the touchscreen. Every message decoded; nothing was
+short or unparsed. Evidence kept at `leakfix/cutover-2026-09-11.tsv` — the panel's
+`/tmp` does not survive a reboot and this is the run that answers the question the
+whole replacement rests on.
+
+**One signal changed the result from 0 to 29.** The only difference from the first
+window is `kill -9` instead of `kill`: SIGTERM ran `sigHandler`, whose cleanup calls
+`sendUnregisterCommand`, which zeroes `F7_Mesgs_enabled` and switches the broadcast
+firehose off before the cutover opens the queue. That is the mechanism, confirmed by
+changing exactly one thing and re-running.
+
+It also retires the leading crash hypothesis: with the queue actually live, tuxweb ran
+the full window with no fault. The first window's `SIGABRT`/`SIGSEGV` is most likely a
+consequence of that dead-queue state, not an independent tuxweb defect. The panic log
+stayed armed and unused — still worth having, now unproven against a real fault.
+
+#### The first window, 2026-09-11 — the cutover crashed and logged nothing
 
 The window was taken on v14 with Lewis at the touchscreen. This is a crash, not a
 "no":

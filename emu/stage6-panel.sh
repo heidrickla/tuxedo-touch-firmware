@@ -99,17 +99,36 @@ revert() {
             echo "  WARNING md5 differs from what phase 1 recorded -- CHECK THE PANEL"
         fi
     fi
+    # LEFT THE PANEL WITH NO WEB SERVER TWICE (2026-09-11) before this was fixed.
+    #
+    # The process being killed here is usually TUXWEB, not the vendor, and tuxweb
+    # does not register Barracuda's sigHandler -- so its death posts no message to
+    # supervis and is only noticed by the periodic getProcessPid("Barracuda") check,
+    # measured at ~90 s. Waiting 15 s and printing "CHECK THE PANEL" therefore
+    # guaranteed a false alarm AND a panel sitting with 0/4 listeners until someone
+    # restarted it by hand. A revert that needs manual rescue is not a revert.
+    #
+    # So: wait long enough for the unreported path, and if supervis still has not
+    # acted, start the vendor the same way supervis does rather than reporting
+    # failure and stopping. launchBarracuda is system("/opt/webserver/Barracuda &").
     old=$(pids_named Barracuda | tr '\n' ' ')
     for p in $old; do kill "$p" 2>/dev/null; done
-    new=$(wait_new_pid "$old") \
-        && echo "  supervis relaunched the vendor as pid $new" \
-        || echo "  WARNING no new pid within 15s -- CHECK THE PANEL"
+    if new=$(wait_new_pid "$old" 300); then
+        echo "  supervis relaunched the vendor as pid $new"
+    else
+        echo "  supervis did not relaunch within 150s -- starting the vendor here"
+        setsid "$W/Barracuda" </dev/null >/tmp/revert-launch.log 2>&1 &
+        new=$(wait_new_pid "$old" 60) \
+            && echo "  started the vendor as pid $new" \
+            || echo "  STILL NO BARRACUDA -- CHECK THE PANEL"
+    fi
     i=0
-    while [ $i -lt 30 ]; do
+    while [ $i -lt 60 ]; do
         n=$(listeners); [ "$n" -ge 4 ] && break
         i=$((i + 1)); sleep 1
     done
     echo "  listeners: $(listeners)/4"
+    [ "$(listeners)" -ge 4 ] || echo "  WARNING fewer than 4 listeners -- CHECK THE PANEL"
 }
 
 phase0() {
