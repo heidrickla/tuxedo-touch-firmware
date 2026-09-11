@@ -2554,9 +2554,22 @@ sent anything even if tuxweb had stayed up.** The chain is already recorded in
 
 Stage 6's cutover is read-only by definition: *"hold the reply queue as sole reader,
 log what arrives, send nothing."* Sending nothing means never sending 500, so the
-window can only receive if the flag happens to be left set by the client that died
-when phase2 killed Barracuda. That is not a test, it is a coin toss on another
-process's teardown.
+window can only receive if the flag is left set by the client that died when phase2
+killed Barracuda.
+
+**RESOLVED 2026-09-11 — that is not a coin toss, it is the signal.** This paragraph
+originally called it "a coin toss on another process's teardown". It is deterministic
+in both directions, and `phase2` was choosing the losing side:
+
+- `kill` (SIGTERM) runs `sigHandler`, whose cleanup calls `sendUnregisterCommand` →
+  `unregisterclient()` → `F7_Mesgs_enabled = 0`. The firehose is switched OFF
+  seconds before the cutover opens the queue. **Guaranteed zero.**
+- `kill -9` cannot run `sigHandler`, so no unregister is sent and the flag survives
+  exactly as the dying vendor left it. **The second window received 29 messages.**
+
+So a read-only cutover CAN receive, and §5.1 is answered YES without stage 6 sending
+anything. Reshape item 1 below — fold 7a in and make the window a write — is
+therefore **not needed**, and stage 6 stays read-only as designed.
 
 **And the runbook's own instruction can clear it.** `phase2` prints "PRESS KEYS ON
 THE TOUCHSCREEN NOW"; a Home or Back press calls `home_back_press()` and zeroes
@@ -2567,22 +2580,22 @@ counterproductive.
 
 **So §5.1 as written is close to unfalsifiable**, and a second window run unchanged
 would very likely return zero again for exactly this reason rather than for anything
-about sole-reader semantics. Reshape before re-running:
+about sole-reader semantics. That prediction held: the run that changed only the
+signal returned 29. Reshape before re-running:
 
-1. The window must **register** (command 500 on `/Q_ServCmdRcver`) to set the flag —
-   which makes stage 6 a write, and folds **Stage 7a** into it rather than keeping it
-   after. 7a is already specified as "command 500 with a non-zero `sessionId`, and
-   501 to unregister. Proves we can drive the queue at all."
+1. ~~The window must **register** (command 500 on `/Q_ServCmdRcver`) to set the
+   flag~~ — **NOT NEEDED, superseded above.** `kill -9` preserves the flag, so the
+   window receives without sending anything and stage 6 remains read-only. Stage 7a
+   stays a separate stage, after, as originally planned, rather than being folded
+   into a stage whose whole safety argument is that it does not write.
 2. Registration is not free: `registerclient()` **opens with
    `osal_MqFlush`**, discarding every queued reply for whoever was connected (§a-4).
    Acceptable during a window that owns the panel, but it must be stated.
 3. Drop the keypress instruction, or restrict it explicitly to keys that are **not**
    Home or Back.
 
-**Do not spend another window on this yet.** `emu/cutover-test.sh` passes because it
-*injects* four replies; the panel sends real ones and the rig received none at all.
-Reproduce with real queue traffic on the bench first — that is where stderr, a
-backtrace and free iteration are, and none of it needs the panel or a person.
+**DONE — the second window answered it.** 29 replies, 29 decoded, no crash. What made
+the difference was the signal, not the rig.
 
 Two corrections this window produced, both in the runbook rather than in tuxweb:
 

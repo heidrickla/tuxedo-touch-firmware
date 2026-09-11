@@ -318,10 +318,15 @@ phase2() {
     #
     # Keypresses were never the stimulus anyway: /tuxedo posts on panel events, and
     # whether it posts AT ALL depends on F7_Mesgs_enabled, which is set by
-    # SERV_CLIENT_REGISTER (500) and NOT by this read-only cutover. Until the window
-    # registers, receiving anything depends on the dying vendor having left the flag
-    # set. See WEBSERVER-REPLACEMENT.md, stage 6.
-    say "WAITING ${KEYPRESS_SECS}s -- touchscreen keys optional, but NOT Home or Back"
+    # SERV_CLIENT_REGISTER (500) and NOT by this read-only cutover. Receiving
+    # anything depends on the dying vendor having left the flag set -- which is
+    # exactly why the kill above is SIGKILL. See WEBSERVER-REPLACEMENT.md, stage 6.
+    #
+    # MEASURED 2026-09-11: arming and disarming from the touchscreen produced 29
+    # replies in 120s (msgType 21 partition status, 18 home partition details). That
+    # is the stimulus to use. Home and Back are the two to avoid: home_back_press()
+    # zeroes F7_Mesgs_enabled and switches the firehose off mid-window.
+    say "WAITING ${KEYPRESS_SECS}s -- arm/disarm is a good stimulus; NOT Home or Back"
     i=0
     while [ $i -lt "$KEYPRESS_SECS" ]; do
         sleep 10; i=$((i + 10))
