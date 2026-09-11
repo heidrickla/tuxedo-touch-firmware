@@ -288,6 +288,44 @@ root the whole dispatcher shares, so its real release point is likely in the
 **caller**, after the response is written. Read the caller's frame; do not add a
 third delete inside `serviceField`.
 
+#### The live path, traced 2026-09-11 — the generated cleanup is DEAD CODE
+
+Traced on the bench with a filter over the whole of `serviceField`
+(`0x1eedc..0x29958`), four endpoints, `leakprobe --mode api`:
+
+| fact | evidence |
+|---|---|
+| `serviceField` runs **exactly 1.00x per request** | block after `json_new` counted 10 executions over 10 requests, all four endpoints |
+| the `0x1ef04` tree is created on **every** request | that block is unconditional, ahead of `HttpRequest_getParameter` |
+| all four endpoints exit `...0x29548 -> 0x29550 -> 0x2955c: b 29874` | last blocks in execution order |
+| the vendor pair at `0x29860` **never runs** | 0 executions, all four endpoints |
+| **none of the 125 `json_delete(r7)` sites in `serviceField` ever run** | intersected the executed-block set against all 125; empty for all four |
+
+That last row is the finding. The generated dispatcher contains a per-field cleanup
+sequence 125 times over, and **not one of them is on a live path** — every endpoint
+measured leaves through `0x2955c` to the epilogue instead.
+
+**So "GetSecurityStatus does not leak" is not a free.** It nets zero trees because
+`json_push_back` *erases the child's registry entry* (the same mechanism that makes
+`json_new`+`push_back` net +1 rather than +2), not because anything releases it. No
+measured path frees the request tree at all. Any fix must therefore ADD a release;
+there is no working vendor path to route back into, which is what the earlier
+"find where the clean endpoints free it" idea assumed.
+
+**Why the fix is harder than one branch edit.** The tree goes into `r7` at `0x1ef0c`
+(`mov r7, r0`) and is **never spilled to the frame**, so at `0x2955c` there is no
+stack slot holding it — consistent with the refuted patch's wedge, and with "r7 is
+not dead there". A correct fix needs the pointer in storage that survives to the
+epilogue, and `HttpCmdThreadPool` runs **20 threads**, so a single scratch global
+races. That leaves a per-request home (the request object) or a spill slot proven
+unused across 43,676 bytes of generated code. Both are real work on the shared path
+for the entire REST API, where a wrong free wedges or crashes every request.
+
+Also visible in the same block: `json_write` at `0x29850` feeds
+`HttpResponse_printf` at `0x2985c` and **the string is never freed** — LEAK 31's
+string and LEAK 30's tree are the same epilogue. The two are one defect in one place,
+which is the useful half of this result.
+
 Background and the full derivation: [../docs/ALLOCATOR-REWORK.md](../docs/ALLOCATOR-REWORK.md)
 §3 and §7. The counter is **bench-only** — the panel's 2.6.31 kernel refuses
 `/proc/PID/mem` with `ESRCH` unless the target is ptrace-stopped.
