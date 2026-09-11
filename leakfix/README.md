@@ -1504,16 +1504,91 @@ compares the request's `operation` field against `"set"` (literals `0x8d46c` and
 `…/ZwaveSync/AddNewDeviceRemote?devicenode=&operation=set`. Sending it changes
 nothing — rows 1 and 2 above were measured with `operation=set`.
 
-**So the open question is narrower than "which URL":** it is which of
-`WnmpDir_service`'s three `serviceField` call sites is live, and what request shape
-reaches it. Until that is answered the family's per-call cost is unmeasured, and the
-static prediction (two roots, two strings, a Base64 buffer) stands unconfirmed rather
-than refuted.
+**ANSWERED — and the family is now measured. See the next section.** The rule is a
+three-name blacklist, not a whitelist: `WnmpDir_service` sends a path to
+`serviceField` *unless* it starts with one of three prefixes.
 
 This also retracts a claim made earlier in this section's own history: that the reply
 string is freed at `0x2903c` on the path these requests take. It is not — that site is
 on the field-service path, which they never enter. Where an `/API_REV01` reply string
 is released is not established.
+
+### The WNMP URL that reaches serviceField
+
+`WnmpDir_service` tests the path with three `strncmp`s and **branches AWAY** on a
+match, so the route to `serviceField` is the fall-through:
+
+| test | at | prefix | on match |
+|---|---|---|---|
+| 1 | `0x29a98` | `API_REV01/System` (16) | `b 0x29ed4` — away |
+| 2 | `0x29ab0` | `API_REV01/Administration` (24) | `b 0x29ed4` — away |
+| 3 | `0x29ac8` | `API_REV01/AutomationTest` (24) | `b 0x29ed4` — away |
+| — | `0x29adc` | anything else | `WnmpDir_resolveLocation` -> `serviceField` @`0x29ecc` |
+
+    ANY /system_http_api/API_REV01/<path> reaches serviceField
+    UNLESS <path> starts with System, Administration or AutomationTest.
+
+Confirmed by trace, one filter on `0x1eedc..0x1f120`:
+
+| endpoint | serviceField |
+|---|---|
+| `/API_REV01/Registration/Unregister` | 30195 B |
+| `/API_REV01/GetSceneList` | 33231 B |
+| `/API_REV01/Administration/AddIPURL` | **0 B** |
+
+That last row is why the earlier attempt failed: `AddIPURL`, `UpdateIPURL` and
+`ViewIPURL` are all children of field id `0x7` = **Administration**, one of the three
+blacklisted prefixes. They were the worst three endpoints in the family to have
+picked.
+
+**The path segments are a field table**, not free text. `WnmpDir_resolveLocation`
+@`0x1e248` walks the path one `/`-separated segment at a time and matches each against
+12-byte records at `0x8ab10` (the `r1` that `Test1Module_constructor` hands to
+`WnmpModule_constructor`, landing at module+4). `leakfix/fieldtab.py` dumps all 75:
+each record is `{u16 id, u16 parent, char *name}`, so the tree is recoverable exactly
+— e.g. `ArmWithCode` is id `0x22` under parent `0x3` = `AdvancedSecurity`, giving
+`/API_REV01/AdvancedSecurity/ArmWithCode`.
+
+### MEASURED: the arm handlers leak 3 trees and 8-12 strings per call
+
+Two family members reach `serviceField` and need no Z-Wave device, so they are the
+ones that can actually be driven on the bench. Both were confirmed to EXECUTE by
+trace before any number was believed — `setPartitionArmed` @`0x1c958` logged 18585 B
+and `setarmwithcode` @`0x1afc8` logged 18810 B over 10 calls each:
+
+| arm, 200 requests | strings/call | trees/call |
+|---|---|---|
+| control A `/GetSceneList` | +2.19 | +1.0000 |
+| control B `/GetSecurityStatus` | +0.19 | +0.0000 |
+| `/SetSecurityArm` -> `setPartitionArmed` | **+8.19** | **+3.0000** |
+| `/AdvancedSecurity/ArmWithCode` -> `setarmwithcode` | **+12.15** | **+3.0000** |
+
+Subtracting the +0.19 background that every arm carries: **`setPartitionArmed` leaks 8
+strings and 3 trees per call; `setarmwithcode` leaks about 12 strings and 3 trees.**
+Control A reproduces its documented 1.0000 trees exactly, which is the instrument
+check.
+
+**This refutes the static prediction in both directions.** The count above says "six
+nodes created, four absorbed by `push_back`, so two roots leak". The measurement says
+**three** trees, and eight to twelve strings rather than two or three. Counting
+`json_new` against `json_push_back` in the handler body under-reads the real cost by
+several times, because it cannot see what the shared dispatcher allocates on the way
+in and out, and cannot see allocations inside the callees.
+
+**Required parameters, since every one of these rejects an incomplete request** (found
+by decrypting the reply with `leakfix/showresult.py` rather than by guessing):
+
+    /API_REV01/SetSecurityArm                 operation=set&arming=STAY&pID=1
+    /API_REV01/AdvancedSecurity/ArmWithCode   operation=set&arming=STAY&pID=1&ucode=<code>
+    /API_REV01/Registration/Unregister        operation=set&token=<t>&DeviceMAC=<registered MAC>
+
+**Two bench requirements, both of which cost a run here.** `emu/serve-traced.sh` does
+NOT start `mqdrain.py`, and the arm handlers `mq_send`; without a drain the queue
+backs up and the server wedges into TLS handshake timeouts. Start the drain alongside
+it — `Q=$(ls $TREE/dev/mq | sed 's|^|/|'); setsid python3 /tmp/mqdrain.py $Q &`. And
+the bench `zwavedevdb.json` is `{"BLights":[],"Dlocks":[],…}` — completely empty — so
+`SetDoorLock`, `SetLight` and the thermostat handlers all bail at device validation
+and cannot be measured until that database is populated.
 
 Method notes worth keeping. Arms are serial by necessity -- one process, one global
 registry, so driving two endpoints at once attributes each one's allocations to the
