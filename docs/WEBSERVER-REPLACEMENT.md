@@ -2504,7 +2504,51 @@ the **exec'd vendor** dying rather than tuxweb itself.
 `system("… &")`, so the cutover's stdout and stderr go nowhere and the Rust panic
 message — the one thing that would name the file and line — is lost. The next change
 is a panic hook that writes message and location to a file before aborting. Until
-that exists, another window produces the same uninformative result.
+that exists, another window produces the same uninformative result. **Done** —
+`install_panic_log` writes `/tmp/tuxweb-panic.txt`, and `--panic-test` proves it
+fires on ARM as well as natively.
+
+#### And the ZERO was guaranteed by design — a read-only cutover cannot receive
+
+Separate from the crash, and more important for the plan: **`/tuxedo` would not have
+sent anything even if tuxweb had stayed up.** The chain is already recorded in
+`TUXEDO-AUDIT-BUGS.md` §a-1/§a-4, all marked CONFIRMED:
+
+- `sendRegisterCommand(0x1f4 = 500 = SERV_CLIENT_REGISTER)` is "what turns the
+  panel's broadcast firehose on".
+- `F7_Mesgs_enabled` @`0xd2f269` **gates the very top of
+  `wsltHandleRawDataFromPanel`, which returns immediately when it is 0** — so with
+  the flag clear, no panel data is ever posted to the tuxedo→Barracuda queue.
+- `unregisterclient()` @`0x13c00c` unconditionally zeroes it.
+- It is **also cleared by `home_back_press()`** — "by any Home/Back press from any
+  session".
+
+Stage 6's cutover is read-only by definition: *"hold the reply queue as sole reader,
+log what arrives, send nothing."* Sending nothing means never sending 500, so the
+window can only receive if the flag happens to be left set by the client that died
+when phase2 killed Barracuda. That is not a test, it is a coin toss on another
+process's teardown.
+
+**And the runbook's own instruction can clear it.** `phase2` prints "PRESS KEYS ON
+THE TOUCHSCREEN NOW"; a Home or Back press calls `home_back_press()` and zeroes
+`F7_Mesgs_enabled`. The operator can therefore switch off the firehose the window
+exists to observe. Keypresses were never the stimulus — `/tuxedo` posts to this queue
+on panel events regardless of the touchscreen — and instructing them was actively
+counterproductive.
+
+**So §5.1 as written is close to unfalsifiable**, and a second window run unchanged
+would very likely return zero again for exactly this reason rather than for anything
+about sole-reader semantics. Reshape before re-running:
+
+1. The window must **register** (command 500 on `/Q_ServCmdRcver`) to set the flag —
+   which makes stage 6 a write, and folds **Stage 7a** into it rather than keeping it
+   after. 7a is already specified as "command 500 with a non-zero `sessionId`, and
+   501 to unregister. Proves we can drive the queue at all."
+2. Registration is not free: `registerclient()` **opens with
+   `osal_MqFlush`**, discarding every queued reply for whoever was connected (§a-4).
+   Acceptable during a window that owns the panel, but it must be stated.
+3. Drop the keypress instruction, or restrict it explicitly to keys that are **not**
+   Home or Back.
 
 **Do not spend another window on this yet.** `emu/cutover-test.sh` passes because it
 *injects* four replies; the panel sends real ones and the rig received none at all.

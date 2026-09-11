@@ -259,7 +259,18 @@ phase2() {
     echo "  cutover pid $new"
     [ -e "$MARKER" ] && echo "  WARNING marker still present -- it was NOT consumed, so this is a passthrough"
 
-    say "PRESS KEYS ON THE TOUCHSCREEN NOW -- ${KEYPRESS_SECS}s"
+    # DO NOT ask for Home or Back. home_back_press() zeroes F7_Mesgs_enabled
+    # (0xd2f269), and that byte gates the very top of wsltHandleRawDataFromPanel,
+    # which returns immediately when it is 0 -- so a Home/Back press switches OFF
+    # the firehose this window exists to observe. The 2026-09-11 run asked for
+    # "keys" with no such restriction and logged nothing.
+    #
+    # Keypresses were never the stimulus anyway: /tuxedo posts on panel events, and
+    # whether it posts AT ALL depends on F7_Mesgs_enabled, which is set by
+    # SERV_CLIENT_REGISTER (500) and NOT by this read-only cutover. Until the window
+    # registers, receiving anything depends on the dying vendor having left the flag
+    # set. See WEBSERVER-REPLACEMENT.md, stage 6.
+    say "WAITING ${KEYPRESS_SECS}s -- touchscreen keys optional, but NOT Home or Back"
     i=0
     while [ $i -lt "$KEYPRESS_SECS" ]; do
         sleep 10; i=$((i + 10))
