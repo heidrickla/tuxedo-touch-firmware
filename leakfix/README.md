@@ -1228,9 +1228,16 @@ the module-dispatch path every `/API_REV01` request takes:
 29040  b   29874                  ; skips BOTH json_delete calls
 ```
 
-Two defects in four instructions: `free` releases the bytes but leaves libjson's
-string-registry entry stranded (it is not a `json_free`), and the branch skips the
-deletes.
+**One defect, not two — corrected before building anything.** The first draft of this
+section called the `free` a second defect, on the theory that a `json_write` result
+needs `json_free` and that plain `free` strands the registry entry. **That is refuted
+by evidence already in this repo.** `mkapifix.py`'s `WNMPGET_STUB` note records the
+experiment: using `json_free` on the equivalent string made glibc report an invalid
+pointer at `0x40bddcd8`, an address outside the heap `heapwalk` walks — the wrong
+ALLOCATOR, not the wrong slot. So that string is not a libjson-registry string, the
+vendor's plain `free` at `0x2903c` is right, and changing it would crash the panel.
+
+The defect is the branch alone: it skips the `json_delete` calls.
 
 **Why the obvious fix breaks the panel.** The clean epilogue is
 
@@ -1253,9 +1260,13 @@ deletes.
 - **`r7` IS always valid**, set at `0x1ef0c` from the `json_new` at `0x1ef04`, before
   every branch that reaches this exit.
 
-**So the correct fix is: `json_free` instead of `free`, and delete r7 ONLY.**
+**So the correct fix is: delete r7 ONLY, and leave the `free` alone.**
 It cannot be done in place — there is no room — so it needs a cave that does
-`json_free(r4)`, `json_delete(r7)`, then `b 29874`, leaving sp alone.
+`json_delete(r7)` then `b 29874`, touching neither sp nor r6.
+
+That is a one-tree fix, not a whole-leak fix. The 2 strings `/GetSceneList` also
+leaks per request are a SEPARATE question, and the `json_free` experiment above says
+they are not stranded registry entries, so whatever frees them is not this site.
 
 **The measurement agrees, which is the check that matters.** `/GetSceneList` leaks
 exactly **1.0000 trees per request** — that is r7, and only r7. If r6 were also a
