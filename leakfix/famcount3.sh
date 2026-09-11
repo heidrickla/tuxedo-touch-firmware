@@ -48,6 +48,8 @@ arm CONTROL-B /GetSecurityStatus "operation=get"
 arm SetSecurityArm /SetSecurityArm "operation=set&arming=STAY&pID=1"
 arm ArmWithCode /AdvancedSecurity/ArmWithCode "operation=set&arming=STAY&pID=1&ucode=1234"
 
-echo
 echo "Read the two CONTROL rows first. If they disagree, the baseline is not stable"
-echo "and no family row can be attributed to its handler."
+arm SetDoorLock /SetDoorLock "operation=set&nodeID=1&cntrl=1"
+
+echo
+echo "Controls first: if they disagree the baseline moved and no family row is readable."

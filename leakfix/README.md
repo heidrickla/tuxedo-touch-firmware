@@ -1556,17 +1556,22 @@ ones that can actually be driven on the bench. Both were confirmed to EXECUTE by
 trace before any number was believed — `setPartitionArmed` @`0x1c958` logged 18585 B
 and `setarmwithcode` @`0x1afc8` logged 18810 B over 10 calls each:
 
-| arm, 200 requests | strings/call | trees/call |
-|---|---|---|
-| control A `/GetSceneList` | +2.19 | +1.0000 |
-| control B `/GetSecurityStatus` | +0.19 | +0.0000 |
-| `/SetSecurityArm` -> `setPartitionArmed` | **+8.19** | **+3.0000** |
-| `/AdvancedSecurity/ArmWithCode` -> `setarmwithcode` | **+12.15** | **+3.0000** |
+| arm, 200 requests | strings/call | trees/call | handler traced |
+|---|---|---|---|
+| control A `/GetSceneList` | +2.1900 | +1.0000 | — |
+| control B `/GetSecurityStatus` | +0.1900 | +0.0000 | — |
+| `/SetSecurityArm` -> `setPartitionArmed` | **+8.1900** | **+3.0000** | 18585 B |
+| `/AdvancedSecurity/ArmWithCode` -> `setarmwithcode` | **+12.1450** | **+3.0000** | 18810 B |
+| `/SetDoorLock` -> `setDoorLock` | **+8.1750** | **+3.0000** | 21450 B |
 
-Subtracting the +0.19 background that every arm carries: **`setPartitionArmed` leaks 8
-strings and 3 trees per call; `setarmwithcode` leaks about 12 strings and 3 trees.**
-Control A reproduces its documented 1.0000 trees exactly, which is the instrument
-check.
+Subtracting the +0.19 background that every arm carries, including the one that leaks
+nothing: **`setPartitionArmed` 8 strings and 3 trees per call, `setarmwithcode` about
+12 and 3, `setDoorLock` about 8 and 3.** Every family member measured leaks exactly
+**3 trees**.
+
+Replicated: both controls and both arm handlers reproduced to four decimals on a
+second run, on a fresh rig, with `setDoorLock` added. Control A reproducing its
+documented 1.0000 trees is the instrument check.
 
 **This refutes the static prediction in both directions.** The count above says "six
 nodes created, four absorbed by `push_back`, so two roots leak". The measurement says
@@ -1580,15 +1585,31 @@ by decrypting the reply with `leakfix/showresult.py` rather than by guessing):
 
     /API_REV01/SetSecurityArm                 operation=set&arming=STAY&pID=1
     /API_REV01/AdvancedSecurity/ArmWithCode   operation=set&arming=STAY&pID=1&ucode=<code>
+    /API_REV01/SetDoorLock                    operation=set&nodeID=<n>&cntrl=<0-255>
     /API_REV01/Registration/Unregister        operation=set&token=<t>&DeviceMAC=<registered MAC>
 
-**Two bench requirements, both of which cost a run here.** `emu/serve-traced.sh` does
-NOT start `mqdrain.py`, and the arm handlers `mq_send`; without a drain the queue
-backs up and the server wedges into TLS handshake timeouts. Start the drain alongside
-it — `Q=$(ls $TREE/dev/mq | sed 's|^|/|'); setsid python3 /tmp/mqdrain.py $Q &`. And
-the bench `zwavedevdb.json` is `{"BLights":[],"Dlocks":[],…}` — completely empty — so
-`SetDoorLock`, `SetLight` and the thermostat handlers all bail at device validation
-and cannot be measured until that database is populated.
+The door lock parameter is **`cntrl`**, not `status`. Passing `status` gets "Invalid
+parameter value for light action" — the wrong-sounding message is real: `nodeID` is
+validated by a block shared with the light path (`strlen <= 3` then `isNumber`), and
+only after that does the door-lock block read `cntrl` at `0x2655c`.
+
+**Three bench requirements, each of which cost a run here.**
+
+`emu/serve-traced.sh` does NOT start `mqdrain.py`, and these handlers `mq_send`;
+without a drain the queue backs up and the server wedges into TLS handshake timeouts,
+which looks exactly like a crash. Start the drain alongside it:
+`Q=$(ls $TREE/dev/mq | sed 's|^|/|'); setsid python3 /tmp/mqdrain.py $Q &`. This is
+also the concrete mechanism behind the old note that the arm path "cannot complete on
+the bench" — it can, with the drain.
+
+The device-gated handlers need `/dev/zwavestatusdb`, which does not exist on a fresh
+emu tree. `getDeviceTypeFromFile` @`0x1128c` reads it with `fread(buf, 0x78, 1, f)` and
+returns `record[5]` for the record whose `record[0]` is the node id — so a single
+120-byte record is enough. `leakfix/mkzwdb.py` writes one (`1:0x40` is a door lock).
+The JSON `zwavedevdb.json` is empty on the bench and is NOT what this path reads.
+
+Arms stay serial: one process, one global registry, so two endpoints at once
+attribute each other's allocations.
 
 Method notes worth keeping. Arms are serial by necessity -- one process, one global
 registry, so driving two endpoints at once attributes each one's allocations to the
