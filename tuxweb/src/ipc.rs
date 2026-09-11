@@ -170,6 +170,25 @@ pub mod cmd {
     /// Paged: the reply arrives as more than one message.
     pub const EVENT_LOG_UPLOAD: u32 = 17; // sltRequestEventLogUpload
     pub const HOME_PART_DETAILS: u32 = 18; // sltRequestGetHomePartDetails
+
+    /// Stage 7d, arming. `commands.tsv` handler names, all four:
+    /// sltRequestArmAway, sltRequestArmStay, sltRequestDisarm, sltRequestArmNight.
+    /// ARM_AWAY/ARM_STAY/DISARM are declared above; night completes the set.
+    pub const ARM_NIGHT: u32 = 4; // sltRequestArmNight
+
+    /// Stage 7c, and the pair most easily got backwards.
+    ///
+    /// MEASURED (`RELEASES.md`): `cmd 502 -> BACK`, `cmd 503 -> HOME`, the latter
+    /// logged as "THE PANEL RETURNED TO THE HOME SCREEN". The stage plan described
+    /// them as "502/503 (home/back)", which reads as 502=home and is wrong.
+    ///
+    /// Both are forwarded to the panel ONLY when `getConsoleMode() == 0`, so a
+    /// console-mode command first can suppress them. Both also reach
+    /// `home_back_press()`, which zeroes `F7_Mesgs_enabled` -- sending either
+    /// switches the broadcast firehose off for every consumer, exactly as a 501
+    /// does. Send them last or not at all.
+    pub const BACK: u32 = 502;
+    pub const HOME: u32 = 503;
     /// Registering DISCARDS every queued reply: `registerclient`'s first act is
     /// `osal_MqFlush`.
     pub const REGISTER: u32 = 500;

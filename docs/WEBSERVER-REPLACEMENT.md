@@ -2788,8 +2788,17 @@ Four sub-stages, each its own window, each with the deadman armed.
 - **7b** — read-only commands: 5 (partition status), 12 (all zone current status),
   18 (home partition details), 17 (event log upload, paged). None of these change
   panel state.
-- **7c** — console mode (19) with a benign keypress, and 502/503 (home/back). Note
-  console keys are a real keypad; use a key that does nothing.
+- **7c** — console mode (19) with a benign keypress, and **502 = BACK, 503 = HOME**.
+  Note console keys are a real keypad; use a key that does nothing.
+  **Transposition corrected 2026-09-11:** this line read "502/503 (home/back)", which
+  reads as 502=home and is backwards. `RELEASES.md` records the measured result —
+  `cmd 502 -> BACK`, `cmd 503 -> HOME ==> THE PANEL RETURNED TO THE HOME SCREEN`.
+  Acting on the old wording would press the wrong button on a live panel.
+  **Two consequences to sequence around**, neither of which is in the original plan:
+  502/503 are forwarded to the panel only when `getConsoleMode() == 0`, so sending
+  19 first can suppress them; and HOME/BACK reach `home_back_press()`, which zeroes
+  `F7_Mesgs_enabled` — so they switch the broadcast firehose off and must come
+  LAST, after everything that needs to observe replies.
 - **7d** — **arming.** 2 (`ARM_STAY`), then 3 (`DISARM`), then 1 (`ARM_AWAY`), then
   4 (`ARM_NIGHT`). Monitoring on test. Lewis at the panel. One command per attempt,
   verified on the touchscreen and in the push stream before the next.

@@ -72,11 +72,30 @@ fn command(session: u32, code: u32) -> Vec<u8> {
     v
 }
 
+/// Commands that switch the broadcast firehose OFF for every consumer.
+///
+/// `unregisterclient()` and `home_back_press()` both zero `F7_Mesgs_enabled`, which
+/// gates the top of `wsltHandleRawDataFromPanel`. A run that sends one of these and
+/// then expects to keep receiving is wrong by construction -- that is exactly how
+/// the first stage-6 window logged zero -- so `run` refuses to put one in the query
+/// list rather than leaving the ordering to a runbook note.
+pub fn kills_firehose(code: u32) -> bool {
+    code == cmd::BACK || code == cmd::HOME || code == cmd::UNREGISTER
+}
+
 /// Send 500, watch, send 501. Returns what happened rather than exiting, so the
 /// caller can still run the unregister on a failure path.
 pub fn run(cfg: &Config) -> Result<Outcome, String> {
     if cfg.session == 0 {
         return Err("session id must be non-zero; zero is accepted and then ignored".into());
+    }
+    // Refuse a query set that would switch off the very broadcast the run exists to
+    // observe. Checked before anything is opened, so a bad sequence costs nothing.
+    if let Some(bad) = cfg.queries.iter().copied().find(|c| kills_firehose(*c)) {
+        return Err(format!(
+            "command {bad} zeroes F7_Mesgs_enabled and would switch the broadcast off \
+             mid-run; send it after the watch, not in the query list"
+        ));
     }
 
     // Reply queue read-only, command queue read-write. Opening the reply queue
@@ -190,6 +209,31 @@ mod tests {
         let c = command(0x1234, cmd::REGISTER);
         assert_eq!(&c[0x00..0x04], &0x1234u32.to_le_bytes());
         assert_eq!(&c[0x04..0x08], &500u32.to_le_bytes());
+    }
+
+    #[test]
+    fn back_and_home_are_not_transposed() {
+        // The stage plan said "502/503 (home/back)", which reads as 502=home. The
+        // measured result in RELEASES.md is the other way round, and getting it
+        // wrong presses the wrong button on a live alarm panel.
+        assert_eq!(cmd::BACK, 502);
+        assert_eq!(cmd::HOME, 503);
+    }
+
+    #[test]
+    fn the_firehose_killers_are_known_and_listed() {
+        // Anything that reaches home_back_press() zeroes F7_Mesgs_enabled, which is
+        // the same byte 501 clears. A sequence that sends one of these and then
+        // expects to keep receiving is wrong by construction.
+        for code in [cmd::BACK, cmd::HOME, cmd::UNREGISTER] {
+            assert!(
+                kills_firehose(code),
+                "{code} switches the broadcast off and must be sequenced last"
+            );
+        }
+        for code in [cmd::PARTITION_STATUS, cmd::ALL_ZONE_STATUS, cmd::ARM_STAY] {
+            assert!(!kills_firehose(code), "{code} does not");
+        }
     }
 
     #[test]
