@@ -190,6 +190,54 @@ A rewrite has to reproduce both regimes, not one. Verified parameter names for t
 `serviceField` side are in `leakfix/README.md`; note `SetDoorLock` takes **`cntrl`**,
 not `status`, which the client-derived list above does not record.
 
+### The parameter contract, read out of the binary, 2026-09-11
+
+The parameters do not need probing either. Each endpoint's block in `serviceField`
+dispatches on the field name with `strncmp` against a literal, then calls
+`json_get(tree, "<param>")` once per parameter it requires — both operands are
+literal-pool entries, so `leakfix/apicontract.py` recovers endpoint and parameter
+names together from the disassembly. **32 blocks read a parameter; 6 read none.**
+
+Statically derived, then **validated 4/4 against endpoints established independently
+by live probing** (`Unregister`, `SetDoorLock`, `ArmWithCode`, `SetSecurityArm`).
+
+| endpoint | parameters |
+|---|---|
+| `GetDeviceList` | `category` |
+| `ExecuteScene` | `sceneID` |
+| `GetLightStatus`, `GetWaterValveStatus`, `GetDoorLockStatus`, `GetGarageDoorStatus` | `nodeID` |
+| `GetThermostatMode`, `GetThermostatTemperature`, `GetThermostatFanMode`, `GetThermostatFullStatus`, `GetThermostatSetPoint`, `GetThermostatEnergyMode` | `nodeID` |
+| `SetSecurityArm` | `arming`, `pID` |
+| `ArmWithCode` | `arming`, `pID`, `ucode` |
+| `DisarmWithCode` | `pID`, `ucode` |
+| `SetOccupancyMode` | `omode` |
+| `SetLight` | `nodeID`, **`percent`** |
+| `SetDoorLock`, `SetGarageDoorStatus` | `nodeID`, **`cntrl`** |
+| `SetWaterValveStatus` | `nodeID`, `status` |
+| `SetThermostatMode` | `nodeID`, `mode` |
+| `SetThermostatEnergyMode` | `nodeID`, `semode` |
+| `SetThermostatSetPoint` | `nodeID`, `mode`, `setPoint` |
+| `Register` | `mac`, `DeviceMAC` |
+| `Unregister` | `token`, `DeviceMAC` |
+| `AddDeviceMAC` | `Type`, `devMAC` |
+| `RemoveDeviceMAC`, `RevokeKeys` | `devMAC` |
+| `ViewIPURL` | `mac` |
+| `AddIPURL` | `mac`, `ip`, `port`, `url`, `qstring` |
+| `UpdateIPURL` | `mac`, `ip`, `url` |
+| `validatemacip` | `mac`, `ip` |
+
+**Three corrections to the client-derived list above.** `SetLight` takes `percent`,
+not a bare `nodeID`. `SetDoorLock` takes `cntrl`, not `status` — send `status` and
+the server answers "Invalid parameter value for *light* action", because `nodeID` is
+validated by a block shared with the light path before the door-lock block reads
+`cntrl`. And `AddIPURL` takes five parameters, not the single `mac` listed.
+
+**Six blocks read no parameter**, and four are absent from every list:
+`TouchTest`, `AutomationTest`, `edit`, `sendwavfile`, `SetGarrage` (sic),
+`VoiceCommands`. `validatemacip` likewise is not in the field table. Treat these as
+present-in-code, not as reachable endpoints, until each is routed and driven — the
+same standard the rest of this file uses.
+
 ### Two absences, established by enumeration
 
 **No version, model or firmware endpoint.** There is nothing to query. Any
