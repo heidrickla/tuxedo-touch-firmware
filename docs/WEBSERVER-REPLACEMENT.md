@@ -2777,6 +2777,67 @@ assumes it cannot. Now that `sp+0x274` is known to be the reply, the text is at
 **During this stage the web UI cannot arm or disarm** — we send nothing. The
 touchscreen can, and does, throughout. That is the point.
 
+### Stage 7 — RUN 2026-09-11: 7a/7b bench-proven, 7c and 7d PASS on the panel
+
+| stage | where | result |
+|---|---|---|
+| 7a | bench | register/watch/unregister, 504 received, 501 sent |
+| 7b | bench | the four read-only queries, 17's paged reply intact |
+| 7c | **PANEL** | **PASSES** — console mode 19 streamed real console text |
+| 7d | **PANEL** | **PASSES** — `VALID USER CODE`, panel armed STAY, then disarmed |
+
+**7d answers the question this file carried as untested on hardware.** With a
+non-zero `sessionId` and the user code at `+0x0C`:
+
+```
+504                       registration
+21  "Ready To Arm"        disarmed
+2   "VALID USER CODE"     accepted
+21  "259  Secs Remaining" exit delay -- the panel armed STAY
+18  "1 P1  H"
+21  "239 / 235  Secs Remaining"
+```
+
+So the prediction holds: `setarmwithcode` hard-codes `sessionId = 0`, and that is
+why REST arms never show a `VALID USER CODE` frame. Both directions are measured —
+DECLINED with a zero code, ACCEPTED with a real one. The panel was disarmed
+immediately after.
+
+**The user code is at `+0x0C`**, read by `/tuxedo`'s `sltRequestArmStay` @`0x140e44`:
+
+```
+140e70  ldrb  r3, [r6, r5]   ; quick-arm table, indexed by partition - 1
+140e78  cmp   r3, #0
+140e7c  ldreq r3, [pc,#428]  ; == 0 -> the constant 0xFFFF, the quick-arm sentinel
+140e80  ldrne r3, [r4, #12]  ; != 0 -> the code from the request at +0x0C
+```
+
+A first 7d attempt sent `p2 = 0` and the panel read that as code **zero** and
+declined — the sender's fault, not the protocol's. tuxweb now reads the code from
+`/tmp/tuxweb-usercode` (tmpfs, NOT the marker, which lives on mtd17 and survives a
+reflash) and refuses an arming run without one.
+
+**7c received real console text** (`leakfix/stage7c-2026-09-11.tsv`):
+
+```
+504                                        registration
+21  "Ready To Arm"                         partition status
+20  "****DISARMED****|  Ready to Arm  "    console line, five of them
+18  "1 P1  H"
+```
+
+`msgType 20` is the virtual-console line and command 19 turned it on, which confirms
+from the other side that console mode needs no Barracuda change.
+
+**One runbook bug cost a window.** "supervis respawns in ~90 s" came from a single
+measurement; the same SIGKILL took **seven minutes** (kill ~22:56, `RESTART-2` at
+23:03:23). `wait_new_pid`'s 150 s expired, the script called `fail`, and the window
+then opened with **nothing watching it** — it ran, crashed, and left no log and no
+panic file. `stage7` now waits on the **marker disappearing** (the direct signal that
+tuxweb reached `main`) for 900 s, and on timeout REMOVES the marker so no later
+relaunch can take an unattended window. Re-run with that fix, 7c consumed the marker
+after ~100 s and passed.
+
 ### Stage 7 — The write path, in increasing order of consequence
 
 Four sub-stages, each its own window, each with the deadman armed.
