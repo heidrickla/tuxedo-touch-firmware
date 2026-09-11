@@ -96,10 +96,15 @@ else
 fi
 
 say "4. checks"
-grep -q "len session code: 404 $SESSION 500" <(sed 's/^/len session code: /' "$SEEN" 2>/dev/null) \
+# Plain greps on the file, NOT `grep <(...)`. ci/checks.sh validates every script
+# with `sh -n` because the panel runs busybox sh, and process substitution is a
+# bashism dash rejects. Git Bash's `sh` accepts it, so the version with <() passed
+# locally and failed in CI -- the check was right and the local pass was the wrong
+# answer.
+grep -q "^404 $SESSION 500$" "$SEEN" \
     && echo "    500 sent, 404 bytes, session at +0x00" \
     || { echo "    500 NOT seen as 404 bytes with the session"; fail=1; }
-grep -q "len session code: 404 $SESSION 501" <(sed 's/^/len session code: /' "$SEEN" 2>/dev/null) \
+grep -q "^404 $SESSION 501$" "$SEEN" \
     && echo "    501 sent -- the panel is left as it was found" \
     || { echo "    501 NOT sent; the firehose would have been left ON"; fail=1; }
 grep -q "saw504=true" "$OUT" && echo "    504 reply received and recognised" \
