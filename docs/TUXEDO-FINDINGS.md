@@ -140,6 +140,42 @@ Registration/Register                 Type=<n>
 Registration/Unregister               token=<t>
 ```
 
+### The SERVER's routing table, 2026-09-11 — and it splits into two regimes
+
+Everything above is what Honeywell's own **client** calls. The **server** decides
+what resolves, and that is a different table: `WnmpDir_resolveLocation` @`0x1e248`
+walks the request path one `/`-separated segment at a time against 12-byte records
+at `0x8ab10` — `{u16 id, u16 parent, u32 name, u32 help}` — reached as `module+4`
+from `WnmpModule_constructor`. `leakfix/fieldpaths.py` reconstructs every full path
+by following `parent` to the root: **75 records, 63 leaf endpoints.** An endpoint
+absent from that table cannot resolve whoever calls it; one present is reachable
+whether or not the client mentions it. The two lists agree, which is worth stating
+as a result rather than assuming it.
+
+**The split that matters to a reimplementation.** `WnmpDir_service` @`0x29978` tests
+the path with three `strncmp`s and **branches away on a match**, so the big generated
+dispatcher is the fall-through case:
+
+| prefix | tested at | goes to |
+|---|---|---|
+| `API_REV01/System` | `0x29a98` | the API_REV01 branch at `0x29ed4` |
+| `API_REV01/Administration` | `0x29ab0` | same |
+| `API_REV01/AutomationTest` | `0x29ac8` | same |
+| anything else | `0x29adc` | `resolveLocation` -> `WnmpDir_serviceField` @`0x1eedc` |
+
+So of the 63 leaves, everything under `System/` and `Administration/` — including
+`AddIPURL`, `UpdateIPURL`, `ViewIPURL`, `RevokeKeys`, the `ZwaveSync` and
+`ZwaveIPCommunication` trees and `GetEvent`/`GetStatus` — is served by the
+`WnmpDir_service` branch, which requires an `identity` header matching a registered
+device's `PublicKey`. Everything else — most of the security, scene, thermostat and
+Z-Wave device surface — goes through `serviceField`. Confirmed by trace, filter on
+`0x1eedc..0x1f120`: `Registration/Unregister` 30195 B, `GetSceneList` 33231 B,
+`Administration/AddIPURL` **0 B**.
+
+A rewrite has to reproduce both regimes, not one. Verified parameter names for the
+`serviceField` side are in `leakfix/README.md`; note `SetDoorLock` takes **`cntrl`**,
+not `status`, which the client-derived list above does not record.
+
 ### Two absences, established by enumeration
 
 **No version, model or firmware endpoint.** There is nothing to query. Any
