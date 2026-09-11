@@ -134,6 +134,21 @@ impl Reply {
 /// A command to `/tuxedo`. `code` is `+0x04`; `p1` and `p2` are `+0x08` and
 /// `+0x0C`, whose meaning is per-command — for the touch-simulate command they
 /// are x/y coordinates, so they are deliberately not named here.
+///
+/// **For the arming commands, `p2` (+0x0C) is the USER CODE.** Read out of
+/// `sltRequestArmStay` @`0x140e44` in `/tuxedo`:
+///
+/// ```text
+/// 140e70  ldrb  r3, [r6, r5]   ; quick-arm table, indexed by partition - 1
+/// 140e78  cmp   r3, #0
+/// 140e7c  ldreq r3, [pc,#428]  ; == 0 -> the constant 0xFFFF
+/// 140e80  ldrne r3, [r4, #12]  ; != 0 -> the code from the request at +0x0C
+/// ```
+///
+/// So `0xFFFF` is the quick-arm sentinel and anything else is a literal code.
+/// Sending `p2 = 0` asks the panel to arm with code **zero**, which it declines --
+/// that is exactly what the 2026-09-11 window measured (`USER CODE DECLINED`), and
+/// it was the sender's fault, not the protocol's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     pub head: u32,

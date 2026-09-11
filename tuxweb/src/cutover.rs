@@ -48,17 +48,36 @@ use crate::mq::Queue;
 /// vendor. The panel converges on the vendor stack from any failure.
 pub const ARM_MARKER: &str = "/opt/tuxedo/configuration/tuxweb-cutover.arm";
 
-/// Consume the marker. `true` means this launch is the armed window.
+/// Consume the marker. `Some(body)` means this launch is the armed window.
 ///
 /// Deleted before the window opens, not after it closes: "after" is a promise
 /// that a crash breaks, and a crash is exactly when it matters.
-pub fn take_arm_marker(path: &str) -> bool {
+///
+/// The CONTENTS select what the window does. Empty -- the stage-6 form -- is the
+/// read-only cutover. Anything else names a stage-7 run, because supervis launches
+/// us as argv[0] = "Barracuda" with NO arguments, so a command-line flag cannot
+/// reach a window. The marker is the only channel that exists.
+///
+/// Read BEFORE the delete, and the delete still decides whether the window opens:
+/// one marker is one window, and a failed remove means not armed, so a crash cannot
+/// be relaunched into a second window and onward into the 24-relaunch reset.
+pub fn take_arm_marker(path: &str) -> Option<String> {
+    // A marker we cannot read is still a marker; default to empty so an unreadable
+    // one runs the read-only stage 6 rather than something more consequential.
+    let body = std::fs::read_to_string(path).unwrap_or_default();
     match std::fs::remove_file(path) {
         Ok(()) => {
-            println!("tuxweb cutover: consumed {path} -- this is the one armed window");
-            true
+            let body = body.trim().to_string();
+            if body.is_empty() {
+                println!("tuxweb cutover: consumed {path} -- this is the one armed window");
+            } else {
+                println!(
+                    "tuxweb cutover: consumed {path} -- one armed window, stage {body:?}"
+                );
+            }
+            Some(body)
         }
-        Err(_) => false,
+        Err(_) => None,
     }
 }
 
@@ -235,15 +254,25 @@ mod tests {
 
         // absent: this is a passthrough launch, not a window
         let _ = std::fs::remove_file(&p);
-        assert!(!take_arm_marker(path), "no marker must mean no window");
+        assert!(take_arm_marker(path).is_none(), "no marker must mean no window");
 
         std::fs::write(&p, b"").unwrap();
-        assert!(take_arm_marker(path), "an armed marker opens the window");
+        assert_eq!(
+            take_arm_marker(path).as_deref(),
+            Some(""),
+            "an empty marker opens the window and asks for the read-only stage 6"
+        );
         // and the SECOND launch must not get a window. This is the assertion
         // that stands between a crashed cutover and a relaunch loop ending at
         // the 24-relaunch watchdog reset.
-        assert!(!take_arm_marker(path), "one marker is exactly one window");
+        assert!(take_arm_marker(path).is_none(), "one marker is exactly one window");
         assert!(!p.exists(), "the marker must be gone, not merely ignored");
+
+        // A marker carrying a stage returns it, trimmed -- that string is the only
+        // channel a window has, because supervis passes no arguments.
+        std::fs::write(&p, b"7d 2\n").unwrap();
+        assert_eq!(take_arm_marker(path).as_deref(), Some("7d 2"));
+        assert!(!p.exists(), "a stage marker is consumed like any other");
     }
 
     #[test]

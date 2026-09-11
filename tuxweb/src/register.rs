@@ -49,6 +49,8 @@ pub struct Config {
     /// broadcast, and nothing after it can be observed. Deliberately a separate
     /// field from `queries` so the guard on that list stays absolute.
     pub after_watch: Vec<u32>,
+    /// Sent at `+0x0C` with an arming command; zero for every other command.
+    pub user_code: u32,
 }
 
 #[derive(Debug)]
@@ -73,9 +75,44 @@ pub struct Outcome {
 /// `msgsize`, so getting this wrong is an EMSGSIZE rather than a silent truncation --
 /// but it would still be a wasted window.
 fn command(session: u32, code: u32) -> Vec<u8> {
-    let v = Command { head: session, code, p1: 0, p2: 0 }.encode();
+    command_with(session, code, 0)
+}
+
+/// `p2` at +0x0C is the user code for the arming commands; zero for everything else.
+fn command_with(session: u32, code: u32, p2: u32) -> Vec<u8> {
+    let v = Command { head: session, code, p1: 0, p2 }.encode();
     debug_assert_eq!(v.len(), COMMAND_LEN);
     v
+}
+
+/// The user code for an arming command, read from tmpfs.
+///
+/// NOT from the arm marker: that lives in `/opt/tuxedo/configuration`, which is
+/// mtd17 and survives a reflash, so a code written there outlives the window and a
+/// failed window leaves it on flash. `/tmp` is tmpfs and goes at the next boot.
+///
+/// `0xFFFF` is the quick-arm sentinel `/tuxedo` uses when a partition has quick-arm
+/// enabled; it is what the panel substitutes itself, not something to send blind.
+/// Absent file means no code, and an arming command then carries zero -- which the
+/// panel reads as code zero and DECLINES. So an arming run without this file is
+/// refused up front rather than spending a window on a guaranteed refusal.
+pub const USER_CODE_FILE: &str = "/tmp/tuxweb-usercode";
+
+pub fn user_code() -> Option<u32> {
+    let raw = std::fs::read_to_string(USER_CODE_FILE).ok()?;
+    let t = raw.trim();
+    if t.is_empty() {
+        return None;
+    }
+    t.parse::<u32>().ok().filter(|c| *c != 0)
+}
+
+/// The four commands that carry a user code at `+0x0C`.
+pub fn is_arming(code: u32) -> bool {
+    code == cmd::ARM_AWAY
+        || code == cmd::ARM_STAY
+        || code == cmd::DISARM
+        || code == cmd::ARM_NIGHT
 }
 
 /// Commands that switch the broadcast firehose OFF for every consumer.
@@ -94,6 +131,18 @@ pub fn kills_firehose(code: u32) -> bool {
 pub fn run(cfg: &Config) -> Result<Outcome, String> {
     if cfg.session == 0 {
         return Err("session id must be non-zero; zero is accepted and then ignored".into());
+    }
+    // An arming command with no user code asks the panel to arm with code ZERO,
+    // which it declines -- and the declined path calls SetGotoStatus(false) before
+    // its own guard, so it changes panel state on the way to refusing. That is a
+    // window spent on a guaranteed refusal plus a side effect, so refuse here.
+    if cfg.queries.iter().any(|c| is_arming(*c)) && cfg.user_code == 0 {
+        return Err(format!(
+            "an arming command needs the user code at +0x0C; put it in {} \
+             (tmpfs, not the marker -- the marker lives on mtd17 and survives a reflash). \
+             Sending zero is read as code 0 and DECLINED.",
+            USER_CODE_FILE
+        ));
     }
     // Refuse a query set that would switch off the very broadcast the run exists to
     // observe. Checked before anything is opened, so a bad sequence costs nothing.
@@ -144,8 +193,15 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
     // be attributed to the command that caused it. 17 is paged -- its reply is more
     // than one message -- so the count below is messages, never "one per query".
     for (i, code) in cfg.queries.iter().enumerate() {
-        println!("{}: sending query {} of {}: code {}", cfg.label, i + 1, cfg.queries.len(), code);
-        if let Err(e) = commands.send(&command(cfg.session, *code)) {
+        // Arming commands carry the user code at +0x0C. Everything else sends zero
+        // there, which is what those handlers expect.
+        let p2 = if is_arming(*code) { cfg.user_code } else { 0 };
+        println!(
+            "{}: sending query {} of {}: code {}{}",
+            cfg.label, i + 1, cfg.queries.len(), code,
+            if is_arming(*code) { "  (with the user code at +0x0C)" } else { "" }
+        );
+        if let Err(e) = commands.send(&command_with(cfg.session, *code, p2)) {
             // Report and keep going to the unregister: a half-sent query set is
             // recoverable, a panel left registered is not.
             println!("{}: query {code} failed: {e}", cfg.label);
@@ -231,6 +287,75 @@ mod tests {
     }
 
     #[test]
+    fn the_user_code_goes_at_offset_0x0c() {
+        // /tuxedo's sltRequestArmStay reads the code with `ldrne r3, [r4, #12]`,
+        // so it must land at +0x0C and nowhere else.
+        let c = command_with(4242, cmd::ARM_STAY, 1234);
+        assert_eq!(&c[0x0C..0x10], &1234u32.to_le_bytes());
+        assert_eq!(&c[0x08..0x0C], &0u32.to_le_bytes(), "p1 stays zero");
+        // and a non-arming command carries no code
+        let q = command(4242, cmd::PARTITION_STATUS);
+        assert_eq!(&q[0x0C..0x10], &0u32.to_le_bytes());
+    }
+
+    #[test]
+    fn an_arming_run_without_a_code_is_refused_before_anything_opens() {
+        // Sending zero is read as code 0 and DECLINED, and the declined path calls
+        // SetGotoStatus(false) before its guard -- so it changes panel state on the
+        // way to refusing. Not worth a window.
+        let cfg = Config {
+            session: 4242,
+            watch: Duration::from_millis(1),
+            log: "/tmp/stage7d-should-not-exist".into(),
+            label: "test".into(),
+            queries: vec![cmd::ARM_STAY],
+            after_watch: Vec::new(),
+            user_code: 0,
+        };
+        let e = run(&cfg).unwrap_err();
+        assert!(e.contains("user code"), "{e}");
+        assert!(!std::path::Path::new("/tmp/stage7d-should-not-exist").exists());
+    }
+
+    #[test]
+    fn a_marker_typo_must_not_arm_anything() {
+        // The marker is the only channel a window has, so a typo in it is the one
+        // input that can arm a live alarm by accident. Every one of these must be
+        // refused rather than rounded to the nearest stage.
+        for bad in ["7d", "7d 19", "7d 0", "7e", "7", "", "7d abc", "arm"] {
+            assert!(
+                crate::stage7_from_marker(bad).is_none(),
+                "marker {bad:?} must be refused, not interpreted"
+            );
+        }
+        // and the four that are real
+        for (m, want) in [
+            ("7d 1", cmd::ARM_AWAY),
+            ("7d 2", cmd::ARM_STAY),
+            ("7d 3", cmd::DISARM),
+            ("7d 4", cmd::ARM_NIGHT),
+        ] {
+            let cfg = crate::stage7_from_marker(m).expect(m);
+            assert_eq!(cfg.queries, vec![want]);
+            assert!(cfg.after_watch.is_empty(), "7d sends nothing after the watch");
+        }
+    }
+
+    #[test]
+    fn the_marker_stages_carry_the_right_commands() {
+        assert!(crate::stage7_from_marker("7a").unwrap().queries.is_empty());
+        assert_eq!(
+            crate::stage7_from_marker("7b").unwrap().queries,
+            vec![5, 12, 18, 17]
+        );
+        let c = crate::stage7_from_marker("7c").unwrap();
+        assert_eq!(c.queries, vec![cmd::CONSOLE_MODE]);
+        assert_eq!(c.after_watch, vec![cmd::BACK], "BACK is after the watch, never in it");
+        // the optional watch length
+        assert_eq!(crate::stage7_from_marker("7a s45").unwrap().watch.as_secs(), 45);
+    }
+
+    #[test]
     fn back_and_home_are_not_transposed() {
         // The stage plan said "502/503 (home/back)", which reads as 502=home. The
         // measured result in RELEASES.md is the other way round, and getting it
@@ -297,6 +422,7 @@ mod tests {
             log: "/tmp/stage7a-should-not-exist".into(),
             queries: vec![cmd::PARTITION_STATUS],
             after_watch: Vec::new(),
+            user_code: 0,
         };
         let e = run(&cfg).unwrap_err();
         assert!(e.contains("non-zero"), "{e}");

@@ -33,7 +33,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:$PATH
 W=/opt/webserver
 MARKER=/opt/tuxedo/configuration/tuxweb-cutover.arm
 STAGED=/tmp/tuxweb-stage6
-STAGED_MD5=ea4f5d5be5621a5bf4aacc2fdee08f78
+STAGED_MD5=da99578b0fe24f4d078fa9f398d91d92
 LOG=/tmp/cutover.tsv
 BB=/bin/busybox
 VENDORMD5=/tmp/stage6-vendor.md5
@@ -263,6 +263,76 @@ phase1() {
     echo "  phase 1 left INSTALLED on purpose. Run 'revert' to undo."
 }
 
+# stage7 <request> -- a window that runs a stage-7 sequence instead of the
+# read-only cutover. The request goes INTO the marker, because supervis launches
+# tuxweb with argv[0]=Barracuda and no arguments: the marker is the only channel.
+#
+#   stage7 "7a"      register, watch, unregister
+#   stage7 "7b"      plus the four read-only queries
+#   stage7 "7c"      console mode, then BACK after the watch
+#   stage7 "7d 2"    ONE arming command (1 away, 2 stay, 3 disarm, 4 night)
+#
+# Same SIGKILL as phase2, and for the same reason: a polite kill runs sigHandler's
+# sendUnregisterCommand and switches the broadcast off before the window opens.
+stage7() {
+    req="$1"
+    [ -n "$req" ] || fail "stage7 needs a request, e.g. stage7 '7d 2'"
+    say "STAGE 7 WINDOW -- request: $req"
+    trap revert EXIT INT TERM
+    [ -f "$W/vendor/Barracuda" ] || fail "phase 1 has not run: no $W/vendor/Barracuda"
+    [ -e "$MARKER" ] && fail "marker already present"
+
+    echo "  arming with the request in the marker"
+    printf '%s\n' "$req" > "$MARKER" || fail "cannot write $MARKER"
+
+    old=$(pids_named Barracuda | tr '\n' ' ')
+    for p in $old; do kill -9 "$p" 2>/dev/null; done
+
+    # WAIT ON THE MARKER, NOT ON A PID, AND WAIT LONG ENOUGH.
+    #
+    # "~90s" came from a single measurement. On 2026-09-11 the same SIGKILL took
+    # SEVEN MINUTES -- kill at ~22:56, RESTART-2 at 23:03:23. The 150 s wait
+    # expired, this function called fail, and the window then opened with nothing
+    # watching it: it ran, crashed, and left no evidence. That is worse than either
+    # succeeding or failing cleanly.
+    #
+    # The marker DISAPPEARING is the direct signal that tuxweb reached main and took
+    # the window. A new pid only says supervis launched something. Wait 15 minutes,
+    # because the observed spread is minutes and waiting costs nothing while giving
+    # up early costs the whole run and leaves an unattended window behind.
+    echo "  SIGKILL sent; supervis respawn on the unreported path is SLOW (90s..7min)"
+    i=0
+    while [ $i -lt 900 ]; do
+        [ -e "$MARKER" ] || break
+        i=$((i + 1)); sleep 1
+    done
+    if [ -e "$MARKER" ]; then
+        # Remove it: otherwise the NEXT relaunch, whenever it comes, takes a window
+        # with nobody watching -- exactly what happened here.
+        rm -f "$MARKER"
+        fail "supervis did not relaunch within 900s; marker removed so no later relaunch takes an unattended window"
+    fi
+    echo "  marker consumed after ${i}s -- tuxweb has the window"
+    new=$(pids_named Barracuda | head -1)
+    echo "  stage-7 pid ${new:-unknown}"
+
+    # The run hands the panel back by itself when it finishes; wait for the
+    # listeners to come back rather than guessing at a duration.
+    i=0
+    while [ $i -lt 300 ]; do
+        n=$(listeners); [ "$n" -ge 4 ] && break
+        i=$((i + 1)); sleep 1
+    done
+    echo "  listeners back: $(listeners)/4 after ${i}s"
+
+    say "what the window logged"
+    for f in /tmp/stage7a.tsv /tmp/stage7b.tsv /tmp/stage7c.tsv /tmp/stage7d.tsv; do
+        [ -s "$f" ] && echo "  $f: $($BB wc -l < "$f") line(s)"
+    done
+    [ -s /tmp/tuxweb-panic.txt ] && { echo "  PANIC:"; cat /tmp/tuxweb-panic.txt; }
+    true
+}
+
 phase2() {
     say "PHASE 2 -- THE WINDOW (§5.1)"
     trap revert EXIT INT TERM
@@ -351,6 +421,9 @@ case "${1:-phase0}" in
     phase0) phase0 ;;
     phase1) phase1 ;;
     phase2) phase2 ;;
+    stage7) stage7 "${2:-}" ;;
     revert) revert ;;
-    *) echo "usage: $0 [phase0|phase1|phase2|revert]"; exit 2 ;;
+    *) echo "usage: $0 [phase0|phase1|phase2|revert|stage7 <request>]"
+       echo "       stage7 requests: 7a | 7b | 7c | '7d <1|2|3|4>'"
+       exit 2 ;;
 esac

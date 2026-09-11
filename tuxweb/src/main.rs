@@ -167,6 +167,70 @@ fn install_panic_log(path: &str) {
     }));
 }
 
+/// Parse a stage-7 request out of the arm marker.
+///
+///     7a            register, watch, unregister
+///     7b            plus the four read-only queries
+///     7c            console mode, then BACK after the watch
+///     7d <code>     ONE arming command: 1, 2, 3 or 4
+///
+/// An optional trailing `s<secs>` sets the watch. Anything unrecognised returns
+/// None and the caller hands the panel back without sending -- a marker typo must
+/// not become a different, more consequential stage than the one intended.
+fn stage7_from_marker(request: &str) -> Option<register::Config> {
+    let mut parts = request.split_whitespace();
+    let stage = parts.next()?;
+    let rest: Vec<&str> = parts.collect();
+
+    let secs = rest
+        .iter()
+        .find_map(|t| t.strip_prefix('s').and_then(|n| n.parse::<u64>().ok()))
+        .unwrap_or(120);
+
+    let (queries, after_watch) = match stage {
+        "7a" => (Vec::new(), Vec::new()),
+        "7b" => (
+            vec![
+                ipc::cmd::PARTITION_STATUS,
+                ipc::cmd::ALL_ZONE_STATUS,
+                ipc::cmd::HOME_PART_DETAILS,
+                ipc::cmd::EVENT_LOG_UPLOAD,
+            ],
+            Vec::new(),
+        ),
+        "7c" => (vec![ipc::cmd::CONSOLE_MODE], vec![ipc::cmd::BACK]),
+        "7d" => {
+            // The arming code is required and must be one of the four. A marker
+            // reading "7d" alone, or "7d 19", must not arm anything.
+            let code: u32 = rest.iter().find_map(|t| t.parse::<u32>().ok())?;
+            let known = [
+                ipc::cmd::ARM_AWAY,
+                ipc::cmd::ARM_STAY,
+                ipc::cmd::DISARM,
+                ipc::cmd::ARM_NIGHT,
+            ];
+            if !known.contains(&code) {
+                return None;
+            }
+            (vec![code], Vec::new())
+        }
+        _ => return None,
+    };
+
+    // The session must be non-zero, and it is not worth putting in the marker: any
+    // non-zero value does, and one fewer field is one fewer thing to mistype at the
+    // moment the panel is about to be taken over.
+    Some(register::Config {
+        session: 4242,
+        watch: std::time::Duration::from_secs(secs),
+        log: format!("/tmp/stage{stage}.tsv"),
+        label: format!("stage{stage}"),
+        queries,
+        after_watch,
+        user_code: register::user_code().unwrap_or(0),
+    })
+}
+
 fn main() {
     // The first statement in the program: a panic before this point is invisible.
     install_panic_log("/tmp/tuxweb-panic.txt");
@@ -247,6 +311,7 @@ fn main() {
             log: format!("/tmp/{name}.tsv"),
             label: name.to_string(),
             after_watch,
+            user_code: register::user_code().unwrap_or(0),
             queries,
         };
         match register::run(&cfg) {
@@ -281,7 +346,37 @@ fn main() {
         // a passthrough; exactly once, when a window has been armed, it is the
         // cutover. Taking the marker CONSUMES it, so a crash during the window
         // is relaunched as a passthrough rather than as another window.
-        if cutover::take_arm_marker(cutover::ARM_MARKER) {
+        if let Some(request) = cutover::take_arm_marker(cutover::ARM_MARKER) {
+            // A non-empty marker names a stage-7 run. Empty stays the read-only
+            // stage-6 cutover, so an operator who arms the marker the old way gets
+            // the old, least consequential behaviour.
+            if !request.is_empty() {
+                match stage7_from_marker(&request) {
+                    Some(cfg) => {
+                        let o = register::run(&cfg);
+                        // Hand the panel back either way: the window owns the web
+                        // server, and leaving it owned is worse than any result.
+                        match o {
+                            Ok(o) => println!(
+                                "{}: register={} queries={} after={} received={} \
+                                 decoded={} saw504={} unregister={}",
+                                cfg.label, o.sent_register, o.queries_sent, o.after_sent,
+                                o.received, o.decoded, o.saw_504, o.sent_unregister
+                            ),
+                            Err(e) => eprintln!("{}: {e}", cfg.label),
+                        }
+                    }
+                    None => eprintln!(
+                        "tuxweb cutover: marker said {request:?}, which is not a stage \
+                         I know; handing back without sending anything"
+                    ),
+                }
+                // Whatever happened, give the panel back rather than sitting on it.
+                deadman::hand_back_to_vendor(
+                    &std::env::var("TUXWEB_EXEC")
+                        .unwrap_or_else(|_| "/opt/webserver/vendor/Barracuda".to_string()),
+                );
+            }
             let vendor = std::env::var("TUXWEB_EXEC")
                 .unwrap_or_else(|_| "/opt/webserver/vendor/Barracuda".to_string());
             let window = std::env::var("TUXWEB_CUTOVER_SECS")
