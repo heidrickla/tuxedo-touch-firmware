@@ -33,15 +33,31 @@ pub struct Config {
     /// How long to watch between the 500 and the 501.
     pub watch: Duration,
     pub log: String,
+    /// What to call this run in its own output. A window's log is read back later
+    /// by someone who was not watching it, and "stage7a" printed during a 7b run is
+    /// a small lie that costs a re-read.
+    pub label: String,
+    /// Stage 7b: read-only query commands to send after registering, in order.
+    /// Empty for 7a, which sends nothing but the register pair.
+    ///
+    /// They go through the SAME register/unregister path deliberately. The 501 is
+    /// what leaves the panel as it was found, so there must not be a second code
+    /// path that can send queries and skip it.
+    pub queries: Vec<u32>,
 }
 
 #[derive(Debug)]
 pub struct Outcome {
     pub sent_register: bool,
+    pub queries_sent: usize,
     pub received: usize,
     pub decoded: usize,
     pub saw_504: bool,
     pub sent_unregister: bool,
+    /// (msg_type, count), sorted. Reported rather than a bare total because
+    /// command 17 is paged: its reply is several messages, so "replies == queries"
+    /// is never the right check.
+    pub types: Vec<(u32, usize)>,
 }
 
 /// Build the 404-byte register/unregister command.
@@ -70,30 +86,48 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
 
     let attr = replies.attr()?;
     println!(
-        "stage7a: replies maxmsg={} msgsize={} curmsgs={}",
+        "{}: replies maxmsg={} msgsize={} curmsgs={}", cfg.label,
         attr.maxmsg, attr.msgsize, attr.curmsgs
     );
     if attr.curmsgs > 0 {
         println!(
-            "stage7a: NOTE {} message(s) already queued -- the 500 below will FLUSH them",
+            "{}: NOTE {} message(s) already queued -- the 500 below will FLUSH them", cfg.label,
             attr.curmsgs
         );
     }
 
     let mut out = Outcome {
         sent_register: false,
+        queries_sent: 0,
         received: 0,
         decoded: 0,
         saw_504: false,
         sent_unregister: false,
+        types: Vec::new(),
     };
+    let mut tally: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
 
     let mut log = std::fs::File::create(&cfg.log)
         .map_err(|e| format!("cannot open {}: {e}", cfg.log))?;
 
-    println!("stage7a: sending 500 REGISTER, session {}", cfg.session);
+    println!("{}: sending 500 REGISTER, session {}", cfg.label, cfg.session);
     commands.send(&command(cfg.session, cmd::REGISTER))?;
     out.sent_register = true;
+
+    // Queries go out after the register and before the watch, spaced so a reply can
+    // be attributed to the command that caused it. 17 is paged -- its reply is more
+    // than one message -- so the count below is messages, never "one per query".
+    for (i, code) in cfg.queries.iter().enumerate() {
+        println!("{}: sending query {} of {}: code {}", cfg.label, i + 1, cfg.queries.len(), code);
+        if let Err(e) = commands.send(&command(cfg.session, *code)) {
+            // Report and keep going to the unregister: a half-sent query set is
+            // recoverable, a panel left registered is not.
+            println!("{}: query {code} failed: {e}", cfg.label);
+            break;
+        }
+        out.queries_sent += 1;
+        std::thread::sleep(Duration::from_millis(400));
+    }
 
     let mut buf = replies.buffer()?;
     let started = Instant::now();
@@ -108,6 +142,7 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
                 let _ = log.flush();
                 if let Some(r) = Reply::parse(raw) {
                     out.decoded += 1;
+                    *tally.entry(r.msg_type).or_insert(0) += 1;
                     // 504 is the registration confirmation. Its text is NOT at
                     // +0x0E -- the 556-byte reply is a union, and for a 504 that
                     // offset holds nothing of interest -- so only the type is read
@@ -120,16 +155,18 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
             // Report and still unregister: leaving the firehose on is worse than
             // losing the rest of the sample.
             Err(e) => {
-                println!("stage7a: receive failed: {e}");
+                println!("{}: receive failed: {e}", cfg.label);
                 break;
             }
         }
     }
 
-    println!("stage7a: sending 501 UNREGISTER");
+    out.types = tally.into_iter().collect();
+
+    println!("{}: sending 501 UNREGISTER", cfg.label);
     match commands.send(&command(cfg.session, cmd::UNREGISTER)) {
         Ok(()) => out.sent_unregister = true,
-        Err(e) => println!("stage7a: UNREGISTER FAILED: {e} -- the firehose may still be on"),
+        Err(e) => println!("{}: UNREGISTER FAILED: {e} -- the firehose may still be on", cfg.label),
     }
 
     Ok(out)
@@ -156,6 +193,29 @@ mod tests {
     }
 
     #[test]
+    fn the_7b_query_codes_are_the_read_only_four() {
+        // Guards against a transposed constant reaching a panel. 2, 3 and 1 are
+        // ARM_STAY, DISARM and ARM_AWAY -- stage 7d, not 7b -- and must never
+        // appear in this set.
+        let q = [
+            cmd::PARTITION_STATUS,
+            cmd::ALL_ZONE_STATUS,
+            cmd::HOME_PART_DETAILS,
+            cmd::EVENT_LOG_UPLOAD,
+        ];
+        assert_eq!(q, [5, 12, 18, 17]);
+        for code in q {
+            assert!(
+                code != cmd::ARM_AWAY
+                    && code != cmd::ARM_STAY
+                    && code != cmd::DISARM
+                    && code != cmd::CONSOLE_MODE,
+                "7b must not contain a state-changing command: {code}"
+            );
+        }
+    }
+
+    #[test]
     fn register_and_unregister_differ_only_in_the_code() {
         let r = command(9, cmd::REGISTER);
         let u = command(9, cmd::UNREGISTER);
@@ -170,7 +230,9 @@ mod tests {
         let cfg = Config {
             session: 0,
             watch: Duration::from_millis(1),
+            label: "test".into(),
             log: "/tmp/stage7a-should-not-exist".into(),
+            queries: vec![cmd::PARTITION_STATUS],
         };
         let e = run(&cfg).unwrap_err();
         assert!(e.contains("non-zero"), "{e}");

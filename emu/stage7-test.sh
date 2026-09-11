@@ -115,7 +115,83 @@ else
         || { echo "    refused, but not for the stated reason"; fail=1; }
 fi
 
+say "6. stage 7b: the four read-only queries, with 17 answered as PAGED"
+SEEN7B=/tmp/stage7b-seen.bin
+OUT7B=/tmp/stage7b-test.out
+python3 - "$QC" "$QR" "$SEEN7B" <<'PY' &
+import ctypes, ctypes.util, os, struct, sys, time
+rt = ctypes.CDLL(ctypes.util.find_library("rt") or "librt.so.1", use_errno=True)
+rt.mq_open.restype = ctypes.c_int
+cmdq = rt.mq_open(sys.argv[1].encode(), 0o2 | os.O_NONBLOCK)
+repq = rt.mq_open(sys.argv[2].encode(), 0o2)
+buf = ctypes.create_string_buffer(404)
+prio = ctypes.c_uint(0)
+seen = []
+
+
+def reply(session, mtype, arg=0, text=b"x"):
+    r = bytearray(556)
+    r[0x00:0x04] = struct.pack("<I", session)
+    r[0x04:0x08] = struct.pack("<I", mtype)
+    r[0x08:0x0C] = struct.pack("<I", arg)
+    r[0x0E:0x0E + len(text)] = text
+    rt.mq_send(repq, bytes(r), 556, 1)
+
+
+deadline = time.time() + 30
+while time.time() < deadline:
+    n = rt.mq_receive(cmdq, buf, 404, ctypes.byref(prio))
+    if n < 0:
+        time.sleep(0.05)
+        continue
+    session, code = struct.unpack("<II", buf.raw[:8])
+    seen.append((n, session, code))
+    if code == 500:
+        reply(session, 504, text=b"P1  H")
+    elif code == 5:
+        reply(session, 21, text=b"Ready To Arm")
+    elif code == 12:
+        reply(session, 22, text=b"zones")
+    elif code == 18:
+        reply(session, 18, text=b"home")
+    elif code == 17:
+        # PAGED: the event log comes back as more than one message. A checker
+        # that expects one reply per query would call this a failure.
+        for page in range(3):
+            reply(session, 23, arg=page, text=b"page%d" % page)
+    elif code == 501:
+        break
+open(sys.argv[3], "w").write("\n".join("%d %d %d" % s for s in seen))
+PY
+R7B=$!
+sleep 1
+timeout 60 "$BIN" --stage7b "$SESSION" 8 > "$OUT7B" 2>&1
+rc7b=$?
+sed 's/^/    /' "$OUT7B"
+wait $R7B 2>/dev/null
+
+say "7. checks for 7b"
+codes=$(awk '{print $3}' "$SEEN7B" 2>/dev/null | tr '\n' ' ')
+echo "    codes the fake tuxedo saw: $codes"
+[ "$codes" = "500 5 12 18 17 501 " ] \
+    && echo "    500 first, the four queries in order, 501 last" \
+    || { echo "    WRONG ORDER or missing codes"; fail=1; }
+awk '{ if ($1 != 404) bad=1 } END { if (bad) exit 1 }' "$SEEN7B" \
+    && echo "    every command was 404 bytes" \
+    || { echo "    a command was not 404 bytes"; fail=1; }
+grep -q "queries=4" "$OUT7B" && echo "    all four queries sent" \
+    || { echo "    not all queries sent"; fail=1; }
+# 17 is paged, so replies EXCEED queries; this is the check that would break if
+# someone "fixed" the tally to one-reply-per-query.
+grep -qE "received=([7-9]|[1-9][0-9])" "$OUT7B" \
+    && echo "    replies exceed queries -- the paged 17 was not miscounted" \
+    || { echo "    reply count looks like one-per-query; 17's pages were lost"; fail=1; }
+grep -q "msgTypes .*23x3" "$OUT7B" && echo "    the three pages of 17 all arrived" \
+    || { echo "    17's pages did not all arrive"; fail=1; }
+[ "$rc7b" = "0" ] && echo "    exit 0 (unregister confirmed)" \
+    || { echo "    exit $rc7b"; fail=1; }
+
 say "verdict"
-[ "$fail" = "0" ] && echo "  STAGE 7A SEND PATH PASSES (against a stand-in, not the panel)" \
+[ "$fail" = "0" ] && echo "  STAGE 7A AND 7B SEND PATHS PASS (against a stand-in, not the panel)" \
     || echo "  FAILURES ABOVE"
 exit "$fail"

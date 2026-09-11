@@ -160,6 +160,16 @@ pub mod cmd {
     pub const ARM_STAY: u32 = 2;
     pub const DISARM: u32 = 3;
     pub const CONSOLE_MODE: u32 = 19;
+
+    /// Stage 7b, the read-only queries. Each name is the handler `commands.tsv`
+    /// records for the code, so a wrong constant is caught by reading one line
+    /// rather than by watching a panel do something unexpected. None of these four
+    /// changes panel state.
+    pub const PARTITION_STATUS: u32 = 5; // sltRequestPartitionStatus
+    pub const ALL_ZONE_STATUS: u32 = 12; // sltRequestAllZoneCurrStatus
+    /// Paged: the reply arrives as more than one message.
+    pub const EVENT_LOG_UPLOAD: u32 = 17; // sltRequestEventLogUpload
+    pub const HOME_PART_DETAILS: u32 = 18; // sltRequestGetHomePartDetails
     /// Registering DISCARDS every queued reply: `registerclient`'s first act is
     /// `osal_MqFlush`.
     pub const REGISTER: u32 = 500;

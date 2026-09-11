@@ -186,26 +186,47 @@ fn main() {
     //   tuxweb --stage7a <session> [watch-secs]
     // Not reachable from the supervis launch path -- that branch is keyed on argv[0]
     // being "Barracuda" and is handled below -- so this can only be run deliberately.
-    if args.get(1).map(String::as_str) == Some("--stage7a") {
+    let stage = args.get(1).map(String::as_str);
+    if stage == Some("--stage7a") || stage == Some("--stage7b") {
         let session: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
         let secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60);
+        // 7b adds the four read-only queries; 7a sends nothing but the pair. Both
+        // go through one code path so there is no route that sends and then skips
+        // the unregister.
+        let queries = if stage == Some("--stage7b") {
+            vec![
+                ipc::cmd::PARTITION_STATUS,
+                ipc::cmd::ALL_ZONE_STATUS,
+                ipc::cmd::HOME_PART_DETAILS,
+                ipc::cmd::EVENT_LOG_UPLOAD,
+            ]
+        } else {
+            Vec::new()
+        };
+        let name = if queries.is_empty() { "stage7a" } else { "stage7b" };
         let cfg = register::Config {
             session,
             watch: std::time::Duration::from_secs(secs),
-            log: "/tmp/stage7a.tsv".into(),
+            log: format!("/tmp/{name}.tsv"),
+            label: name.to_string(),
+            queries,
         };
         match register::run(&cfg) {
             Ok(o) => {
                 println!(
-                    "stage7a: register={} received={} decoded={} saw504={} unregister={}",
-                    o.sent_register, o.received, o.decoded, o.saw_504, o.sent_unregister
+                    "{name}: register={} queries={} received={} decoded={} saw504={} unregister={}",
+                    o.sent_register, o.queries_sent, o.received, o.decoded,
+                    o.saw_504, o.sent_unregister
                 );
-                // The unregister is the part that leaves the panel as it was found,
-                // so a run that could not send it is a failure even if it received.
+                let types: Vec<String> =
+                    o.types.iter().map(|(t, n)| format!("{t}x{n}")).collect();
+                println!("{name}: msgTypes {}", types.join(" "));
+                // The unregister is what leaves the panel as it was found, so a run
+                // that could not send it is a failure even if it received plenty.
                 std::process::exit(if o.sent_unregister { 0 } else { 1 });
             }
             Err(e) => {
-                eprintln!("stage7a: {e}");
+                eprintln!("{name}: {e}");
                 std::process::exit(2);
             }
         }
