@@ -378,7 +378,10 @@ def verify_serve(path):
     _report(got, want, "snapshot then live arm and disarm delivered in order")
 
 
-def verify_cmds(cmdlog):
+def verify_cmds(cmdlog, permanent=False):
+    """`permanent`: the server was killed rather than reaching a window's end, so
+    no 501 is expected -- a permanent server never unregisters; its relaunch
+    re-registers with a fresh 500 instead."""
     with open(cmdlog) as f:
         rows = [tuple(int(x) for x in ln.split("\t")) for ln in f if ln.strip()]
     print("  fake tuxedo saw commands: %s" % rows)
@@ -391,9 +394,14 @@ def verify_cmds(cmdlog):
         die("FAIL: no DISARM (3) with user code 1234 at +0x0C reached the queue")
     if rows.index((3, 1234)) < rows.index((2, 1234)):
         die("FAIL: disarm arrived before arm")
-    if codes[-1:] != [501]:
-        die("FAIL: the last command must be the 501 UNREGISTER (got %r)" % codes[-1:])
-    print("  PASS: 500, arm(2,1234), disarm(3,1234), 501 -- in order, codes at +0x0C")
+    if permanent:
+        if 501 in codes:
+            die("FAIL: a permanent server must never send 501 (it would switch the firehose off)")
+        print("  PASS: 500, arm(2,1234), disarm(3,1234), and NO 501 -- permanent server")
+    else:
+        if codes[-1:] != [501]:
+            die("FAIL: the last command must be the 501 UNREGISTER (got %r)" % codes[-1:])
+        print("  PASS: 500, arm(2,1234), disarm(3,1234), 501 -- in order, codes at +0x0C")
 
 
 if __name__ == "__main__":
@@ -419,7 +427,7 @@ if __name__ == "__main__":
     elif cmd == "verify_serve":
         verify_serve(a[0])
     elif cmd == "verify_cmds":
-        verify_cmds(a[0])
+        verify_cmds(a[0], permanent=(len(a) > 1 and a[1] == "permanent"))
     elif cmd == "unlink":
         for name in (QR, QC):
             rt.mq_unlink(name)

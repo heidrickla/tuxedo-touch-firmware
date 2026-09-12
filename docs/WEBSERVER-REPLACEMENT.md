@@ -3087,6 +3087,31 @@ update lands alongside.
   status/arm/disarm/negatives/live stream all pass identically to plaintext.
   The 80 leg stays plaintext by definition.
 
+#### The 8d launch switch and the crash-loop guard (`conf.rs`) — bench-proven
+
+`supervis` launches `/opt/webserver/Barracuda` with no arguments, so the mode
+cannot come from a command line. The windows used a one-shot marker that
+entering consumed; the permanent server needs the opposite:
+
+- **`/opt/tuxedo/configuration/tuxweb-serve.conf` present ⇒ serve mode**
+  (`key=value`: `bind`, `redirect_bind`, `chain`, `key`, `token_store`,
+  `quickarm`, `session`; unknown keys are an error, not a default). Absent ⇒ the
+  existing marker/passthrough behaviour. mtd17, so a reflash does not silently
+  flip the panel back to the vendor — **revert is `rm` the conf + `kill -9`**,
+  never a reflash. A conf whose cert pair is set but unusable refuses serve mode
+  and passes through rather than serving in the clear.
+- **Per-boot launch counter** in `/tmp` (tmpfs: cleared by a boot, the same
+  lifetime as the relaunch budget). Past **6** serve-mode launches in one boot
+  tuxweb refuses serve mode and passes through, loudly. A build that crashes on
+  launch is thereby bounded to a quarter of the 24 relaunches and the panel
+  keeps a working web server instead of resetting in hardware (`TRAPS.md` §6).
+- **Proven** by `TLS=1 VIA_CONF=1 emu/push-serve-test.sh`: the binary is copied
+  to `Barracuda`, launched with **no arguments**, finds the conf, serves the
+  whole flow over TLS as a permanent server (no 501 — it never unregisters; a
+  relaunch re-registers), the counter reads 1 afterwards, and a launch with the
+  counter pre-set to the bound refused serve mode and tried to pass through.
+  `cargo test` 110 green.
+
 All of the above is on the build VM at `/work/tuxweb-8a` and its harnesses at
 `/work/push-emu`. **The tuxweb side of stage 8 is complete on the bench.**
 Still to do: land the `ha-tuxedo-touch` update (in progress, separately), then

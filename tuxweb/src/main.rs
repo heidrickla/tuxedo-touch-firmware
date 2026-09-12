@@ -16,6 +16,7 @@
 mod accounts;
 mod api;
 mod auth;
+mod conf;
 mod cutover;
 mod deadman;
 mod frame;
@@ -68,21 +69,23 @@ fn plaintext_login_allowed() -> bool {
     std::env::var("TUXWEB_ALLOW_PLAINTEXT_LOGIN").ok().as_deref() == Some("1")
 }
 
+/// Build a TLS config from a chain and key on disk.
+fn tls_from_paths(chain_p: &str, key_p: &str) -> Result<Arc<ServerConfig>, String> {
+    let chain = load_chain(chain_p)?;
+    let key = load_key(key_p)?;
+    ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(chain, key)
+        .map(Arc::new)
+        .map_err(|e| format!("bad certificate/key pair: {e}"))
+}
+
 /// Build a TLS config from TUXWEB_CHAIN and TUXWEB_KEY, or None for plaintext.
 /// Exits rather than silently serving in the clear if one is set and unusable:
 /// a listener that was meant to be encrypted and is not should not start.
 fn tls_from_env() -> Option<Arc<ServerConfig>> {
     let (chain_p, key_p) = (std::env::var("TUXWEB_CHAIN").ok()?, std::env::var("TUXWEB_KEY").ok()?);
-    let build = || -> Result<Arc<ServerConfig>, String> {
-        let chain = load_chain(&chain_p)?;
-        let key = load_key(&key_p)?;
-        ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(chain, key)
-            .map(Arc::new)
-            .map_err(|e| format!("bad certificate/key pair: {e}"))
-    };
-    match build() {
+    match tls_from_paths(&chain_p, &key_p) {
         Ok(c) => { println!("tuxweb: serving TLS from {chain_p}"); Some(c) }
         Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
     }
@@ -348,6 +351,70 @@ fn main() {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     if called_as == "Barracuda" {
+        // Stage 8d: the PERMANENT server, switched on by a conf file on mtd17
+        // (conf.rs). Checked first: while it exists every relaunch serves;
+        // remove it and the next relaunch passes through to the vendor. The
+        // per-boot launch counter bounds a crash loop well inside supervis's
+        // 24-relaunch hardware reset. Env overrides exist only so the bench can
+        // launch this path by hand; supervis passes no environment a shell sets.
+        let conf_path = std::env::var("TUXWEB_SERVE_CONF")
+            .unwrap_or_else(|_| conf::SERVE_CONF.to_string());
+        let counter_path = std::env::var("TUXWEB_LAUNCH_COUNTER")
+            .unwrap_or_else(|_| conf::LAUNCH_COUNTER.to_string());
+        match conf::load(&conf_path) {
+            None => {} // no switch: the window marker / passthrough logic below
+            Some(Err(e)) => {
+                eprintln!("tuxweb: {e}; NOT serving -- passing through to the vendor");
+            }
+            Some(Ok(sc)) => {
+                let n = conf::bump_launches(&counter_path);
+                if n > conf::MAX_LAUNCHES_PER_BOOT {
+                    eprintln!(
+                        "tuxweb: serve mode launched {n} times this boot (limit {}); passing \
+                         through to the vendor to stay clear of the 24-relaunch reset. \
+                         Remove {conf_path} to stop trying.",
+                        conf::MAX_LAUNCHES_PER_BOOT
+                    );
+                } else {
+                    // A configured-but-unusable cert pair must NOT become a
+                    // plaintext server: refuse serve mode and pass through.
+                    let tls = match (&sc.chain, &sc.key) {
+                        (Some(c), Some(k)) => tls_from_paths(c, k).map(Some),
+                        (None, None) => Ok(None),
+                        _ => Err("chain and key must be set together".to_string()),
+                    };
+                    match tls {
+                        Err(e) => eprintln!(
+                            "tuxweb: {e}; NOT serving -- passing through to the vendor"
+                        ),
+                        Ok(tls) => {
+                            println!(
+                                "tuxweb: serve mode from {conf_path} (launch {n} of {} this boot)",
+                                conf::MAX_LAUNCHES_PER_BOOT
+                            );
+                            let cfg = serve::Config {
+                                session: sc.session,
+                                bind: sc.bind,
+                                quickarm: sc.quickarm,
+                                window: None,
+                                redirect_bind: sc.redirect_bind,
+                                token_store: sc.token_store,
+                                tls,
+                            };
+                            match serve::run(cfg) {
+                                Ok(()) => std::process::exit(0),
+                                // Could not even start (queue missing, port held):
+                                // keep the panel a web server by passing through.
+                                Err(e) => eprintln!(
+                                    "tuxweb: serve failed to start: {e}; passing through"
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Launched by supervis under the vendor's name. Almost always this is
         // a passthrough; exactly once, when a window has been armed, it is the
         // cutover. Taking the marker CONSUMES it, so a crash during the window
