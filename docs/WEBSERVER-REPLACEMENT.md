@@ -3188,10 +3188,30 @@ vendor intact at `vendor/Barracuda` (`0066ad95`) so `revert` remains a file
 move and a kill. The `E_SUPVTRD_FTPCLI_RESTART` lines every 10 min are the
 known, harmless missing-binary loop (`TRAPS.md` §6).
 
+**Through Home Assistant, corroborated by a second integration.** With HA in
+tuxweb mode (push connected, capabilities detected), the `ha-management-02`
+session armed STAY and disarmed through the entity on Lewis's go: service 200 →
+`arming` immediately → `armed_home` after the 60 s exit delay → `disarmed`,
+`tuxedo_source: stream` on every transition, never a poll. **The Envisalink
+integration — a different ECP path to the same VISTA — recorded the same
+transitions** (`disarmed 02:50:24 / armed_home 03:00:44 / disarmed 03:01:46`),
+so the arm and disarm were real at the panel, not merely asserted by the entity
+that commanded them. Push held one connection throughout (frames 18 → 200, no
+reconnect). Panel left disarmed. Two health samples (7 min apart, one with HA
+subscribed) both read 11 fds, VmRSS 908 kB, 4 threads, counter 1, no panic.
+
+Recorded so it is not re-derived as a fault: **Envisalink reports `armed_home`
+the instant the command lands; Tuxedo models the exit delay as `arming` and
+reaches `armed_home` 60 s later.** Both are correct (tuxweb's status reads
+`armed:true, "259  Secs Remaining"` in that window, and the integration maps
+armed-with-countdown to HA's `arming`). Anything comparing the two entities for
+agreement sees a legitimate 60-second window where they differ.
+
 That is the proof stage 8 set out to give: **the vendor binary is no longer in
 the request path for anything** — push, status, arm, disarm all served by
-tuxweb from the queues, with the consumer's contract intact. Home Assistant is
-switched by reloading its entry (it then asks for the token on its reauth card).
+tuxweb from the queues, with the consumer's contract intact, witnessed by the
+consumer and by an independent path. **Stage 8 is complete.** Stage 9 waits,
+per its own text, until this has run for a release.
 
 ### Stage 9 — Decommission
 
