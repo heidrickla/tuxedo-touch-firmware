@@ -19,11 +19,15 @@
 //! | 504 (register)| `frame_registration`     | 3 (`frame_registration_filler`) |
 //! | 21  (status)  | `frame_status(quick_arm)`| 3 (`frame_filler`) |
 //! | 18  (typed)   | `frame_typed(+0x08)`     | 0 |
+//! | 20  (LCD)     | `frame_console`          | 3 (`frame_console_unsolicited`) -- from the handler, then the live stream |
+//! | 22  (offline) | `frame_typed(+0x08)`     | 2 (`frame_filler`) -- from the handler only |
 //!
 //! The filler count is per-msgType and 18 genuinely gets none -- the "three
 //! after every status frame" note that used to sit on `ipc::frame_filler` was
 //! too broad, and `every_reply_reproduces_its_captured_run` below is the
-//! evidence.
+//! evidence. The last two rows are not in either fixture: their shape is read
+//! off the vendor handler in the disassembly (addresses in `ipc.rs`), which is
+//! the same standard the 20 met before the live stream confirmed it.
 //!
 //! Connect preamble, identical in both fixtures and reproduced verbatim:
 //! `['setCid',<n>]`, then the `Client Connected` status literal, then
@@ -32,7 +36,6 @@
 //! than from re-registering -- re-registering would flush the reply queue for
 //! every other consumer (B7).
 
-use std::collections::BTreeMap;
 
 use crate::frame::{self, Part};
 use crate::ipc::{self, Reply};
@@ -42,9 +45,16 @@ use crate::ipc::{self, Reply};
 const STATUS_FILLERS: usize = 3; // after a msgType 21
 const REG_FILLERS: usize = 3; // after a msgType 504
 const TYPED_FILLERS: usize = 0; // after a msgType 18
+/// After a msgType 22 (`SERV_PANEL_OFFLINE_MSG_BROADCAST`, the status frame
+/// `/tuxedo` sends instead of a 21 while the VISTA reports itself not online):
+/// TWO `-1` copies, one fewer than a 21. From the vendor handler at `0xd9c4`
+/// (disassembled 2026-09-12: `mvn r7,#0`, then `bprintf` at `0xda40` and
+/// `0xda60`), not a capture -- neither fixture holds a 22, and the panel has
+/// never been seen offline. `ipc::frame_typed` documents the frame itself.
+const OFFLINE_FILLERS: usize = 2;
 /// After a msgType 20 (keypad LCD): three `-1` copies of the raw text follow the
-/// id-20 record. From the vendor handler at `0xdb8c` (decompiled), not a capture
-/// -- the vendor integration never logged a console record, so none exists.
+/// id-20 record. From the vendor handler at `0xdb8c` (decompiled), since
+/// confirmed on the live stream (`emu/lcd-capture.py`).
 const CONSOLE_UNSOLICITED: usize = 3;
 
 /// What a single reply turns into on the wire.
@@ -130,10 +140,29 @@ pub fn on_reply(raw: &[u8], quick_arm: u32) -> Emission {
             }
             Emission::frames(parts)
         }
-        // 22 shares frame_typed's shape with 18 but is the status-when-not-online
-        // variant, and NEITHER fixture contains one -- so its filler count is
-        // unproven. Route it to the diagnostic channel rather than guess; a
-        // capture with a 22 in it promotes this to a real branch.
+        22 => {
+            // The status frame while the VISTA reports itself not online
+            // (busy, downloading, offline): the same /tuxedo function as a 21,
+            // the other branch of its `GetOnlineStatus() == 1` test. Barracuda
+            // formats it with frame_typed's shape -- here the trailing value is
+            // the real +0x08, `-1` when the panel is not talking -- and follows
+            // it with two fillers, not three. Read off the handler at 0xd9c4,
+            // since neither fixture holds one; dropping it silently, which is
+            // what this arm did before it existed, hid the one frame that says
+            // the panel is off the air. Session 0 only, as the vendor gates it.
+            if base.session != 0 {
+                return Emission::unknown(22, raw);
+            }
+            let mut parts = Vec::with_capacity(1 + OFFLINE_FILLERS);
+            parts.push(frame::status_part(&ipc::frame_typed(&base, base.arg)));
+            let filler = frame::status_part(&ipc::frame_filler(&base));
+            for _ in 0..OFFLINE_FILLERS {
+                parts.push(filler.clone());
+            }
+            Emission::frames(parts)
+        }
+        // Anything else has no reading behind it. Route it to the diagnostic
+        // channel rather than guess a shape a consumer would act on.
         other => Emission::unknown(other, raw),
     }
 }
@@ -169,13 +198,22 @@ pub fn connect_preamble(cid: u32, n_clients: u32) -> Vec<Part> {
 pub struct PanelState {
     /// Raw registration (504) reply.
     last_504: Option<Vec<u8>>,
-    /// Latest raw reply per (msgType, arg); arg distinguishes partitions.
-    latest: BTreeMap<(u32, u32), Vec<u8>>,
-    /// The most recent status (21) reply, kept for arm-state queries and command
-    /// confirmation. The state byte here is the same `0xFE`/`0xFF` an armed/
-    /// disarmed transition flips, which is how a command is confirmed to have
-    /// ACTED rather than merely been sent (§4.10.3).
-    last_21: Option<Vec<u8>>,
+    /// The most recent partition-details (18) reply, replayed before the status.
+    last_18: Option<Vec<u8>>,
+    /// The most recent status reply -- a 21, or a 22 while the VISTA reports
+    /// itself not online; the same `/tuxedo` function writes both, with the
+    /// same state byte and text, so they are ONE slot. Kept for arm-state
+    /// queries and command confirmation: the state byte here is the same
+    /// `0xFE`/`0xFF` an armed/disarmed transition flips, which is how a command
+    /// is confirmed to have ACTED rather than merely been sent (§4.10.3).
+    ///
+    /// One slot, not a map keyed on `arg`. An earlier version kept the latest
+    /// reply per `(msgType, arg)` on the reading that `arg` was the partition;
+    /// it is the online status (`ipc::Reply`), so after a `-1` (panel not
+    /// talking) and the recovery to `1` that map held both and replayed the
+    /// stale `-1` LAST to every new subscriber -- a dead link reported to a
+    /// client joining a healthy panel, until the next live status.
+    last_status: Option<Vec<u8>>,
     /// The most recent keypad LCD line (msgType 20), replayed to a new
     /// subscriber so it does not wait for the next display change to know what
     /// the panel is showing. Every change arrives as a 20, so this IS the
@@ -213,12 +251,10 @@ impl PanelState {
         if let Some(r) = Reply::parse(raw) {
             match r.msg_type {
                 504 => self.last_504 = Some(raw.to_vec()),
-                21 | 18 => {
-                    self.latest.insert((r.msg_type, r.arg), raw.to_vec());
-                    if r.msg_type == 21 {
-                        self.last_21 = Some(raw.to_vec());
-                    }
-                }
+                18 => self.last_18 = Some(raw.to_vec()),
+                // 21 and 22 are the one status in its online and offline
+                // flavours; the newer replaces the older whichever it is.
+                21 | 22 => self.last_status = Some(raw.to_vec()),
                 20 if r.session == 0 => self.last_20 = Some(raw.to_vec()),
                 _ => {}
             }
@@ -235,7 +271,7 @@ impl PanelState {
     /// `0xFE` ready/disarmed (`enableDisarmOption()`, §2.5). `None` until a
     /// status has been seen.
     pub fn arm_state_byte(&self) -> Option<u8> {
-        self.last_21.as_ref().and_then(|r| Reply::parse(r)).and_then(|r| r.state_byte())
+        self.last_status.as_ref().and_then(|r| Reply::parse(r)).and_then(|r| r.state_byte())
     }
 
     /// Whether the panel is armed or arming right now (`0xFF`).
@@ -249,7 +285,7 @@ impl PanelState {
     /// go stale (§4.10.3, the defect that started the project).
     pub fn status_json(&self) -> String {
         let partition = self.current_partition();
-        let (armed, display) = match self.last_21.as_ref().and_then(|r| Reply::parse(r)) {
+        let (armed, display) = match self.last_status.as_ref().and_then(|r| Reply::parse(r)) {
             Some(r) => {
                 let armed = r.state_byte() == Some(0xFF);
                 let disp = if r.text.len() > 1 { &r.text[1..] } else { &[][..] };
@@ -276,8 +312,11 @@ impl PanelState {
         if let Some(raw) = &self.last_504 {
             parts.extend(on_reply(raw, quick).parts); // a 504 ignores quick_arm
         }
-        for raw in self.latest.values() {
-            parts.extend(on_reply(raw, quick).parts); // a 21 uses it; an 18 ignores it
+        if let Some(raw) = &self.last_18 {
+            parts.extend(on_reply(raw, quick).parts); // an 18 ignores quick_arm
+        }
+        if let Some(raw) = &self.last_status {
+            parts.extend(on_reply(raw, quick).parts); // a 21 uses it; a 22 ignores it
         }
         if let Some(raw) = &self.last_20 {
             parts.extend(on_reply(raw, quick).parts); // the current LCD line
@@ -431,14 +470,79 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_type_is_diagnosed_not_guessed() {
-        // msgType 22 has no fixture, so it must not be fabricated onto the
-        // legacy stream. It goes to the diagnostic channel with its raw bytes.
-        let raw = raw_reply(0, 22, 1, b"\xfe1Ready To Arm");
+    fn an_offline_status_is_a_typed_frame_and_two_fillers() {
+        // msgType 22, the vendor handler at 0xd9c4: frame_typed's shape with the
+        // real +0x08 trailing, then TWO -1 copies (a 21 gets three). The panel
+        // not talking puts -1 there, and it must reach the wire as "-1".
+        let raw = raw_reply(0, 22, u32::MAX, b"\xfe1Ready To Arm");
         let e = on_reply(&raw, 2);
-        assert!(e.parts.is_empty(), "no fabricated frame for an unproven type");
-        assert_eq!(e.undecoded.as_ref().map(|(t, _)| *t), Some(22));
+        assert!(e.undecoded.is_none(), "a 22 is a status, not a diagnostic");
+        let texts = emitted_texts(&e);
+        assert_eq!(texts.len(), 1 + OFFLINE_FILLERS);
+        assert_eq!(texts[0], b"0:22:\xfe1Ready To Arm:-1".to_vec());
+        assert_eq!(texts[1], b"0:-1:\xfe1Ready To Arm".to_vec());
+        assert_eq!(texts[2], texts[1]);
+        // the quick_arm argument is a 21-only field and must not leak in
+        let e3 = on_reply(&raw_reply(0, 22, 3, b"\xfe1Ready To Arm"), 7);
+        assert_eq!(emitted_texts(&e3)[0], b"0:22:\xfe1Ready To Arm:3".to_vec());
+        // the vendor takes the arm only for session 0
+        let e = on_reply(&raw_reply(5, 22, 3, b"\xfe1Ready To Arm"), 2);
+        assert!(e.parts.is_empty());
+        assert_eq!(e.undecoded.map(|(t, _)| t), Some(22));
+    }
+
+    #[test]
+    fn status_frame_prints_a_negative_arg_as_the_vendor_does() {
+        // +0x08 is -1 while the panel is not talking. bprintf's %d prints it
+        // signed; formatting the u32 gave "4294967295", which no consumer
+        // testing for -1 could ever match. Neither fixture has a negative
+        // field, so the captured-run test never saw this.
+        let raw = raw_reply(0, 21, u32::MAX, b"\xfe1Ready To Arm");
+        let texts = emitted_texts(&on_reply(&raw, 2));
+        assert_eq!(texts[0], b"0:21:-1:fe:\xfe1Ready To Arm:2".to_vec());
+        assert_eq!(texts[1], b"0:-1:\xfe1Ready To Arm".to_vec());
+    }
+
+    #[test]
+    fn an_unknown_type_is_diagnosed_not_guessed() {
+        // A type with no reading behind it goes to the diagnostic channel with
+        // its raw bytes rather than onto the stream in a guessed shape.
+        let raw = raw_reply(0, 23, 1, b"\xfe1Ready To Arm");
+        let e = on_reply(&raw, 2);
+        assert!(e.parts.is_empty(), "no fabricated frame for an unread type");
+        assert_eq!(e.undecoded.as_ref().map(|(t, _)| *t), Some(23));
         assert_eq!(e.undecoded.unwrap().1, raw, "the raw reply is preserved verbatim");
+    }
+
+    #[test]
+    fn a_recovered_link_is_not_replayed_as_dead() {
+        // The (msgType, arg) map this replaced kept a -1 status beside the 1
+        // that superseded it and replayed the -1 last. One slot: the newest
+        // status wins whether it is a 21 or a 22.
+        let mut st = PanelState::new();
+        st.observe(&raw_504(0, 1, b"P1  H", [1, 0, 3, 3]), 0);
+        st.observe(&raw_reply(0, 21, u32::MAX, b"\xfe1Ready To Arm"), 2);
+        st.observe(&raw_reply(0, 22, 3, b"\xfe1Ready To Arm"), 2);
+        st.observe(&raw_reply(0, 21, 1, b"\xfe1Ready To Arm"), 2);
+        let qa = std::env::temp_dir().join(format!("qa-link-{}", std::process::id()));
+        std::fs::write(&qa, "2 0 0 0 0 0 0 0\n").unwrap();
+        let snap = st.snapshot(42, 2, qa.to_str().unwrap());
+        let _ = std::fs::remove_file(&qa);
+        let statuses: Vec<Vec<u8>> = snap
+            .iter()
+            .filter_map(|p| match frame::classify(p) {
+                frame::Message::StatusText(t) if t.starts_with(b"0:21:") || t.starts_with(b"0:22:") => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, vec![b"0:21:1:fe:\xfe1Ready To Arm:2".to_vec()], "only the newest status, once");
+
+        // and a 22 arriving last is the one replayed, with the arm state read from it
+        let mut armed = vec![0xFFu8];
+        armed.extend_from_slice(b"2Armed Stay");
+        st.observe(&raw_reply(0, 22, 4, &armed), 2);
+        assert_eq!(st.is_armed(), Some(true), "a 22 carries the state byte like a 21");
+        assert!(st.status_json().contains("\"armed\":true"));
     }
 
     #[test]

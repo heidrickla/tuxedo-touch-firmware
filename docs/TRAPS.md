@@ -35,6 +35,17 @@ and left sitting there saying the opposite of the truth.
 
 ## 1. Measurement
 
+- **A byte-for-byte replay of the captures only covers values the captures
+  hold.** tuxweb reproduced both push-stream fixtures exactly and still printed
+  the reply's `+0x08` unsigned, because no fixture has the panel off the air:
+  the vendor's `%d` puts `-1` on the wire, tuxweb put `4294967295`, and the
+  consumer's `== -1` test could never match. Same blind spot for msgType 22
+  (never captured, silently dropped) and for a replay cache keyed on a field
+  misread as the partition. When a field can take a value the corpus lacks,
+  read the producer (the decompiler answers `sltSendChangedPartitionStatus` in
+  one call) and add the value to the fake panel — and run the harness against
+  the OLD binary once, so the new oracle is seen to fail on it
+  (`WEBSERVER-REPLACEMENT.md` §8d.2).
 - **Prove the thing you measured is the thing you meant.** A stale
   `qemu-arm-static -strace /opt/webserver/Barracuda` survived
   `pkill -f "qemu-arm-static /opt/webserver/Barracuda"` (the `-strace` breaks
