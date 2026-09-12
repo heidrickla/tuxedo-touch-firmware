@@ -77,6 +77,17 @@ run on Windows — `fcntl`). Detection via `GetCapabilities` (200 ⇒ tuxweb),
 bearer token as a new optional entry field, plain-form arm/disarm/status with
 200 = confirmed / 504 = not confirmed, token on the stream, `login()` refuses
 outright in tuxweb mode so no login can ever be spent against tuxweb.
+`tuxweb-api` is merged to `main` on both remotes. **Follow-on branch
+`keypad-link-changedby` (0.6.0, commit `2f2b863`)** reads what v15 put on the
+stream: a `keypad_display` sensor from the `0:20:2…` console records (only the
+id-20 record decodes; the three id −1 copies are ignored), an ECP-link
+`problem` sensor gated on the `panel_link_state` capability, and a one-shot
+`GetCapabilities` re-check on a tuxweb refusal so a panel rolled back to stock
+is spoken to as stock instead of blamed on the token. `changed_by` was dropped
+on evidence — the LCD never names the user (`emu/lcd-capture.py`). Green
+locally (ruff, mypy, 186 non-HA tests; the HA layer runs only in CI) and handed
+to the HA-management session for push, deploy and live verification; merging it
+to `main` is Lewis's call because `main` reaches HACS.
 
 7a and 7b have **never been run on the panel**. They are bench-proven only, and they
 are the two least consequential, so running them is optional rather than blocking.
