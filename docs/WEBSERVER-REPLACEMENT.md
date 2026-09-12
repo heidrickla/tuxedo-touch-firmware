@@ -3134,19 +3134,36 @@ The window, in order: `phase1` (passthrough install, stage 5 again) → `token`
 `cutover` (writes the serve conf, `kill -9`, tuxweb relaunches permanent;
 expects **2** listeners and 6280/9443 **absent**) → verify from the workstation
 → leave the panel **disarmed**. `revert` at any point: `rm` the conf, vendor
-back, two kills. Verification from the workstation, with `TLS_CA` pointed at
-the owner root (`emu/push_capture_check.py`):
+back, two kills. Verification from the workstation is `emu/stage8-verify.py`
+— standalone sockets + ssl (**`push_capture_check.py` imports `librt` and is
+Linux-only**), every TLS connection verified against the owner root with the
+IP SAN checked:
 
 ```
-TLS_CA=<owner-root.pem> python emu/push_capture_check.py apicall GET  <panel>:443 /system_http_api/API_REV01/GetCapabilities - - 200 '"contract":1'
-TLS_CA=<owner-root.pem> python emu/push_capture_check.py apicall GET  <panel>:443 /system_http_api/API_REV01/GetSecurityStatus - <token> 200 '"armed":false'
-TLS_CA=<owner-root.pem> python emu/push_capture_check.py client       <panel>:443 10 /tmp/panel-push.bin <token>     # then inspect the frames
-python emu/push_capture_check.py redirectget <panel>:80 /authenticated/tuxedoapi.html?url=x                       # 301 https
+python emu/stage8-verify.py --panel <panel> --token <token> --ca ~/.tuxedo-ca/ca.crt
+python emu/stage8-verify.py --panel <panel> --token <token> --arm-cycle <user code>   # opt-in arm STAY -> disarm
 ```
 
-Arm/disarm are exercised through HA (or `apicall POST … ArmWithCode
-'arming=stay&pID=1&ucode=<code>&operation=set' <token> 200 Sucess`, then
-`DisarmWithCode`), watching the push stream flip `0xFE`→`0xFF`→`0xFE`.
+Default checks: capabilities 200 without a token, status with it, push denied
+without / subscribed with the token, `:80` → 301 preserving the path. The
+opt-in arm cycle expects `Sucess` only after the panel confirms, checks the
+status between, and leaves the panel disarmed. **Negative control, 2026-09-12:**
+run against the vendor (behind the passthrough) it fails at the first check
+with `UNSAFE_LEGACY_RENEGOTIATION_DISABLED` — the 1.0.1h stack a modern client
+refuses, i.e. the thing stage 8 fixes — so a pass after cutover means something.
+Arm/disarm are otherwise exercised through HA, watching the stream flip
+`0xFE`→`0xFF`→`0xFE`.
+
+**Pre-cutover TLS check on the panel, 2026-09-12:** the staged build ran the
+stage-3 TLS demo on `:8443` with the panel's own `tls/chain.pem` (2 certs) and
+`server.key`; the workstation negotiated TLS 1.3 / AES-256-GCM, verified the
+chain against the owner root, and the SAN matched `IP:10.10.52.5`. Demo
+stopped, port released. The cutover's TLS leg is therefore proven with this
+exact binary and these exact files before the kill.
+
+**The cutover itself waits on a permission the auto-mode classifier denied**
+for the `kill -9` on the live panel; the rule is never to evade that, so the
+command is handed to Lewis to run or allow.
 
 ### Stage 9 — Decommission
 
