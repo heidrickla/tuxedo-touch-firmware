@@ -223,12 +223,17 @@ cutover() {
     [ -f "$CHAIN" ] && [ -f "$KEY" ] || fail "cert pair missing under $CFG/tls/"
     [ -f "$TOKENS" ] || fail "no token store at $TOKENS -- run 'token' first or HA cannot connect"
     budget || fail "budget"
-    # This script cannot see Home Assistant. The ORDER matters: a stock-mode
-    # integration gets 401 on the push stream here, treats it as an expired
-    # session, and goes looking for a login page tuxweb does not serve. Update
-    # HA to the tuxweb-aware integration and give it the token BEFORE the kill.
-    echo "  ORDER CHECK: HA must already be on the tuxweb-aware integration with the"
-    echo "  token configured (GetCapabilities-detected). If not, revert now (ctrl-c)."
+    # This script cannot see Home Assistant. The ORDER matters. The tuxweb-aware
+    # integration (ha-tuxedo-touch 'tuxweb-api') probes GetCapabilities ONCE, at
+    # entry setup: against the vendor that is a 404, so it is in stock mode now
+    # and stays there until reloaded. Have it installed with the token in the
+    # entry BEFORE the kill; AFTER the kill, reload the entry so it re-probes
+    # (200) and switches to the token + plain-form contract. Until that reload
+    # its stock-mode stream gets a 401 here and it will fail its poll -- that is
+    # expected and harmless (tuxweb serves no login page, so no login is spent).
+    echo "  ORDER CHECK: HA must already run the tuxweb-aware integration with the"
+    echo "  token in the entry. If not, revert now (ctrl-c). After the cutover,"
+    echo "  RELOAD the Tuxedo Touch entry in HA so it re-probes into tuxweb mode."
     sleep 5
 
     # The switch. Written last, seconds before the kill; the launch counter is
@@ -262,7 +267,8 @@ cutover() {
     [ "$(legacy_listeners)" -eq 0 ] || fail "6280/9443 are bound -- that is the vendor, not tuxweb"
     echo "  launch counter: $(cat $COUNTER 2>/dev/null) of 6 this boot"
     trap - EXIT INT TERM
-    say "CUT OVER. Verify from the workstation, then leave the panel DISARMED:"
+    say "CUT OVER. Reload the HA entry, verify from the workstation, leave the panel DISARMED:"
+    echo "  HA:  Settings > Devices & services > Tuxedo Touch > Reload  (re-probes -> tuxweb mode)"
     echo "  GET  https://<panel>/system_http_api/API_REV01/GetCapabilities   -> 200 JSON"
     echo "  push https://<panel>/SimpleDebugger.interface/G. with the token    -> frames"
     echo "  arm STAY then DISARM through HA (or the API with ucode)            -> Sucess, state flips"

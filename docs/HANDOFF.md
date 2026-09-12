@@ -43,8 +43,17 @@ and `emu/stage8-panel.sh` are staged in the panel's `/tmp` (tmpfs — re-stage
 after a reboot) and `phase0` read **READY** on the live panel (budget 8/24, 16
 left, 5 needed). **The window itself is not run** — it needs Lewis at the panel,
 HA on the tuxweb-aware integration with the token first, and the panel left
-disarmed. Runbook order: `phase1` → `token` → configure HA → `cutover` →
-verify → (revert = `rm` the conf + vendor back).
+disarmed. Runbook order: `phase1` → `token` → put the token in the HA entry →
+`cutover` → **reload the HA entry** (it probes `GetCapabilities` once at setup,
+so it stays in stock mode until reloaded) → verify → (revert = `rm` the conf +
+vendor back).
+
+**`ha-tuxedo-touch` is done:** branch `tuxweb-api`, commit `477d2b1`, pushed
+to GitHub + gitea, CI green on Linux with **359 tests** (the HA layer cannot
+run on Windows — `fcntl`). Detection via `GetCapabilities` (200 ⇒ tuxweb),
+bearer token as a new optional entry field, plain-form arm/disarm/status with
+200 = confirmed / 504 = not confirmed, token on the stream, `login()` refuses
+outright in tuxweb mode so no login can ever be spent against tuxweb.
 
 7a and 7b have **never been run on the panel**. They are bench-proven only, and they
 are the two least consequential, so running them is optional rather than blocking.
