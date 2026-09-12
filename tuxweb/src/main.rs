@@ -15,6 +15,7 @@
 
 mod accounts;
 mod api;
+mod auth;
 mod cutover;
 mod deadman;
 mod frame;
@@ -493,6 +494,77 @@ fn main() {
         return;
     }
 
+    // Stage 8b: token admin. Tokens gate the push stream and the write API
+    // (§4.10.1); stored hashed on mtd17, individually revocable (§2.5).
+    //   tuxweb --issue-token <label> [store]
+    //   tuxweb --revoke-token <label> [store]
+    //   tuxweb --list-tokens [store]
+    let tok_cmd = args.get(1).map(String::as_str);
+    if matches!(tok_cmd, Some("--issue-token" | "--revoke-token" | "--list-tokens")) {
+        let cmd = tok_cmd.unwrap();
+        let is_list = cmd == "--list-tokens";
+        let store_idx = if is_list { 2 } else { 3 };
+        let store_path = args
+            .get(store_idx)
+            .cloned()
+            .unwrap_or_else(|| auth::TOKEN_STORE.to_string());
+        let mut store = match auth::TokenStore::load(&store_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("tuxweb: {e}");
+                std::process::exit(1);
+            }
+        };
+        match cmd {
+            "--list-tokens" => {
+                if store.tokens.is_empty() {
+                    println!("no tokens in {store_path}");
+                }
+                for e in &store.tokens {
+                    println!("  {:<20} {}…", e.label, &e.sha256[..e.sha256.len().min(16)]);
+                }
+            }
+            "--issue-token" | "--revoke-token" => {
+                let label = match args.get(2) {
+                    Some(l) => l.clone(),
+                    None => {
+                        eprintln!("usage: {} {cmd} <label> [store]", args[0]);
+                        std::process::exit(2);
+                    }
+                };
+                if cmd == "--issue-token" {
+                    match store.issue(&label) {
+                        Ok(token) => {
+                            if let Err(e) = store.save(&store_path) {
+                                eprintln!("tuxweb: {e}");
+                                std::process::exit(1);
+                            }
+                            println!("issued token for {label:?}, stored hashed in {store_path}:");
+                            println!("{token}");
+                            println!(
+                                "Shown ONCE -- configure the consumer with it now; it cannot be recovered."
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("tuxweb: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                } else if store.revoke(&label) {
+                    if let Err(e) = store.save(&store_path) {
+                        eprintln!("tuxweb: {e}");
+                        std::process::exit(1);
+                    }
+                    println!("revoked {label:?}");
+                } else {
+                    println!("no token labelled {label:?} in {store_path}");
+                }
+            }
+            _ => unreachable!(),
+        }
+        return;
+    }
+
     // Stage 6, the IPC cutover. Read-only, bounded, hands the panel back.
     //   tuxweb --cutover <vendor-binary> [seconds] [logfile]
     if args.len() >= 3 && args[1] == "--cutover" {
@@ -557,6 +629,10 @@ fn main() {
             // On the panel this is 0.0.0.0:80; a bench uses a high port. Env so
             // the positional args stay stable. 6280/9443 are never bound (§1.5).
             redirect_bind: std::env::var("TUXWEB_REDIRECT_BIND").ok().filter(|s| !s.is_empty()),
+            token_store: std::env::var("TUXWEB_TOKEN_STORE")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| auth::TOKEN_STORE.to_string()),
         };
         match serve::run(cfg) {
             Ok(()) => std::process::exit(0),
@@ -637,6 +713,8 @@ fn main() {
         eprintln!("       {0} --cutover <vendor-path> [window-secs] [log]", args[0]);
         eprintln!("       {0} --push-capture <session> <secs> <out> [quickarm]", args[0]);
         eprintln!("       {0} --serve <session> <bind> [window-secs] [quickarm]", args[0]);
+        eprintln!("       {0} --issue-token <label> [store]", args[0]);
+        eprintln!("       {0} --revoke-token <label> [store] | --list-tokens [store]", args[0]);
         eprintln!("       {0} --passthrough <args...>", args[0]);
         eprintln!();
         eprintln!("Installed as .../Barracuda it execs the vendor (passthrough),");

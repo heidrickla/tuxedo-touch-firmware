@@ -23,16 +23,21 @@ Panel on v14 (`0066ad95`), 4/4 listeners, disarmed, budget 8 of 24 this boot.
 | 8 | **in progress** — decomposed 8a–8d (`WEBSERVER-REPLACEMENT.md`). 8a DONE, 8b/8c bench pieces done and emu-proven, see below |
 | 9 | not started — decommission |
 
-**Stage 8 progress this session (UNCOMMITTED — working tree + `/work/tuxweb-8a`
-on the VM).** New in `tuxweb/src`: `push.rs` (push stream generated from IPC
-replies, byte-verified vs both fixtures), `session.rs` (`--push-capture`),
-`serve.rs` (`--serve`, the production push path with the B5 reader-thread split),
-`redirect.rs` (80→301), `api.rs` (capability endpoint + vendor response shapes).
-`cargo test` 96 green; `emu/push-capture-test.sh` and `emu/push-serve-test.sh`
-both pass on the VM. Remaining: wire `api.rs`→queue, tuxweb's own auth (§4.10.1,
-against `accounts.rs`), TLS + the 80 listener in one process with the deadman
-OFF, then the 8d cutover window (needs Lewis at the panel). Committing is Lewis's
-call.
+**Stage 8 progress this session — on branch `stage8-webserver`.** New in
+`tuxweb/src`: `push.rs` (push stream generated from IPC replies, byte-verified vs
+both fixtures), `session.rs` (`--push-capture`), `serve.rs` (`--serve`: the
+permanent server — B5 reader-thread split, token-gated push with snapshot +
+live fan-out, the typed API wired to the queue with confirmation, the 80→301
+leg), `redirect.rs`, `api.rs` (capability endpoint, vendor response shapes,
+routing), `auth.rs` (admin-issued bearer tokens, hashed on mtd17;
+`--issue-token`/`--revoke-token`/`--list-tokens`). `cargo test` 105 green;
+`emu/push-capture-test.sh` and `emu/push-serve-test.sh` (full auth + arm/disarm
+flow against a reactive fake `/tuxedo`) both pass on the VM. **Decision (Lewis):
+new simpler API + token auth, `ha-tuxedo-touch` updated to use it** — not a
+reimplementation of the vendor's AES/HMAC API. Remaining: TLS on the serve
+listener (a `Sink::accept` away; needs the stage-4 cert path to exercise), land
+the `ha-tuxedo-touch` update, then the 8d cutover window (needs Lewis at the
+panel).
 
 7a and 7b have **never been run on the panel**. They are bench-proven only, and they
 are the two least consequential, so running them is optional rather than blocking.

@@ -151,6 +151,28 @@ pub struct PanelState {
     last_504: Option<Vec<u8>>,
     /// Latest raw reply per (msgType, arg); arg distinguishes partitions.
     latest: BTreeMap<(u32, u32), Vec<u8>>,
+    /// The most recent status (21) reply, kept for arm-state queries and command
+    /// confirmation. The state byte here is the same `0xFE`/`0xFF` an armed/
+    /// disarmed transition flips, which is how a command is confirmed to have
+    /// ACTED rather than merely been sent (§4.10.3).
+    last_21: Option<Vec<u8>>,
+}
+
+/// Minimal JSON string escaping for a value taken from panel text.
+fn json_escape(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o
 }
 
 impl PanelState {
@@ -167,11 +189,46 @@ impl PanelState {
                 504 => self.last_504 = Some(raw.to_vec()),
                 21 | 18 => {
                     self.latest.insert((r.msg_type, r.arg), raw.to_vec());
+                    if r.msg_type == 21 {
+                        self.last_21 = Some(raw.to_vec());
+                    }
                 }
                 _ => {}
             }
         }
         on_reply(raw, quick_arm)
+    }
+
+    /// The current arm-state byte from the latest status: `0xFF` armed/arming,
+    /// `0xFE` ready/disarmed (`enableDisarmOption()`, §2.5). `None` until a
+    /// status has been seen.
+    pub fn arm_state_byte(&self) -> Option<u8> {
+        self.last_21.as_ref().and_then(|r| Reply::parse(r)).and_then(|r| r.state_byte())
+    }
+
+    /// Whether the panel is armed or arming right now (`0xFF`).
+    pub fn is_armed(&self) -> Option<bool> {
+        self.arm_state_byte().map(|b| b == 0xFF)
+    }
+
+    /// A JSON status object for the read-only status endpoint (`status_refresh`).
+    /// Reports the current partition, whether armed, and the display text (the
+    /// bytes after the state byte). Built from the model, so there is no cache to
+    /// go stale (§4.10.3, the defect that started the project).
+    pub fn status_json(&self) -> String {
+        let partition = self.current_partition();
+        let (armed, display) = match self.last_21.as_ref().and_then(|r| Reply::parse(r)) {
+            Some(r) => {
+                let armed = r.state_byte() == Some(0xFF);
+                let disp = if r.text.len() > 1 { &r.text[1..] } else { &[][..] };
+                (armed, String::from_utf8_lossy(disp).to_string())
+            }
+            None => (false, String::new()),
+        };
+        format!(
+            "{{\"partition\":{partition},\"armed\":{armed},\"state\":\"{}\"}}",
+            json_escape(&display)
+        )
     }
 
     /// Parts to hand a newly connected client: the preamble, then current state.
@@ -358,6 +415,29 @@ mod tests {
         assert!(text_of(b"504:1:P1  H"), "registration must be replayed");
         assert!(text_of(b"2Armed Stay:7"), "latest status replayed WITH the file's quick_arm");
         assert!(!text_of(b"1Ready To Arm"), "the superseded status must not be");
+    }
+
+    #[test]
+    fn arm_state_and_status_track_the_latest_21() {
+        let mut st = PanelState::new();
+        assert_eq!(st.arm_state_byte(), None, "no status seen yet");
+        assert_eq!(st.is_armed(), None);
+        st.observe(&raw_504(0, 1, b"P1  H", [1, 0, 3, 3]), 0);
+
+        let mut ready = vec![0xFEu8];
+        ready.extend_from_slice(b"1Ready To Arm");
+        st.observe(&raw_reply(0, 21, 1, &ready), 2);
+        assert_eq!(st.is_armed(), Some(false));
+        assert!(st.status_json().contains("\"armed\":false"));
+        assert!(st.status_json().contains("\"partition\":1"));
+        assert!(st.status_json().contains("Ready To Arm"));
+
+        let mut armed = vec![0xFFu8];
+        armed.extend_from_slice(b"2Armed Stay");
+        st.observe(&raw_reply(0, 21, 1, &armed), 2);
+        assert_eq!(st.arm_state_byte(), Some(0xFF));
+        assert_eq!(st.is_armed(), Some(true));
+        assert!(st.status_json().contains("\"armed\":true"), "{}", st.status_json());
     }
 
     #[test]

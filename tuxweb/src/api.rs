@@ -46,6 +46,8 @@ pub enum Action {
     Arm { code: u32 },
     /// `POST /…/AdvancedSecurity/DisarmWithCode`.
     Disarm,
+    /// `GET|POST /…/GetSecurityStatus` — read-only, served from the state model.
+    Status,
     /// A known endpoint reached with the wrong method → 405.
     MethodNotAllowed,
     /// Anything else inside the API namespace → 404, the permanent absence
@@ -88,6 +90,14 @@ pub fn classify(method: &str, target: &str, arm_code: u32) -> Action {
         "/AdvancedSecurity/DisarmWithCode" => {
             if method.eq_ignore_ascii_case("POST") {
                 Action::Disarm
+            } else {
+                Action::MethodNotAllowed
+            }
+        }
+        "/GetSecurityStatus" => {
+            // Read-only; the vendor client POSTs it, but a GET is just as safe.
+            if method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("POST") {
+                Action::Status
             } else {
                 Action::MethodNotAllowed
             }
@@ -233,6 +243,22 @@ mod tests {
         // GET on a write endpoint is a 405, never a silent no-op
         assert_eq!(
             classify("GET", "/system_http_api/API_REV01/AdvancedSecurity/ArmWithCode", 0),
+            Action::MethodNotAllowed
+        );
+    }
+
+    #[test]
+    fn status_is_routed_for_get_and_post() {
+        assert_eq!(
+            classify("GET", "/system_http_api/API_REV01/GetSecurityStatus", 0),
+            Action::Status
+        );
+        assert_eq!(
+            classify("POST", "/system_http_api/API_REV01/GetSecurityStatus", 0),
+            Action::Status
+        );
+        assert_eq!(
+            classify("DELETE", "/system_http_api/API_REV01/GetSecurityStatus", 0),
             Action::MethodNotAllowed
         );
     }

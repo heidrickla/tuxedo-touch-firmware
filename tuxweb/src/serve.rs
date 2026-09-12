@@ -26,7 +26,7 @@
 //! fills to 32 and flushes (B5) and the state model goes stale. Broadcasting to
 //! zero subscribers is a no-op; draining is not optional.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -63,7 +63,15 @@ pub struct Config {
     /// `None` binds no redirect listener. On the panel this is `0.0.0.0:80`; a
     /// bench test uses a high port. 6280 and 9443 are never bound (§1.5).
     pub redirect_bind: Option<String>,
+    /// The token store path (`auth.rs`). The push stream and the write API are
+    /// gated on a token from it (§4.10.1); an empty store authenticates nobody.
+    pub token_store: String,
 }
+
+/// How long to wait for an arm/disarm to be confirmed by a state-byte flip on
+/// the push stream. The consumer's own client waits ~1.5–1.8 s against an 8 s
+/// ceiling (`ha-tuxedo-touch/api.py`); match the ceiling.
+const CONFIRM_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// The plaintext `301` leg. Every connection is read once and answered with a
 /// redirect to https (or a 400); no keep-alive, no state -- port 80 does exactly
@@ -104,23 +112,6 @@ fn command(session: u32, code: u32) -> Vec<u8> {
     v
 }
 
-/// `501` for an API endpoint this cut routes but does not yet serve. Honest:
-/// returning `api::arm_success()` here would tell a client the panel armed when
-/// nothing was sent. Arm/disarm need the queue-dispatch and the auth gate first.
-fn api_not_implemented() -> Vec<u8> {
-    let body = b"{\"Status\":\"Not Implemented\"}";
-    let mut v = format!(
-        "HTTP/1.1 501 Not Implemented\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\r\n",
-        body.len()
-    )
-    .into_bytes();
-    v.extend_from_slice(body);
-    v
-}
-
 /// Write the parts to a sink; true if it stayed writable.
 fn write_parts(sink: &mut Sink, parts: &[crate::frame::Part]) -> bool {
     let mut out = Vec::new();
@@ -130,19 +121,182 @@ fn write_parts(sink: &mut Sink, parts: &[crate::frame::Part]) -> bool {
     sink.write_all(&out).is_ok() && sink.flush().is_ok()
 }
 
+/// `401`, a real status with an empty body -- shaped so a stream client sees the
+/// denial rather than reading a login page to EOF (the P13 failure mode).
+fn unauthorized() -> Vec<u8> {
+    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+}
+
+fn json_response(status: &str, body: &[u8]) -> Vec<u8> {
+    let mut v = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    v.extend_from_slice(body);
+    v
+}
+
+/// `Content-Length` of a request head, or 0 if absent/unparseable.
+fn content_length(head: &str) -> usize {
+    crate::proxy::header(head, "content-length")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Read the full request body: the bytes already read with the head, plus enough
+/// more from the socket to reach `want`. Bounded so a lying Content-Length cannot
+/// make us read forever.
+fn read_body(sink: &mut Sink, already: &[u8], want: usize) -> Vec<u8> {
+    let want = want.min(64 * 1024);
+    let mut body = already.to_vec();
+    let mut buf = [0u8; 2048];
+    while body.len() < want {
+        match sink.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => body.extend_from_slice(&buf[..n]),
+            Err(_) => break,
+        }
+    }
+    body.truncate(want.max(body.len().min(want)));
+    body
+}
+
+/// Get a value from an `application/x-www-form-urlencoded` body, url-decoded.
+fn form_get(body: &str, key: &str) -> Option<String> {
+    for pair in body.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == key {
+                return Some(url_decode(v));
+            }
+        }
+    }
+    None
+}
+
+fn url_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < b.len() => {
+                let hex = std::str::from_utf8(&b[i + 1..i + 3]).ok();
+                match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                    Some(byte) => {
+                        out.push(byte);
+                        i += 3;
+                    }
+                    None => {
+                        out.push(b[i]);
+                        i += 1;
+                    }
+                }
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// Wait for the panel's arm-state byte to reach `target` (`0xFF` armed/arming,
+/// `0xFE` disarmed), i.e. for the command to have ACTED rather than merely been
+/// sent (§4.10.3). Returns whether it was seen within the ceiling.
+fn confirm(state: &Arc<Mutex<PanelState>>, target: u8) -> bool {
+    let deadline = Instant::now() + CONFIRM_TIMEOUT;
+    loop {
+        if state.lock().unwrap().arm_state_byte() == Some(target) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Serve an arm or disarm: send the command, then wait for the panel to confirm
+/// it acted (a state-byte flip on the push stream). The pin comes from the
+/// request body (`ucode`), as the consumer sends it. Response keeps the vendor
+/// JSON shapes (§4.10.4): arm's inner key is `Response`, disarm's is `Result`.
+fn handle_security(
+    action: &crate::api::Action,
+    form: &str,
+    session: u32,
+    commands: &Queue,
+    state: &Arc<Mutex<PanelState>>,
+) -> Vec<u8> {
+    let ucode: u32 = form_get(form, "ucode").and_then(|v| v.parse().ok()).unwrap_or(0);
+    // A command with code 0 is DECLINED, and the declined path changes panel
+    // state before its own guard (register.rs) -- refuse before sending.
+    if ucode == 0 {
+        return json_response(
+            "400 Bad Request",
+            b"{\"Status\":\"Failure\",\"Result\":{\"Response\":\"a user code is required\"}}",
+        );
+    }
+    let (code, target, disarm) = match action {
+        crate::api::Action::Arm { .. } => {
+            let level = form_get(form, "arming").unwrap_or_default();
+            (crate::api::arm_code_for(&level), 0xFFu8, false)
+        }
+        crate::api::Action::Disarm => (cmd::DISARM, 0xFEu8, true),
+        _ => return json_response("500 Internal Server Error", b"{\"Status\":\"Failure\"}"),
+    };
+    let msg = Command { head: session, code, p1: 0, p2: ucode }.encode();
+    if let Err(e) = commands.send(&msg) {
+        eprintln!("serve: command {code} send failed: {e}");
+        return json_response(
+            "502 Bad Gateway",
+            b"{\"Status\":\"Failure\",\"Result\":{\"Response\":\"could not reach the panel\"}}",
+        );
+    }
+    if !confirm(state, target) {
+        // Sent, but not confirmed within the ceiling. Say so rather than the
+        // vendor's unconditional Sucess -- the whole point of command_result.
+        return json_response(
+            "504 Gateway Timeout",
+            b"{\"Status\":\"Failure\",\"Result\":{\"Response\":\"command sent but not confirmed\"}}",
+        );
+    }
+    if disarm {
+        crate::api::disarm_success("Disarmed")
+    } else {
+        crate::api::arm_success()
+    }
+}
+
 /// Register, serve the push stream from IPC for the window, unregister.
 pub fn run(cfg: Config) -> Result<(), String> {
     if cfg.session == 0 {
         return Err("session id must be non-zero; zero is accepted and then ignored".into());
     }
 
-    let commands = Queue::open(COMMANDS, false)?;
+    let commands = Arc::new(Queue::open(COMMANDS, false)?);
     let replies = Queue::open(REPLIES, true)?;
     let attr = replies.attr()?;
     println!(
         "serve: replies maxmsg={} msgsize={} curmsgs={}",
         attr.maxmsg, attr.msgsize, attr.curmsgs
     );
+
+    let store = Arc::new(crate::auth::TokenStore::load(&cfg.token_store)?);
+    match store.tokens.len() {
+        0 => println!(
+            "serve: *** token store {} has NO tokens -- the push stream and the write \
+             API will deny everyone until one is issued (tuxweb --issue-token) ***",
+            cfg.token_store
+        ),
+        n => println!("serve: {n} token(s) loaded from {}", cfg.token_store),
+    }
 
     let state = Arc::new(Mutex::new(PanelState::new()));
     let clients: Arc<Mutex<Vec<Sink>>> = Arc::new(Mutex::new(Vec::new()));
@@ -184,15 +338,14 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
     // Accept thread: gate the push path, hand the new client current state, enrol.
     let listener = TcpListener::bind(&cfg.bind).map_err(|e| format!("bind {}: {e}", cfg.bind))?;
-    println!("serve: push stream on {} (from IPC, no Barracuda)", cfg.bind);
-    println!(
-        "serve: *** push path is OPEN on this cut -- the auth gate (§4.10.1) \
-         layers on here ***"
-    );
+    println!("serve: push + API on {} (from IPC, no Barracuda)", cfg.bind);
     let acc_clients = Arc::clone(&clients);
     let acc_state = Arc::clone(&state);
     let acc_cid = Arc::clone(&cid);
     let acc_quickarm = cfg.quickarm.clone();
+    let acc_store = Arc::clone(&store);
+    let acc_commands = Arc::clone(&commands);
+    let acc_session = cfg.session;
     let accept = std::thread::spawn(move || {
         for s in listener.incoming() {
             let raw = match s {
@@ -210,7 +363,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
             let _ = raw.set_read_timeout(Some(Duration::from_secs(10)));
             let _ = raw.set_write_timeout(Some(Duration::from_secs(5)));
             let mut sink = Sink::Plain(raw);
-            let (head, _body) = match crate::proxy::read_head(&mut sink, 16 * 1024) {
+            let (head, body0) = match crate::proxy::read_head(&mut sink, 16 * 1024) {
                 Ok(h) => h,
                 Err(e) => {
                     eprintln!("serve: {peer}: {e}");
@@ -218,41 +371,60 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 }
             };
             let target = crate::proxy::path(&head);
-            if !target.starts_with(PUSH_PATH) {
-                // Not the push path. The typed API is answered here; the
-                // capability endpoint is served directly (no queue, session-
-                // optional), arm/disarm are routed but 501 until the queue
-                // dispatch and auth land, and everything else is a 404.
-                let method = head.split_whitespace().next().unwrap_or("");
-                let resp = if target.starts_with("/system_http_api/") {
-                    match crate::api::classify(method, target, 0) {
-                        crate::api::Action::Capabilities => crate::api::capabilities_response(),
-                        crate::api::Action::MethodNotAllowed => crate::api::method_not_allowed(),
-                        crate::api::Action::Arm { .. } | crate::api::Action::Disarm => {
-                            api_not_implemented()
-                        }
-                        crate::api::Action::NotFound => crate::api::not_found(),
+            let method = head.split_whitespace().next().unwrap_or("");
+            // A valid token from the header (bearer or cookie). The push stream
+            // and the write API require it (§4.10.1); GetCapabilities does not.
+            let authed = crate::auth::token_from_head(&head)
+                .map(|t| acc_store.is_valid(&t))
+                .unwrap_or(false);
+
+            // The push stream.
+            if target.starts_with(PUSH_PATH) {
+                if !authed {
+                    let _ = sink.write_all(&unauthorized());
+                    let _ = sink.flush();
+                    eprintln!("serve: {peer}: push denied, no valid token");
+                    continue;
+                }
+                if sink.write_all(HEAD).is_err() || sink.flush().is_err() {
+                    continue;
+                }
+                // Current state before enrolling, so the client is never behind.
+                let my_cid = acc_cid.fetch_add(1, Ordering::Relaxed);
+                let n = acc_clients.lock().unwrap().len() as u32 + 1;
+                let snapshot = acc_state.lock().unwrap().snapshot(my_cid, n, &acc_quickarm);
+                if !write_parts(&mut sink, &snapshot) {
+                    continue;
+                }
+                println!("serve: {peer} subscribed (cid {my_cid}, {n} client(s))");
+                acc_clients.lock().unwrap().push(sink);
+                continue;
+            }
+
+            // The typed API.
+            let resp = if target.starts_with("/system_http_api/") {
+                match crate::api::classify(method, target, 0) {
+                    // Session-optional: 200 on custom is how a client tells us
+                    // apart from stock (§4.10.6), so it must not require a token.
+                    crate::api::Action::Capabilities => crate::api::capabilities_response(),
+                    crate::api::Action::MethodNotAllowed => crate::api::method_not_allowed(),
+                    crate::api::Action::NotFound => crate::api::not_found(),
+                    // The rest require a token.
+                    _ if !authed => unauthorized(),
+                    crate::api::Action::Status => {
+                        json_response("200 OK", acc_state.lock().unwrap().status_json().as_bytes())
                     }
-                } else {
-                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                        .to_vec()
-                };
-                let _ = sink.write_all(&resp);
-                let _ = sink.flush();
-                continue;
-            }
-            if sink.write_all(HEAD).is_err() || sink.flush().is_err() {
-                continue;
-            }
-            // Current state before enrolling, so the client is never behind.
-            let my_cid = acc_cid.fetch_add(1, Ordering::Relaxed);
-            let n = acc_clients.lock().unwrap().len() as u32 + 1;
-            let snapshot = acc_state.lock().unwrap().snapshot(my_cid, n, &acc_quickarm);
-            if !write_parts(&mut sink, &snapshot) {
-                continue;
-            }
-            println!("serve: {peer} subscribed (cid {my_cid}, {n} client(s))");
-            acc_clients.lock().unwrap().push(sink);
+                    action @ (crate::api::Action::Arm { .. } | crate::api::Action::Disarm) => {
+                        let body = read_body(&mut sink, &body0, content_length(&head));
+                        let form = String::from_utf8_lossy(&body);
+                        handle_security(&action, &form, acc_session, &acc_commands, &acc_state)
+                    }
+                }
+            } else {
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+            };
+            let _ = sink.write_all(&resp);
+            let _ = sink.flush();
         }
     });
 
@@ -320,6 +492,7 @@ mod tests {
             quickarm: "/nonexistent".into(),
             window: Some(Duration::from_millis(1)),
             redirect_bind: None,
+            token_store: "/nonexistent".into(),
         })
         .unwrap_err();
         assert!(e.contains("non-zero"), "{e}");

@@ -3033,30 +3033,56 @@ disarm drops `arming`; status is `operation=get`. The pin is in the body, per
 request. The push path, by contrast, authenticates on the **session cookie
 alone** (their `api.py`: no authtoken, no identity, no encrypted body).
 
-So serving arm/disarm/status forks, and it is Lewis's call because it decides a
-large, security-sensitive layer and whether the *current* integration keeps
-working at cutover:
+So serving arm/disarm/status forked: reimplement the vendor's encrypted API and
+login/crypto for drop-in compatibility, or serve a new simpler API and update the
+integration. **DECIDED 2026-09-11 (Lewis): the new API.** It coheres with
+§1.5/§2.5 ("replaced, not reimplemented"; "migrates at its own pace") and avoids
+rebuilding the SharkSSL-era layer the plan dropped. The push stream stays
+byte-identical so state visibility survives cutover regardless; the integration
+update lands alongside.
 
-- **(A) Reimplement the vendor's encrypted API + login/crypto** — `/tuxedoapi.html`
-  key/IV handout, the challenge/HMAC login, `authtoken` verification, AES of the
-  request/response. The shipped `ha-tuxedo-touch` then arms unchanged. Large, and
-  it rebuilds precisely the SharkSSL-era layer §1.5 chose to drop.
-- **(B) A new, simpler API + auth**, detected via `GetCapabilities`, with
-  `ha-tuxedo-touch` (also Lewis's) updated to use it. Coheres with §1.5/§2.5
-  ("replaced, not reimplemented"; "migrates at its own pace"). The push stream
-  stays byte-identical so **state visibility survives cutover**; arm/disarm from
-  HA would need the integration update to land first (or a window where the
-  vendor still serves control).
+#### Stage 8b — DONE and bench-proven 2026-09-11: token auth + the write API
 
-§4.10.4 pins the vendor arm *paths and response shapes* as invariants, which a
-hybrid could keep while changing the transport. This is not decided; `api.rs`
-currently returns `501` for arm/disarm rather than guess. **Also unbuilt until
-this is settled:** tuxweb's own login/session issuance, which the push-path auth
-gate (§4.10.1) also needs (the push client's cookie comes from that login).
+- **`auth.rs` — admin-issued bearer token, hashed on disk.** No `/tuxedoapi.html`
+  key handout, no challenge/HMAC login, no AES. `tuxweb --issue-token <label>`
+  mints 256 bits from the CSPRNG, prints it ONCE and stores only its SHA-256 in
+  `/opt/tuxedo/configuration/tuxweb-tokens.json` (mtd17, survives a reflash).
+  `--revoke-token`, `--list-tokens`. Validation is constant-time over every
+  entry. A corrupt store is an error, not an empty one — an empty store
+  authenticates nobody, which would read as "auth is off".
+- **Presented as** `Authorization: Bearer <t>` or `Cookie: tuxweb_token=<t>`.
+  Required on the push stream (§4.10.1) and on arm/disarm/status; **not** on
+  `GetCapabilities`, which must stay session-optional so detection cannot cost a
+  login (§4.10.6).
+- **The write API is plaintext form, the vendor's paths and response shapes.**
+  `POST …/AdvancedSecurity/ArmWithCode` body `arming=<stay|away|night>&pID=&ucode=&operation=set`,
+  `DisarmWithCode` without `arming`, `GET|POST …/GetSecurityStatus` →
+  `{"partition","armed","state"}` from the live model (no cache to go stale —
+  §4.10.3's first free win). The pin is `ucode` in the body, per request, as the
+  consumer sends it; `ucode` missing/0 is refused with 400 before anything is
+  sent, because code 0 is DECLINED and the declined path changes state before
+  its guard (register.rs).
+- **`Sucess` now means the panel ACTED** (§4.10.3, `command_result`): after
+  sending, tuxweb waits up to 8 s for the state byte to flip (`0xFF` arm,
+  `0xFE` disarm) on the push path — the same signal the consumer's own client
+  waits on — and returns the vendor-shaped body only then; otherwise 504
+  `command sent but not confirmed`. Known limit: a re-arm to a different level
+  while already armed (both `0xFF`) confirms immediately without proving the
+  level changed; the display text would distinguish it.
+- **Proven** by `emu/push-serve-test.sh` against a *reactive* fake `/tuxedo`
+  (an arm command produces an Armed status, a disarm a Ready one, every command
+  logged): 401 without a token, subscribed with one, capability without a token,
+  status, arm → `Sucess` after confirmation → `armed:true`, disarm →
+  `Sucess` (`Result` key) → `armed:false`, 401/400/404 negatives, 301 on 80;
+  the subscriber saw the snapshot then the LIVE armed and ready frames (16,
+  byte-correct); the queue saw exactly `500, (2,1234), (3,1234), 501` — ARM_STAY
+  with the user code at `+0x0C`, in order. `cargo test` 105 green.
 
 All of the above is on the build VM at `/work/tuxweb-8a` and its harnesses at
-`/work/push-emu`; `cargo test` is 96 green, `emu/push-capture-test.sh` and
-`emu/push-serve-test.sh` both pass.
+`/work/push-emu`. Still to do for stage 8: TLS on the serve listener (rustls is
+proven since stage 3; it is a `Sink::accept` away, and needs the cert path from
+stage 4 to exercise), the `ha-tuxedo-touch` update (in progress, separately),
+then the 8d window.
 
 ### Stage 9 — Decommission
 
