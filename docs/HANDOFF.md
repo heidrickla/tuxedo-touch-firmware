@@ -20,8 +20,19 @@ Panel on v14 (`0066ad95`), 4/4 listeners, disarmed, budget 8 of 24 this boot.
 | 7a, 7b | bench-proven (`emu/stage7-test.sh`) |
 | 7c | **PASSES on the panel** — console mode streamed real console text |
 | 7d | **PASSES on the panel** — `VALID USER CODE`, armed STAY, disarmed |
-| 8 | not started — retire the proxy, port 80 becomes 301-only |
+| 8 | **in progress** — decomposed 8a–8d (`WEBSERVER-REPLACEMENT.md`). 8a DONE, 8b/8c bench pieces done and emu-proven, see below |
 | 9 | not started — decommission |
+
+**Stage 8 progress this session (UNCOMMITTED — working tree + `/work/tuxweb-8a`
+on the VM).** New in `tuxweb/src`: `push.rs` (push stream generated from IPC
+replies, byte-verified vs both fixtures), `session.rs` (`--push-capture`),
+`serve.rs` (`--serve`, the production push path with the B5 reader-thread split),
+`redirect.rs` (80→301), `api.rs` (capability endpoint + vendor response shapes).
+`cargo test` 96 green; `emu/push-capture-test.sh` and `emu/push-serve-test.sh`
+both pass on the VM. Remaining: wire `api.rs`→queue, tuxweb's own auth (§4.10.1,
+against `accounts.rs`), TLS + the 80 listener in one process with the deadman
+OFF, then the 8d cutover window (needs Lewis at the panel). Committing is Lewis's
+call.
 
 7a and 7b have **never been run on the panel**. They are bench-proven only, and they
 are the two least consequential, so running them is optional rather than blocking.

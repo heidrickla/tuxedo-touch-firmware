@@ -2929,6 +2929,135 @@ removed. Port 80 becomes 301-only. `push.legacy_plaintext` defaults to false.
 **Revert:** re-enable proxy mode (the code is still there this stage), or `mv`
 the vendor binary back.
 
+#### Stage 8 is not one change — the decomposition
+
+The one-paragraph change above understates it. Stage 8 is the first time tuxweb
+becomes the **permanent** web server: until now it has only ever run in bounded
+windows (6/7) or on a spare port (3). And B1 (the reply queue is single-reader)
+makes it **all-or-nothing at the IPC layer** — the instant tuxweb registers for
+real, Barracuda cannot run, so there is no "move endpoints across one at a time"
+here. That is why it needs the same kind of split stage 7 got:
+
+| sub-stage | where | what |
+|---|---|---|
+| **8a** | bench | persistent IPC session **generates the push stream from replies** (no Barracuda). **DONE — see below.** |
+| 8b | bench | typed API from IPC (arm/disarm/status/zones) + tuxweb's own auth against the account store; own sessions/tokens. **Capability endpoint + vendor response shapes done (`api.rs`); API→queue wiring and auth still to do.** |
+| 8c | bench→emu | production serve mode: bind 80 (301-only) + 443, do **not** bind 6280/9443, deadman OFF (permanent), `push.legacy_plaintext=false`, proxy mode kept compiled in as the revert; reader-thread/ring split (B5). **Push path (`serve.rs`) + the 80→301 leg (`redirect.rs`) done and emu-proven; TLS/API/auth assembly still to do.** |
+| 8d | **window** | the cutover: stage the build, retire the vendor, verify push+arm+disarm+status end-to-end from HA, leave disarmed. Revert = `mv` the vendor back. **Not started — needs Lewis at the panel.** |
+
+The browser UI is a **separate rewrite** (§1.4, §1.5) and does not gate "vendor
+out of the request path"; the only hard compatibility surface is HA's (§2.5:
+byte-identical push + arm/disarm/status by command code).
+
+#### Stage 8a — the push stream now comes from IPC, bench-proven 2026-09-11
+
+`tuxweb/src/push.rs` generates the legacy frames from the 556-byte replies using
+the byte-verified `ipc::frame_*` builders, and `tuxweb/src/session.rs`
+(`--push-capture`) registers, receives, and emits them. What was pinned, and how:
+
+- **The emission pattern is measured, not assumed.** Over BOTH capture fixtures:
+  a msgType **21** emits `frame_status` + **3** `frame_filler`; a **504** emits
+  `frame_registration` + **3** `frame_registration_filler`; an **18** emits
+  `frame_typed` + **0** fillers. The "three after every status frame" note on
+  `ipc::frame_filler` was too broad and is corrected — 18 gets none.
+- **Connect preamble**, identical in both fixtures: `['setCid',<n>]`,
+  `Client Connected`, `noOfClient`. The `setCid` value is per-connection
+  (1315689843 vs 3461147938), so byte-identity is a property of the shape.
+- **`quick_arm`** for a 21 is read from `quickarmstate` indexed by the current
+  partition (from the last 504's `+0x90`), exactly as §5.12 measured.
+- **Unknown types are diagnosed, not guessed** (§2.5): msgType 22 has no fixture,
+  so it is routed to a diagnostic channel with its raw bytes rather than
+  fabricated onto the stream.
+- **Verified two ways.** `cargo test` (77 pass) includes
+  `push::tests::every_reply_reproduces_its_captured_run`, which reconstructs
+  every real status frame in both captures and asserts `on_reply` reproduces it
+  plus exactly its trailing fillers (37 runs). And `emu/push-capture-test.sh`
+  drives the whole path on **real kernel queues** against a fake `/tuxedo`:
+  tuxweb registered, received a 504 + three statuses, and wrote the 13 expected
+  frames byte-for-byte, then unregistered. Both on the build VM.
+
+Not yet done, and deliberately out of 8a: the auth gate, the API→queue wiring,
+and the TLS/80 assembly (below), and msgType 22's filler count (needs a capture).
+
+#### Stage 8b/8c — bench pieces, 2026-09-11
+
+Built and verified on the VM alongside 8a, so the serve mode is no longer a
+sketch:
+
+- **`serve.rs` (8c push path) — emu-proven end to end.** tuxweb registers, a
+  dedicated reader thread does nothing but `mq_receive` into a channel (B5), and
+  a worker updates `PanelState` and fans the generated frames out to
+  subscribers. `emu/push-serve-test.sh`: a client subscribed, was handed the
+  current state from the model (**no second 500**, so no queue flush for anyone —
+  B7), and then received a **live** Armed frame pushed after it connected —
+  preamble + snapshot + live update, byte-for-byte, `quick_arm` included. Unlike
+  the `shim`, this always drains the queue: tuxweb is the registered client, so
+  not draining means the 32-slot flush and a stale model.
+  - Bug caught here and fixed: `PanelState::snapshot` was handed a bare
+    `quick_arm` and the accept path passed `0`, so a snapshot's status carried
+    `:0` while the live update carried `:2`. `snapshot` now reads `quickarmstate`
+    by the current partition, the same source and index the live path uses.
+- **`redirect.rs` (8c, the 80→301 leg).** Port 80 answers a `301` to `https://`
+  **preserving path and query** (the vendor bounced `/` to a fixed page), strips
+  the `:port`, and never sets a cookie or serves a login (§2.6). No usable
+  `Host` → `400`, because an absolute https redirect needs one. Unit-tested.
+- **`api.rs` (8b, the typed API surface).** The **capability endpoint**
+  (§4.10.6) — `GET /system_http_api/API_REV01/GetCapabilities` → `200` JSON
+  `{contract, firmware, panel_model, capabilities}`, session-optional, with
+  `404`/`405` the distinguishable absence/wrong-method answers. Arm/disarm
+  responses reproduce the vendor's `Sucess` misspelling and the load-bearing
+  key asymmetry (arm `Response`, disarm `Result`, §4.10.4). Routing is a pure
+  `classify(method, path) -> Action`. Unit-tested. **The capability endpoint is
+  now served in-process by `serve.rs`** (emu-proven: a `GET` returned the `200`
+  JSON while the push stream ran on the same listener). Arm/disarm are routed but
+  return `501` for now — faking `arm_success()` would tell a client the panel
+  armed when nothing was sent — pending the queue dispatch and the auth gate.
+  tuxweb's own auth/sessions are not built.
+
+The serve mode now also answers the **capability endpoint in-process** and runs
+the **80→301 leg** (`redirect.rs`) on a second listener, both emu-proven in
+`emu/push-serve-test.sh` alongside the live push stream. 6280/9443 are never
+bound. The deadman is absent from `serve.rs` by construction — it is the
+permanent server, not a window.
+
+#### The remaining 8b work is an architectural fork — the consumer's API is ENCRYPTED
+
+Read from `ha-tuxedo-touch/custom_components/tuxedo_touch/api.py`, 2026-09-11.
+The integration's arm/disarm/status calls are **not** plain form posts. `_call`
+AES-CBC-encrypts the parameters with a **per-session key/IV handed out by
+`/tuxedoapi.html`**, posts `param=<base64 ciphertext>&len=&tstamp=`, signs an
+`authtoken: HMAC-SHA1("MACID:Browser,Path:API_REV01<endpoint>", keyHex)` header
+plus `identity: <iv_hex>` and the session cookie, and **decrypts the response**.
+Plaintext arm is `arming=<stay|away|night>&pID=<n>&ucode=<code>&operation=set`;
+disarm drops `arming`; status is `operation=get`. The pin is in the body, per
+request. The push path, by contrast, authenticates on the **session cookie
+alone** (their `api.py`: no authtoken, no identity, no encrypted body).
+
+So serving arm/disarm/status forks, and it is Lewis's call because it decides a
+large, security-sensitive layer and whether the *current* integration keeps
+working at cutover:
+
+- **(A) Reimplement the vendor's encrypted API + login/crypto** — `/tuxedoapi.html`
+  key/IV handout, the challenge/HMAC login, `authtoken` verification, AES of the
+  request/response. The shipped `ha-tuxedo-touch` then arms unchanged. Large, and
+  it rebuilds precisely the SharkSSL-era layer §1.5 chose to drop.
+- **(B) A new, simpler API + auth**, detected via `GetCapabilities`, with
+  `ha-tuxedo-touch` (also Lewis's) updated to use it. Coheres with §1.5/§2.5
+  ("replaced, not reimplemented"; "migrates at its own pace"). The push stream
+  stays byte-identical so **state visibility survives cutover**; arm/disarm from
+  HA would need the integration update to land first (or a window where the
+  vendor still serves control).
+
+§4.10.4 pins the vendor arm *paths and response shapes* as invariants, which a
+hybrid could keep while changing the transport. This is not decided; `api.rs`
+currently returns `501` for arm/disarm rather than guess. **Also unbuilt until
+this is settled:** tuxweb's own login/session issuance, which the push-path auth
+gate (§4.10.1) also needs (the push client's cookie comes from that login).
+
+All of the above is on the build VM at `/work/tuxweb-8a` and its harnesses at
+`/work/push-emu`; `cargo test` is 96 green, `emu/push-capture-test.sh` and
+`emu/push-serve-test.sh` both pass.
+
 ### Stage 9 — Decommission
 
 **Change:** remove the vendor binary from the built image; remove proxy mode and

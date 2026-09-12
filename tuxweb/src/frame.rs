@@ -103,6 +103,30 @@ pub fn status_part(text: &[u8]) -> Part {
     Part(v)
 }
 
+/// Build a `['setCid',<n>]` part -- the first part on every connection.
+///
+/// The value is per-connection: the two capture fixtures carry 1315689843 and
+/// 3461147938, so a generator picks its own and byte-identity is a property of
+/// the SHAPE, not the number. `classify` treats the payload as opaque, so a
+/// consumer that reads the id gets whatever we mint.
+pub fn setcid_part(cid: u32) -> Part {
+    let mut v = Vec::with_capacity(SETCID_PREFIX.len() + 11);
+    v.extend_from_slice(SETCID_PREFIX);
+    v.extend_from_slice(cid.to_string().as_bytes());
+    v.push(b']');
+    Part(v)
+}
+
+/// Build a `[...'noOfClient',[<n>]]` part. Emitted once in the connect
+/// preamble, after `setCid` and `Client Connected`, in both fixtures.
+pub fn noofclient_part(n: u32) -> Part {
+    let mut v = Vec::with_capacity(NCLIENT_PREFIX.len() + n.to_string().len() + 2);
+    v.extend_from_slice(NCLIENT_PREFIX);
+    v.extend_from_slice(n.to_string().as_bytes());
+    v.extend_from_slice(b"]]");
+    Part(v)
+}
+
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || hay.len() < needle.len() {
         return None;
@@ -223,6 +247,43 @@ mod tests {
         assert!(status > 1, "expected many status frames, saw {status}");
         assert_eq!(other, 0, "unrecognised payload shape in the capture");
         let _ = nclient;
+    }
+
+    /// The connect preamble builders must reproduce, byte for byte, the actual
+    /// `setCid` / `Client Connected` / `noOfClient` parts each capture opens
+    /// with -- otherwise a generated stream and the vendor's diverge on the
+    /// first three parts every client ever sees.
+    #[test]
+    fn preamble_builders_reproduce_the_captured_parts() {
+        for cap in both() {
+            let (parts, _) = parse(cap);
+            let mut saw_cid = false;
+            let mut saw_nclient = false;
+            let mut saw_connected = false;
+            for p in &parts {
+                match classify(p) {
+                    Message::SetCid(v) => {
+                        // the payload is the decimal id; rebuild from it
+                        let n: u32 = std::str::from_utf8(&v).unwrap().parse().unwrap();
+                        assert_eq!(&setcid_part(n), p, "setCid part drifted");
+                        saw_cid = true;
+                    }
+                    Message::NoOfClient(v) => {
+                        let n: u32 = std::str::from_utf8(&v).unwrap().parse().unwrap();
+                        assert_eq!(&noofclient_part(n), p, "noOfClient part drifted");
+                        saw_nclient = true;
+                    }
+                    Message::StatusText(t) if t == b"Client Connected" => {
+                        assert_eq!(&status_part(b"Client Connected"), p);
+                        saw_connected = true;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(saw_cid, "capture had no setCid to check against");
+            assert!(saw_nclient, "capture had no noOfClient to check against");
+            assert!(saw_connected, "capture had no Client Connected literal");
+        }
     }
 
     #[test]

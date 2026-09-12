@@ -329,8 +329,13 @@ pub fn frame_registration_filler(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
 }
 
 /// The `-1` filler, `%d%s%d%s%s` with `mvn r5,#0` in the type position.
-/// The status handler emits three of these after every status frame; they are
-/// deliberate, not a transport quirk.
+///
+/// Emitted three times after a msgType **21** status frame -- deliberate, not a
+/// transport quirk. NOT after every status: a msgType 18 (`frame_typed`) gets
+/// **zero** fillers, and a 504 is followed by three `frame_registration_filler`
+/// (not this one). The per-type counts are measured over both capture fixtures
+/// by `push::tests::every_reply_reproduces_its_captured_run`; an earlier version
+/// of this line said "after every status frame", which was too broad.
 pub fn frame_filler(r: &Reply) -> Vec<u8> {
     let mut o = Vec::new();
     push_u32(&mut o, r.session);

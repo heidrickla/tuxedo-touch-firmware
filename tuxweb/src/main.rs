@@ -14,6 +14,7 @@
 // Connections are handled in sequence with a short read timeout.
 
 mod accounts;
+mod api;
 mod cutover;
 mod deadman;
 mod frame;
@@ -21,7 +22,11 @@ mod ipc;
 mod login;
 mod mq;
 mod proxy;
+mod push;
+mod redirect;
 mod register;
+mod serve;
+mod session;
 mod shim;
 
 use std::fs::File;
@@ -503,6 +508,65 @@ fn main() {
         });
     }
 
+    // Stage 8a: register, receive, and GENERATE the push stream from IPC replies
+    // (no Barracuda). Writes the multipart stream to a file so a bench run can be
+    // compared to the expected frames. The serving form is stage 8c.
+    //   tuxweb --push-capture <session> <secs> <outfile> [quickarm-path]
+    if args.len() >= 5 && args[1] == "--push-capture" {
+        let session: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let cfg = session::Config {
+            session,
+            window: std::time::Duration::from_secs(secs),
+            out: args[4].clone(),
+            quickarm: args.get(5).cloned().unwrap_or_else(|| session::QUICKARM_STATE.to_string()),
+        };
+        match session::run_capture(&cfg) {
+            Ok(o) => {
+                println!(
+                    "push-capture: register={} received={} decoded={} emitted_parts={} \
+                     undecoded={} saw504={} unregister={}",
+                    o.sent_register, o.received, o.decoded, o.emitted_parts,
+                    o.undecoded, o.saw_504, o.sent_unregister
+                );
+                std::process::exit(if o.sent_unregister { 0 } else { 1 });
+            }
+            Err(e) => {
+                eprintln!("push-capture: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    // Stage 8c: the production serve mode -- serve the push stream from IPC.
+    // Plaintext this cut (TLS/80/API/auth layer on); the window is for the bench,
+    // 0 or absent runs until killed (the permanent server).
+    //   tuxweb --serve <session> <bind> [window-secs] [quickarm-path]
+    if args.len() >= 4 && args[1] == "--serve" {
+        let session: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let window = args
+            .get(4)
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|&s| s > 0)
+            .map(std::time::Duration::from_secs);
+        let cfg = serve::Config {
+            session,
+            bind: args[3].clone(),
+            quickarm: args.get(5).cloned().unwrap_or_else(|| session::QUICKARM_STATE.to_string()),
+            window,
+            // On the panel this is 0.0.0.0:80; a bench uses a high port. Env so
+            // the positional args stay stable. 6280/9443 are never bound (§1.5).
+            redirect_bind: std::env::var("TUXWEB_REDIRECT_BIND").ok().filter(|s| !s.is_empty()),
+        };
+        match serve::run(cfg) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("serve: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
+
     // stage 3 shim: re-serve the vendor push stream byte for byte.
     //   tuxweb --shim <upstream host:port> <cookie> <bind-addr>
     // The cookie is passed in; this binary never handles the panel password.
@@ -571,6 +635,8 @@ fn main() {
         eprintln!("       {0} --accounts <tuxedo-binary> [store-path]", args[0]);
         eprintln!("       {0} --accounts-rewrite <tuxedo-binary> <in> <out>", args[0]);
         eprintln!("       {0} --cutover <vendor-path> [window-secs] [log]", args[0]);
+        eprintln!("       {0} --push-capture <session> <secs> <out> [quickarm]", args[0]);
+        eprintln!("       {0} --serve <session> <bind> [window-secs] [quickarm]", args[0]);
         eprintln!("       {0} --passthrough <args...>", args[0]);
         eprintln!();
         eprintln!("Installed as .../Barracuda it execs the vendor (passthrough),");
