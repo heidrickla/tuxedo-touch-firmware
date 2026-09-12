@@ -3114,12 +3114,39 @@ entering consumed; the permanent server needs the opposite:
 
 All of the above is on the build VM at `/work/tuxweb-8a` and its harnesses at
 `/work/push-emu`. **The tuxweb side of stage 8 is complete on the bench.**
-Still to do: land the `ha-tuxedo-touch` update (in progress, separately), then
-the 8d window — build the release ARM binary (CI's cross-build already proves
-it compiles static for the panel), stage it as `/opt/webserver/Barracuda` with
-the vendor at `vendor/`, install the stage-4 cert, `--issue-token` for HA,
-`kill -9` the vendor, verify push + arm + disarm + status from HA, leave
-disarmed. Revert = `mv` the vendor back.
+
+#### Stage 8d — staged on the panel, pre-flight READY 2026-09-12; the window remains
+
+`emu/stage8-panel.sh` is the runbook (`phase0 | phase1 | token | cutover |
+revert`), built on `stage6-panel.sh`'s proven pieces and parsed clean under
+Git Bash `sh`, `dash` and **busybox `sh`**. Budget for a full run: **5** of the
+24 relaunches (phase1 SIGTERM 2 + cutover SIGKILL 1 + revert SIGTERM 2).
+
+The release ARM binary — `1,098,984` bytes, static, 0 INTERP, md5
+`8ed6abee71473f8b1d67ba1503805f62` — and the runbook are staged in the panel's
+`/tmp` (tmpfs: **re-stage after any reboot**). `phase0` on the live panel read
+**READY, nothing changed**: staged md5 verified on the panel, vendor `0066ad95`
+recorded for the revert check, cert pair present under `tls/`, `quickarmstate`
+`2 0 0 0 0 0 0 0`, queue visible, budget 8 of 24 used with 16 left.
+
+The window, in order: `phase1` (passthrough install, stage 5 again) → `token`
+(issues the HA token ONCE with the staged copy) → configure HA with it →
+`cutover` (writes the serve conf, `kill -9`, tuxweb relaunches permanent;
+expects **2** listeners and 6280/9443 **absent**) → verify from the workstation
+→ leave the panel **disarmed**. `revert` at any point: `rm` the conf, vendor
+back, two kills. Verification from the workstation, with `TLS_CA` pointed at
+the owner root (`emu/push_capture_check.py`):
+
+```
+TLS_CA=<owner-root.pem> python emu/push_capture_check.py apicall GET  <panel>:443 /system_http_api/API_REV01/GetCapabilities - - 200 '"contract":1'
+TLS_CA=<owner-root.pem> python emu/push_capture_check.py apicall GET  <panel>:443 /system_http_api/API_REV01/GetSecurityStatus - <token> 200 '"armed":false'
+TLS_CA=<owner-root.pem> python emu/push_capture_check.py client       <panel>:443 10 /tmp/panel-push.bin <token>     # then inspect the frames
+python emu/push_capture_check.py redirectget <panel>:80 /authenticated/tuxedoapi.html?url=x                       # 301 https
+```
+
+Arm/disarm are exercised through HA (or `apicall POST … ArmWithCode
+'arming=stay&pID=1&ucode=<code>&operation=set' <token> 200 Sucess`, then
+`DisarmWithCode`), watching the push stream flip `0xFE`→`0xFF`→`0xFE`.
 
 ### Stage 9 — Decommission
 

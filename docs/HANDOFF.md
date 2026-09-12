@@ -30,14 +30,21 @@ permanent server — B5 reader-thread split, token-gated push with snapshot +
 live fan-out, the typed API wired to the queue with confirmation, the 80→301
 leg), `redirect.rs`, `api.rs` (capability endpoint, vendor response shapes,
 routing), `auth.rs` (admin-issued bearer tokens, hashed on mtd17;
-`--issue-token`/`--revoke-token`/`--list-tokens`). `cargo test` 105 green;
-`emu/push-capture-test.sh` and `emu/push-serve-test.sh` (full auth + arm/disarm
-flow against a reactive fake `/tuxedo`) both pass on the VM. **Decision (Lewis):
+`--issue-token`/`--revoke-token`/`--list-tokens`). `conf.rs` (the 8d switch: serve conf on mtd17 + per-boot crash-loop guard).
+`cargo test` 110 green; `emu/push-capture-test.sh` and `emu/push-serve-test.sh`
+(full auth + arm/disarm flow against a reactive fake `/tuxedo`, in plaintext,
+over TLS, and launched AS `Barracuda` via the conf) all pass on the VM. GitHub
+CI green through `abd52c3`, including the ARM cross-build. **Decision (Lewis):
 new simpler API + token auth, `ha-tuxedo-touch` updated to use it** — not a
-reimplementation of the vendor's AES/HMAC API. Remaining: TLS on the serve
-listener (a `Sink::accept` away; needs the stage-4 cert path to exercise), land
-the `ha-tuxedo-touch` update, then the 8d cutover window (needs Lewis at the
-panel).
+reimplementation of the vendor's AES/HMAC API.
+
+**8d state:** the release ARM binary (md5 `8ed6abee71473f8b1d67ba1503805f62`)
+and `emu/stage8-panel.sh` are staged in the panel's `/tmp` (tmpfs — re-stage
+after a reboot) and `phase0` read **READY** on the live panel (budget 8/24, 16
+left, 5 needed). **The window itself is not run** — it needs Lewis at the panel,
+HA on the tuxweb-aware integration with the token first, and the panel left
+disarmed. Runbook order: `phase1` → `token` → configure HA → `cutover` →
+verify → (revert = `rm` the conf + vendor back).
 
 7a and 7b have **never been run on the panel**. They are bench-proven only, and they
 are the two least consequential, so running them is optional rather than blocking.
