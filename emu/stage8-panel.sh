@@ -97,6 +97,34 @@ budget() {
     return 0
 }
 
+# relaunch_now <old pids> -- start /opt/webserver/Barracuda ourselves after a
+# kill -9. supervis notices a dead Barracuda only on its 10-minute tick (every
+# BARRACUDA_RESTART-N in SupervisionLog.txt shares a timestamp with an FTPCLI
+# line), which on 2026-09-12 cost six minutes of no web server. It launches with
+# system("/opt/webserver/Barracuda &"); this does the same, argv0 included, so
+# tuxweb reads the serve conf exactly as it would from supervis. If the tick
+# fires inside the gap there are briefly two: supervis matches by NAME, so keep
+# its copy and stop ours -- never leave two, the second cannot bind and would
+# pass through to the vendor.
+relaunch_now() {
+    old="$1"
+    setsid "$W/Barracuda" </dev/null >/tmp/relaunch.log 2>&1 &
+    mine=$!
+    sleep 3
+    others=""
+    for p in $(pids_named Barracuda); do
+        case " $old " in *" $p "*) continue;; esac
+        [ "$p" = "$mine" ] && continue
+        others="$others $p"
+    done
+    if [ -n "$others" ]; then
+        echo "  supervis relaunched in the gap (pid$others); stopping our copy $mine"
+        kill -9 "$mine" 2>/dev/null
+    else
+        echo "  started $W/Barracuda ourselves as pid $mine (supervis's tick would have been up to 10 min)"
+    fi
+}
+
 revert() {
     say "REVERT (always runs)"
     rm -f "$CONF" && echo "  serve conf removed -- the next relaunch passes through"
@@ -258,8 +286,10 @@ cutover() {
     old=$(pids_named Barracuda | tr '\n' ' ')
     echo "  kill -9 $old"
     for p in $old; do kill -9 "$p" 2>/dev/null; done
-    new=$(wait_new_pid "$old" 900) || fail "supervis did not relaunch within 450s"
-    echo "  relaunched as pid $new (this should be tuxweb in serve mode)"
+    sleep 1
+    relaunch_now "$old"
+    new=$(wait_new_pid "$old" 900) || fail "no new Barracuda within 450s -- CHECK THE PANEL"
+    echo "  running as pid $new (this should be tuxweb in serve mode)"
     i=0
     while [ $i -lt 60 ]; do n=$(serve_listeners); [ "$n" -ge 2 ] && break; i=$((i+1)); sleep 1; done
     echo "  listeners: serve-set $(serve_listeners)/2, legacy $(legacy_listeners) (must be 0)"
@@ -276,11 +306,56 @@ cutover() {
     echo "  Revert at any time: sh /tmp/stage8-panel.sh revert"
 }
 
+# upgrade <md5> -- replace the INSTALLED tuxweb with the staged build, one kill.
+# For every tuxweb update after the cutover. The vendor at vendor/ and the serve
+# conf are untouched, so revert is unchanged. Costs ONE relaunch (SIGKILL: tuxweb
+# has no sigHandler, so a SIGTERM would not be noticed any sooner and would not
+# cost less). The md5 is passed in rather than read from a file so a stale
+# staged binary cannot be installed by accident.
+upgrade() {
+    want="${1:-}"
+    say "UPGRADE -- install the staged build over the running tuxweb"
+    [ -n "$want" ] || fail "usage: upgrade <md5 of the staged build>"
+    [ -f "$CONF" ] || fail "no serve conf at $CONF -- the panel is not on tuxweb; use cutover"
+    [ -f "$W/vendor/Barracuda" ] || fail "vendor missing at $W/vendor/Barracuda -- refusing"
+    [ -f "$STAGED" ] || fail "no staged binary at $STAGED (tmpfs: re-stage it)"
+    sm=$($BB md5sum $STAGED | cut -d' ' -f1)
+    [ "$sm" = "$want" ] || fail "staged md5 $sm is not the requested $want"
+    cur=$($BB md5sum $W/Barracuda | cut -d' ' -f1)
+    echo "  installed $cur -> staged $sm"
+    [ "$cur" != "$sm" ] || fail "that build is already installed"
+    budget || fail "budget"
+    ctr=$(cat "$COUNTER" 2>/dev/null || echo 0)
+    echo "  serve launches this boot: $ctr of 6 (the relaunch makes it $((ctr + 1)))"
+    [ "$ctr" -lt 5 ] || fail "launch counter at $ctr -- one more would trip the passthrough guard; reboot first"
+
+    cp "$STAGED" "$W/Barracuda.new" || fail "cannot stage"
+    chmod 755 "$W/Barracuda.new"
+    mv -f "$W/Barracuda.new" "$W/Barracuda" || fail "cannot install"
+    echo "  installed; md5 now $($BB md5sum $W/Barracuda | cut -d' ' -f1)"
+
+    old=$(pids_named Barracuda | tr '\n' ' ')
+    echo "  kill -9 $old"
+    for p in $old; do kill -9 "$p" 2>/dev/null; done
+    sleep 1
+    relaunch_now "$old"
+    new=$(wait_new_pid "$old" 900) || fail "no new Barracuda within 450s -- CHECK THE PANEL"
+    echo "  running as pid $new"
+    i=0
+    while [ $i -lt 60 ]; do n=$(serve_listeners); [ "$n" -ge 2 ] && break; i=$((i+1)); sleep 1; done
+    echo "  listeners: serve-set $(serve_listeners)/2, legacy $(legacy_listeners) (must be 0)"
+    [ "$(serve_listeners)" -ge 2 ] || fail "serve mode did not bind 80 and 443 -- revert"
+    [ "$(legacy_listeners)" -eq 0 ] || fail "6280/9443 bound -- the vendor is serving, not tuxweb"
+    echo "  launch counter: $(cat $COUNTER 2>/dev/null) of 6 this boot"
+    echo "  UPGRADED. Verify from the workstation (emu/stage8-verify.py)."
+}
+
 case "${1:-phase0}" in
     phase0)  phase0 ;;
     phase1)  phase1 ;;
     token)   token "${2:-}" ;;
     cutover) cutover ;;
+    upgrade) upgrade "${2:-}" ;;
     revert)  revert ;;
-    *) echo "usage: $0 phase0|phase1|token [label]|cutover|revert"; exit 2 ;;
+    *) echo "usage: $0 phase0|phase1|token [label]|cutover|upgrade <md5>|revert"; exit 2 ;;
 esac
