@@ -400,6 +400,7 @@ fn main() {
                                 redirect_bind: sc.redirect_bind,
                                 token_store: sc.token_store,
                                 tls,
+                                silence: sc.silence,
                             };
                             match serve::run(cfg) {
                                 Ok(()) => std::process::exit(0),
@@ -702,6 +703,13 @@ fn main() {
                 .unwrap_or_else(|| auth::TOKEN_STORE.to_string()),
             // TUXWEB_CHAIN + TUXWEB_KEY -> TLS; exits if set but unusable.
             tls: tls_from_env(),
+            // Bench knob; the panel uses the default (or the serve conf's).
+            silence: std::env::var("TUXWEB_SILENCE_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .filter(|&s| s > 0)
+                .map(std::time::Duration::from_secs)
+                .unwrap_or(serve::DEFAULT_SILENCE),
         };
         match serve::run(cfg) {
             Ok(()) => std::process::exit(0),

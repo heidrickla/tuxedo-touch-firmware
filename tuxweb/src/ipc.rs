@@ -344,6 +344,50 @@ pub fn frame_filler(r: &Reply) -> Vec<u8> {
     o
 }
 
+/// msgType 20, the keypad LCD, handler at `0xdb8c` (the `bcc` range arm for
+/// types below 21 — invisible to an equality scan, `TRAPS.md` §2). Decompiled
+/// and its literals resolved 2026-09-12:
+///
+/// ```text
+/// fmt  0x85304  "%d%s%d%s%s"     args: session, ":", 20, ":2", text'
+/// sep  0x84f5c  ":"              the find() needle
+/// sep2 0x852f4  ":2"             the SECOND separator is the literal ":2" —
+///                                the "2" a consumer sees is not a field
+/// rep  0x545aac "-"              replace(pos, 1, "-") on the FIRST ':' in the
+///                                text, only when pos > 0
+/// ```
+///
+/// So the wire frame is `session:20:2<text'>` with `text'` the LCD text after
+/// its first `:` (if any, and not at index 0) becomes `-`, which keeps a colon
+/// in the display from splitting the frame. The vendor only takes this arm when
+/// the reply's session is 0, and follows it with THREE `frame_console_unsolicited`
+/// copies of the RAW text (the `-1` id; `mvn r4,#0`, raw pointer in `r6`), then
+/// `setConsoleMessage(20, text')` for its console page.
+pub fn frame_console(r: &Reply) -> Vec<u8> {
+    let mut text = r.text.clone();
+    if let Some(pos) = text.iter().position(|&b| b == b':') {
+        if pos > 0 {
+            text[pos] = b'-';
+        }
+    }
+    let mut o = Vec::new();
+    push_u32(&mut o, r.session);
+    o.extend_from_slice(b":20:2");
+    o.extend_from_slice(&text);
+    o
+}
+
+/// The `-1` rebroadcast of a console line: `session:-1:2<raw text>`, same
+/// format and the same `":2"` literal, but the text is the reply's raw bytes —
+/// no colon replacement. Emitted three times after each [`frame_console`].
+pub fn frame_console_unsolicited(r: &Reply) -> Vec<u8> {
+    let mut o = Vec::new();
+    push_u32(&mut o, r.session);
+    o.extend_from_slice(b":-1:2");
+    o.extend_from_slice(&r.text);
+    o
+}
+
 /// Two frames the server emits that are NOT derived from a reply at all.
 ///
 /// A bare `-1`, sent 36 times across the two captures, and `Client Connected`
@@ -446,6 +490,36 @@ mod tests {
         let mut want = b"0:-1:".to_vec();
         want.extend_from_slice(&text);
         assert_eq!(frame_filler(&r), want);
+    }
+
+    /// The keypad LCD, msgType 20. The sample text is what the 2026-09-11 stage-7c
+    /// window received from the real panel; the wire shape is the vendor handler's
+    /// `%d%s%d%s%s` with the constant `":2"` literal (decompiled, literals
+    /// resolved). No push-stream capture holds a console record -- the vendor
+    /// integration dropped them before anything logged them -- so the
+    /// decompilation is the arbiter here, and this test pins it.
+    #[test]
+    fn console_frames_carry_the_constant_2_and_replace_only_the_first_colon() {
+        let r = reply(20, 0, b"****DISARMED****|  Ready to Arm  ");
+        assert_eq!(frame_console(&r), b"0:20:2****DISARMED****|  Ready to Arm  ".to_vec());
+        assert_eq!(
+            frame_console_unsolicited(&r),
+            b"0:-1:2****DISARMED****|  Ready to Arm  ".to_vec()
+        );
+
+        // a colon inside the display: the id-20 record gets '-' for the FIRST one
+        // only; the -1 copies carry the raw text
+        let r = reply(20, 0, b"ZONE 05: FRONT|DOOR: OPEN");
+        assert_eq!(frame_console(&r), b"0:20:2ZONE 05- FRONT|DOOR: OPEN".to_vec());
+        assert_eq!(frame_console_unsolicited(&r), b"0:-1:2ZONE 05: FRONT|DOOR: OPEN".to_vec());
+
+        // the vendor's `if (0 < pos)`: a colon at index 0 is left alone
+        let r = reply(20, 0, b":LEADING|x");
+        assert_eq!(frame_console(&r), b"0:20:2:LEADING|x".to_vec());
+
+        // the "2" is a literal, so it is there even for an empty display
+        let r = reply(20, 0, b"");
+        assert_eq!(frame_console(&r), b"0:20:2".to_vec());
     }
 
     /// Reproduce EVERY frame in both captures, not four hand-picked ones.

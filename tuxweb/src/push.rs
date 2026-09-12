@@ -42,6 +42,10 @@ use crate::ipc::{self, Reply};
 const STATUS_FILLERS: usize = 3; // after a msgType 21
 const REG_FILLERS: usize = 3; // after a msgType 504
 const TYPED_FILLERS: usize = 0; // after a msgType 18
+/// After a msgType 20 (keypad LCD): three `-1` copies of the raw text follow the
+/// id-20 record. From the vendor handler at `0xdb8c` (decompiled), not a capture
+/// -- the vendor integration never logged a console record, so none exists.
+const CONSOLE_UNSOLICITED: usize = 3;
 
 /// What a single reply turns into on the wire.
 pub struct Emission {
@@ -110,6 +114,22 @@ pub fn on_reply(raw: &[u8], quick_arm: u32) -> Emission {
             parts.push(frame::status_part(&ipc::frame_typed(&base, base.arg)));
             Emission::frames(parts)
         }
+        20 => {
+            // The keypad LCD. /tuxedo sends these only while console mode is on
+            // (command 19), which the serve mode now holds on. The vendor's arm
+            // runs only for session 0; anything else is a shape we have not seen,
+            // so it goes to the diagnostic channel rather than the stream.
+            if base.session != 0 {
+                return Emission::unknown(20, raw);
+            }
+            let mut parts = Vec::with_capacity(1 + CONSOLE_UNSOLICITED);
+            parts.push(frame::status_part(&ipc::frame_console(&base)));
+            let copy = frame::status_part(&ipc::frame_console_unsolicited(&base));
+            for _ in 0..CONSOLE_UNSOLICITED {
+                parts.push(copy.clone());
+            }
+            Emission::frames(parts)
+        }
         // 22 shares frame_typed's shape with 18 but is the status-when-not-online
         // variant, and NEITHER fixture contains one -- so its filler count is
         // unproven. Route it to the diagnostic channel rather than guess; a
@@ -156,6 +176,12 @@ pub struct PanelState {
     /// disarmed transition flips, which is how a command is confirmed to have
     /// ACTED rather than merely been sent (§4.10.3).
     last_21: Option<Vec<u8>>,
+    /// The most recent keypad LCD line (msgType 20), replayed to a new
+    /// subscriber so it does not wait for the next display change to know what
+    /// the panel is showing. Every change arrives as a 20, so this IS the
+    /// current display (as stale as the rest of the model if the broadcast has
+    /// been switched off, which the serve mode's silence re-register bounds).
+    last_20: Option<Vec<u8>>,
 }
 
 /// Minimal JSON string escaping for a value taken from panel text.
@@ -193,10 +219,16 @@ impl PanelState {
                         self.last_21 = Some(raw.to_vec());
                     }
                 }
+                20 if r.session == 0 => self.last_20 = Some(raw.to_vec()),
                 _ => {}
             }
         }
         on_reply(raw, quick_arm)
+    }
+
+    /// The current keypad LCD text (msgType 20 payload, raw), if one has been seen.
+    pub fn console_text(&self) -> Option<Vec<u8>> {
+        self.last_20.as_ref().and_then(|r| Reply::parse(r)).map(|r| r.text)
     }
 
     /// The current arm-state byte from the latest status: `0xFF` armed/arming,
@@ -246,6 +278,9 @@ impl PanelState {
         }
         for raw in self.latest.values() {
             parts.extend(on_reply(raw, quick).parts); // a 21 uses it; an 18 ignores it
+        }
+        if let Some(raw) = &self.last_20 {
+            parts.extend(on_reply(raw, quick).parts); // the current LCD line
         }
         parts
     }
@@ -359,6 +394,40 @@ mod tests {
         assert_eq!(e.parts[0].0, b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"0:504:1:P1  H:1:0:3:3\"]]");
         // the fillers differ from the head only in the type slot (-1)
         assert_eq!(e.parts[1].0, b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"0:-1:1:P1  H:1:0:3:3\"]]");
+    }
+
+    #[test]
+    fn a_console_reply_becomes_an_id20_record_and_three_unsolicited_copies() {
+        // raw text at +0x0E, no state byte (msgType 20 puts its text there, ipc.rs)
+        let raw = raw_reply(0, 20, 0, b"ZONE 05: FRONT|DOOR: OPEN");
+        let e = on_reply(&raw, 2);
+        assert!(e.undecoded.is_none());
+        let texts = emitted_texts(&e);
+        assert_eq!(texts.len(), 1 + CONSOLE_UNSOLICITED);
+        assert_eq!(texts[0], b"0:20:2ZONE 05- FRONT|DOOR: OPEN".to_vec(), "first ':' -> '-'");
+        for t in &texts[1..] {
+            assert_eq!(*t, b"0:-1:2ZONE 05: FRONT|DOOR: OPEN".to_vec(), "raw text on the -1 copies");
+        }
+        // the vendor's arm runs only for session 0: anything else is diagnosed
+        let odd = raw_reply(7, 20, 0, b"x|y");
+        let e = on_reply(&odd, 0);
+        assert!(e.parts.is_empty());
+        assert_eq!(e.undecoded.as_ref().map(|(t, _)| *t), Some(20));
+    }
+
+    #[test]
+    fn panel_state_replays_the_current_lcd_line() {
+        let mut st = PanelState::new();
+        assert_eq!(st.console_text(), None);
+        st.observe(&raw_reply(0, 20, 0, b"****DISARMED****|  Ready to Arm  "), 0);
+        st.observe(&raw_reply(0, 20, 0, b"ARMED STAY|  EXIT NOW  "), 0);
+        assert_eq!(st.console_text().as_deref(), Some(&b"ARMED STAY|  EXIT NOW  "[..]));
+        let snap = st.snapshot(1, 1, "/nonexistent");
+        let has = |s: &[u8]| snap.iter().any(|p| {
+            matches!(frame::classify(p), frame::Message::StatusText(t) if t.windows(s.len()).any(|w| w == s))
+        });
+        assert!(has(b"0:20:2ARMED STAY|  EXIT NOW  "), "latest LCD line replayed");
+        assert!(!has(b"DISARMED"), "the superseded line is not");
     }
 
     #[test]

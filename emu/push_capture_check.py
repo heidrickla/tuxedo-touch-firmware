@@ -103,6 +103,11 @@ REG = reply_504(1, "P1  H", (1, 0, 3, 3))
 READY = reply_status(21, 1, FE, "1Ready To Arm")
 ARMED = reply_status(21, 1, FF, "2Armed Stay")
 HOME = reply_typed(18, 2, "1 P1  H")
+# the keypad LCD (msgType 20): text at +0x0E, no state byte. The disarmed line is
+# what the 2026-09-11 stage-7c window received from the real panel; the armed
+# one carries a ':' so the vendor's first-colon-to-'-' rule is exercised.
+LCD_DISARMED = reply_typed(20, 0, "****DISARMED****|  Ready to Arm  ")
+LCD_ARMED = reply_typed(20, 0, "ARMED ***STAY***|Exit: 59 secs")
 
 
 def s(*parts):
@@ -120,6 +125,12 @@ T_READYF = s("0:-1:", bytes([FE]), "1Ready To Arm")
 T_ARMED = s("0:21:1:ff:", bytes([FF]), "2Armed Stay:2")
 T_ARMEDF = s("0:-1:", bytes([FF]), "2Armed Stay")
 T_HOME = b"0:18:1 P1  H:2"
+# console frames: id 20 with the constant ":2" and the first ':' -> '-'; then
+# three -1 copies of the RAW text (vendor handler 0xdb8c, decompiled)
+T_LCD_DIS = b"0:20:2****DISARMED****|  Ready to Arm  "
+T_LCD_DISU = b"0:-1:2****DISARMED****|  Ready to Arm  "
+T_LCD_ARM = b"0:20:2ARMED ***STAY***|Exit- 59 secs"
+T_LCD_ARMU = b"0:-1:2ARMED ***STAY***|Exit: 59 secs"
 
 
 def _open_tux():
@@ -172,8 +183,14 @@ def serve_tux(deadline_s, cmdlog):
     cmdq, repq = _open_tux()
     buf = ctypes.create_string_buffer(COMMAND)
     deadline = time.time() + float(deadline_s)
-    registered = False
+    console = False
     print("  fake tuxedo (serve): waiting for the 500")
+
+    def send(*msgs):
+        for m in msgs:
+            rt.mq_send(repq, m, REPLY, 0)
+            time.sleep(0.2)
+
     with open(cmdlog, "w") as log:
         while time.time() < deadline:
             got = _recv_cmd(cmdq, buf)
@@ -183,20 +200,28 @@ def serve_tux(deadline_s, cmdlog):
             code, ucode = got
             log.write("%d\t%d\n" % (code, ucode))
             log.flush()
-            if code == 500 and not registered:
-                registered = True
+            if code == 500:
+                # EVERY 500 registers again (registerclient flushes, then answers
+                # with a fresh 504): that is how a silence re-register shows up.
                 print("  fake tuxedo (serve): got 500, registering panel as Ready")
-                for msg in (REG, READY):
-                    rt.mq_send(repq, msg, REPLY, 0)
-                    time.sleep(0.2)
+                send(REG, READY)
+            elif code == 19:
+                # console mode on: the panel starts streaming its LCD
+                console = True
+                print("  fake tuxedo (serve): got 19, console mode ON -> LCD line")
+                send(LCD_DISARMED)
             elif code in (1, 2, 4):
                 print("  fake tuxedo (serve): got ARM code %d ucode %d -> Armed" % (code, ucode))
                 time.sleep(0.3)
-                rt.mq_send(repq, ARMED, REPLY, 0)
+                send(ARMED)
+                if console:
+                    send(LCD_ARMED)
             elif code == 3:
                 print("  fake tuxedo (serve): got DISARM ucode %d -> Ready" % ucode)
                 time.sleep(0.3)
-                rt.mq_send(repq, READY, REPLY, 0)
+                send(READY)
+                if console:
+                    send(LCD_DISARMED)
             elif code == 501:
                 print("  fake tuxedo (serve): got 501, done")
                 return
@@ -371,11 +396,24 @@ def verify_serve(path):
     if labels[2][0] != "noOfClient":
         die("FAIL: part 2 should be noOfClient, got %r" % (labels[2],))
     got = [t for (k, t) in labels[3:] if k == "status"]
-    # snapshot (504 + Ready), then LIVE: armed (from the arm API call), then
-    # ready again (from the disarm API call)
+    # snapshot (504 + Ready + the current LCD line), then LIVE: armed + its LCD
+    # line (from the arm API call), then ready + its LCD line (from the disarm).
+    # Console frames are 1 x id 20 + 3 x id -1 copies each.
     want = ([T_REG] + [T_REGF] * 3 + [T_READY] + [T_READYF] * 3
-            + [T_ARMED] + [T_ARMEDF] * 3 + [T_READY] + [T_READYF] * 3)
-    _report(got, want, "snapshot then live arm and disarm delivered in order")
+            + [T_LCD_DIS] + [T_LCD_DISU] * 3
+            + [T_ARMED] + [T_ARMEDF] * 3 + [T_LCD_ARM] + [T_LCD_ARMU] * 3
+            + [T_READY] + [T_READYF] * 3 + [T_LCD_DIS] + [T_LCD_DISU] * 3)
+    # Required PREFIX: a silence re-register late in the capture window would
+    # legitimately append another 504 + Ready + LCD set, so trailing frames are
+    # reported, not failed.
+    if got[:len(want)] == want:
+        extra = len(got) - len(want)
+        print("  PASS: snapshot then live arm/disarm with LCD lines, in order (%d frames%s)"
+              % (len(want), ", +%d after (re-register)" % extra if extra else ""))
+        for t in got[:len(want)]:
+            print("        " + t.decode("latin-1"))
+        return
+    _report(got, want, "served stream")
 
 
 def verify_cmds(cmdlog, permanent=False):
@@ -386,22 +424,32 @@ def verify_cmds(cmdlog, permanent=False):
         rows = [tuple(int(x) for x in ln.split("\t")) for ln in f if ln.strip()]
     print("  fake tuxedo saw commands: %s" % rows)
     codes = [c for c, _ in rows]
-    if codes[:1] != [500]:
-        die("FAIL: the first command must be the 500 REGISTER")
+    if codes[:2] != [500, 19]:
+        die("FAIL: must open with 500 REGISTER then 19 CONSOLE_MODE (got %r)" % codes[:2])
     if (2, 1234) not in rows:
         die("FAIL: no ARM_STAY (2) with user code 1234 at +0x0C reached the queue")
     if (3, 1234) not in rows:
         die("FAIL: no DISARM (3) with user code 1234 at +0x0C reached the queue")
     if rows.index((3, 1234)) < rows.index((2, 1234)):
         die("FAIL: disarm arrived before arm")
+    # the silence watchdog: after the disarm the fake panel goes quiet, and
+    # tuxweb must register again -- 500 then 19 -- exactly once per silence
+    regs = [i for i, c in enumerate(codes) if c == 500]
+    if len(regs) < 2:
+        die("FAIL: no silence re-register (only %d x 500); the Home/Back gap is open" % len(regs))
+    for i in regs:
+        if codes[i + 1:i + 2] != [19]:
+            die("FAIL: a 500 at index %d was not followed by 19 (console mode)" % i)
+    if regs[1] < codes.index(3):
+        die("FAIL: the re-register came before the disarm, i.e. during traffic, not silence")
     if permanent:
         if 501 in codes:
             die("FAIL: a permanent server must never send 501 (it would switch the firehose off)")
-        print("  PASS: 500, arm(2,1234), disarm(3,1234), and NO 501 -- permanent server")
+        print("  PASS: 500+19, arm(2,1234), disarm(3,1234), silence re-register 500+19, NO 501")
     else:
         if codes[-1:] != [501]:
             die("FAIL: the last command must be the 501 UNREGISTER (got %r)" % codes[-1:])
-        print("  PASS: 500, arm(2,1234), disarm(3,1234), 501 -- in order, codes at +0x0C")
+        print("  PASS: 500+19, arm(2,1234), disarm(3,1234), silence re-register 500+19, then 501")
 
 
 if __name__ == "__main__":

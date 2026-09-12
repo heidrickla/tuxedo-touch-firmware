@@ -3213,6 +3213,42 @@ tuxweb from the queues, with the consumer's contract intact, witnessed by the
 consumer and by an independent path. **Stage 8 is complete.** Stage 9 waits,
 per its own text, until this has run for a release.
 
+#### 8d.1 — two things the first serve build got wrong, fixed 2026-09-12 (bench-proven, deploy pending)
+
+**A latent silence.** `home_back_press()` in `/tuxedo` zeroes `F7_Mesgs_enabled`
+— the same byte a 501 clears — and a Home or Back press on the touchscreen
+reaches it (§Stage 6). The vendor never noticed because every new push
+connection made Barracuda register again; a permanent server that registers
+once goes silent until its next relaunch, and the integration then shows the
+entity unavailable (it refuses a stale value) until someone restarts tuxweb.
+Fix: a **silence watchdog** in `serve.rs` — no reply for `silence` (default
+120 s, four idle status periods; `silence=` in the serve conf) ⇒ send 500 then
+19 again, once per silence period, never in a loop. Re-registering flushes a
+queue that is empty anyway and yields a fresh 504, carried like any other.
+
+**The keypad LCD.** `/tuxedo` sends msgType 20 only while console mode is on
+(command 19); the first serve build never sent 19 and routed 20 to its
+diagnostic channel, so no console text reached HA at all. Now the serve mode
+sends **19 after every register** and emits 20s in the vendor's exact wire
+shape, read from the type-20 handler at `0xdb8c` with the decompiler and its
+literals resolved: `%d%s%d%s%s` with `(session, ":", 20, ":2", text′)` —
+**the `2` is the literal `":2"` at `0x852f4`, a constant, not a colour digit**
+— `text′` is the LCD text with its first `:` (index > 0) replaced by `-`, then
+**three** `0:-1:2<raw text>` copies; only when the reply session is 0. No
+push-stream capture holds a console record (the vendor integration dropped
+them before anything logged them), so the decompilation is the arbiter and
+`ipc::frame_console`'s test pins it, with the stage-7c window's real LCD text
+as the sample. **Console mode is now a standing panel behaviour: display only,
+no key path; whoever opens the touchscreen's console page finds it already on.**
+
+Proven by `emu/push-serve-test.sh` (plaintext, TLS, and launched as `Barracuda`
+via the conf): the fake `/tuxedo` answers 19 with an LCD line and changes it on
+arm/disarm; the subscriber's stream shows the snapshot's LCD line, then the live
+armed line (`Exit- 59 secs` on the id-20 record, `Exit: 59 secs` on the -1
+copies) and the disarmed line, 28 frames in order; when the fake panel goes
+quiet the command log shows `500, 19` again, after the disarm, never during
+traffic. `cargo test` 113 green.
+
 ### Stage 9 — Decommission
 
 **Change:** remove the vendor binary from the built image; remove proxy mode and
