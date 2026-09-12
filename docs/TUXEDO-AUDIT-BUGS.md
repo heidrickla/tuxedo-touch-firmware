@@ -95,7 +95,7 @@ Source: Barracuda `gettuxedoIPCCommFunc` @0x0000da80-0x0000db88 (fmt `%d%s%d%s%d
 
 **Code 22 — `SERV_PANEL_OFFLINE_MSG_BROADCAST`**: `0:22:<FLAG><CSS><text>:<panelStatusCode>` — same shape, no separate hex field. Emitted when `GetOnlineStatus() != 1`. CONFIRMED.
 
-**Code 20 — `SERV_CONSOLE_MSG_BROADCAST`**: `0:20:2<line1>|<line2>` — the `2` is the CSS digit (the literal separator is the 2-char string `":2"` @0x000852f4). Keypad lines are `|`-separated. Barracuda replaces **only the first** `:` inside the console text with `-` (and only when pos>0); reverse it with a single replace. CONFIRMED.
+**Code 20 — `SERV_CONSOLE_MSG_BROADCAST`**: `0:20:2<line1>|<line2>` — the `2` is **NOT a field and never varies**: the second separator passed to `bprintf` (`%d%s%d%s%s`, fmt @0x85304) is the 2-char literal `":2"` @0x000852f4, loaded from the constant pool (`ldr r7,[pc,#1960]` at 0xdbd8) — the vendor page then *reads* it as a colour digit, which is why an earlier version of this line called it "the CSS digit"; a decoder may key on the constant `:2` safely. Keypad lines are `|`-separated. Barracuda replaces **only the first** `:` inside the console text with `-` (and only when pos>0); reverse it with a single replace. The id-20 record is followed by **three** `0:-1:2<line1>|<line2>` copies carrying the RAW text (no replacement; same `":2"` literal, `stm sp,{r4,r7}` with `r4 = -1`), and the whole arm runs only when the reply's session is 0. Re-read from the decompiler and the resolved literals 2026-09-12; `tuxweb/src/ipc.rs::frame_console` reproduces it. CONFIRMED.
 
 **Code 504 — `SERV_REG_INI_RESP_DATA`**, the answer to registration, 8 fields:
 

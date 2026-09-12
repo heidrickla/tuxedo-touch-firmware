@@ -72,7 +72,22 @@ pub struct Config {
     /// `TUXWEB_CHAIN`/`TUXWEB_KEY` and exits rather than silently serving in the
     /// clear if they are set but unusable.
     pub tls: Option<Arc<rustls::ServerConfig>>,
+    /// How long the reply queue may stay silent before tuxweb assumes the
+    /// broadcast has been switched off underneath it and registers again.
+    ///
+    /// `home_back_press()` in `/tuxedo` zeroes `F7_Mesgs_enabled` -- the same
+    /// byte a 501 clears -- and a Home or Back press on the touchscreen reaches
+    /// it. The vendor never noticed because every new push connection made it
+    /// re-register; a permanent server that registers once would go silent until
+    /// its next relaunch. An idle panel sends a status roughly every 30 s
+    /// (`push-idle-300s.bin`: 19 in 300 s), so a silence several times that long
+    /// means the flag is off. Re-registering flushes a queue that is empty
+    /// anyway and yields a fresh 504, which the stream carries like any other.
+    pub silence: Duration,
 }
+
+/// Default silence before a re-register: four idle status periods.
+pub const DEFAULT_SILENCE: Duration = Duration::from_secs(120);
 
 /// How long to wait for an arm/disarm to be confirmed by a state-byte flip on
 /// the push stream. The consumer's own client waits ~1.5–1.8 s against an 8 s
@@ -308,8 +323,20 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let clients: Arc<Mutex<Vec<Sink>>> = Arc::new(Mutex::new(Vec::new()));
     let cid = Arc::new(AtomicU32::new(0x4242_0000));
 
-    println!("serve: sending 500 REGISTER, session {}", cfg.session);
-    commands.send(&command(cfg.session, cmd::REGISTER))?;
+    // Register, then switch console mode on so /tuxedo streams the keypad LCD
+    // (msgType 20). Console mode is display-only -- the key-sending path is a
+    // separate write this server never issues -- and it is a standing change
+    // to the panel: whoever opens the touchscreen's console page will find it
+    // already on. Both the broadcast and console mode are cleared by a Home/Back
+    // press, which the silence watchdog below repairs by doing this again.
+    let register = |why: &str| -> Result<(), String> {
+        println!("serve: sending 500 REGISTER, session {} ({why})", cfg.session);
+        commands.send(&command(cfg.session, cmd::REGISTER))?;
+        std::thread::sleep(Duration::from_millis(200));
+        println!("serve: sending 19 CONSOLE_MODE (keypad LCD on the stream)");
+        commands.send(&command(cfg.session, cmd::CONSOLE_MODE))
+    };
+    register("startup")?;
 
     // Reader thread: nothing but receive -> channel. B5.
     let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
@@ -452,11 +479,27 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
     // Worker: drain the channel, update the model, fan out. Always drains.
     let started = Instant::now();
+    let mut last_reply = Instant::now();
+    let mut reregisters = 0u32;
     loop {
         if let Some(w) = cfg.window {
             if started.elapsed() >= w {
                 break;
             }
+        }
+        // The silence watchdog: no reply for `silence` means the broadcast was
+        // switched off underneath us (a touchscreen Home/Back, or a /tuxedo
+        // restart). Register again -- once per silence period, never in a loop.
+        if last_reply.elapsed() >= cfg.silence {
+            reregisters += 1;
+            match register(&format!(
+                "silence: no reply for {}s, re-register #{reregisters}",
+                last_reply.elapsed().as_secs()
+            )) {
+                Ok(()) => {}
+                Err(e) => eprintln!("serve: re-register failed: {e}"),
+            }
+            last_reply = Instant::now();
         }
         let raw = match rx.recv_timeout(Duration::from_millis(500)) {
             Ok(r) => r,
@@ -466,6 +509,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         if raw.is_empty() {
             continue; // reader's idle tick
         }
+        last_reply = Instant::now();
         let quick = match Reply::parse(&raw).map(|r| r.msg_type) {
             Some(21) => {
                 let part = state.lock().unwrap().current_partition();
@@ -511,6 +555,7 @@ mod tests {
             redirect_bind: None,
             token_store: "/nonexistent".into(),
             tls: None,
+            silence: DEFAULT_SILENCE,
         })
         .unwrap_err();
         assert!(e.contains("non-zero"), "{e}");

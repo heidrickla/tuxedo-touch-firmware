@@ -78,6 +78,7 @@ if [ "${VIA_CONF:-0}" = 1 ]; then
         echo "token_store=$TOK"
         echo "quickarm=$QA"
         echo "session=4242"
+        echo "silence=10"    # bench: the fake panel goes quiet after the disarm
         [ "${TLS:-0}" = 1 ] && { echo "chain=$TUXWEB_CHAIN"; echo "key=$TUXWEB_KEY"; }
     } > "$CONF"
     say "2a. the per-boot guard: past the bound it must NOT serve"
@@ -93,7 +94,7 @@ if [ "${VIA_CONF:-0}" = 1 ]; then
     TUXWEB_SERVE_CONF="$CONF" TUXWEB_LAUNCH_COUNTER="$CTR" \
         /tmp/Barracuda > /tmp/serve.log 2>&1 & SRV=$!
 else
-    TUXWEB_TOKEN_STORE="$TOK" TUXWEB_REDIRECT_BIND="127.0.0.1:$RPORT" \
+    TUXWEB_TOKEN_STORE="$TOK" TUXWEB_REDIRECT_BIND="127.0.0.1:$RPORT" TUXWEB_SILENCE_SECS=10 \
       "$BIN" --serve 4242 "127.0.0.1:$PORT" 24 "$QA" > /tmp/serve.log 2>&1 & SRV=$!
 fi
 sleep 2                                   # let 500 + 504 + Ready settle into the model

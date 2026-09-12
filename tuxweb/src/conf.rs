@@ -39,6 +39,8 @@ pub struct ServeConf {
     pub token_store: String,
     pub quickarm: String,
     pub session: u32,
+    /// Seconds of reply-queue silence before re-registering (`serve.rs`).
+    pub silence: std::time::Duration,
 }
 
 /// Parse `key=value` lines. `#` comments and blank lines are ignored; unknown
@@ -58,7 +60,7 @@ pub fn parse(text: &str) -> Result<ServeConf, String> {
         let k = k.trim();
         match k {
             "bind" | "redirect_bind" | "chain" | "key" | "token_store" | "quickarm"
-            | "session" => {}
+            | "session" | "silence" => {}
             other => return Err(format!("line {}: unknown key {other:?}", n + 1)),
         }
         kv.insert(k.to_string(), v.trim().to_string());
@@ -71,6 +73,16 @@ pub fn parse(text: &str) -> Result<ServeConf, String> {
     if session == 0 {
         return Err("session must be non-zero".into());
     }
+    let silence = match get("silence") {
+        Some(s) => {
+            let secs = s.parse::<u64>().map_err(|_| format!("silence: not a number: {s:?}"))?;
+            if secs == 0 {
+                return Err("silence must be non-zero (it would re-register every tick)".into());
+            }
+            std::time::Duration::from_secs(secs)
+        }
+        None => crate::serve::DEFAULT_SILENCE,
+    };
     Ok(ServeConf {
         bind: get("bind").unwrap_or_else(|| "0.0.0.0:443".into()),
         redirect_bind: Some(get("redirect_bind").unwrap_or_else(|| "0.0.0.0:80".into()))
@@ -80,6 +92,7 @@ pub fn parse(text: &str) -> Result<ServeConf, String> {
         token_store: get("token_store").unwrap_or_else(|| crate::auth::TOKEN_STORE.into()),
         quickarm: get("quickarm").unwrap_or_else(|| crate::session::QUICKARM_STATE.into()),
         session,
+        silence,
     })
 }
 
@@ -123,6 +136,10 @@ mod tests {
         assert_eq!(c.quickarm, crate::session::QUICKARM_STATE);
         assert_eq!(c.session, 4242);
         assert!(c.chain.is_none() && c.key.is_none());
+        assert_eq!(c.silence, crate::serve::DEFAULT_SILENCE);
+        // the bench sets it short; zero is refused (it would re-register every tick)
+        assert_eq!(parse("silence=8").unwrap().silence.as_secs(), 8);
+        assert!(parse("silence=0").unwrap_err().contains("non-zero"));
     }
 
     #[test]
