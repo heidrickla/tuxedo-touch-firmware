@@ -38,15 +38,22 @@ CI green through `abd52c3`, including the ARM cross-build. **Decision (Lewis):
 new simpler API + token auth, `ha-tuxedo-touch` updated to use it** — not a
 reimplementation of the vendor's AES/HMAC API.
 
-**8d state:** the release ARM binary (md5 `8ed6abee71473f8b1d67ba1503805f62`)
-and `emu/stage8-panel.sh` are staged in the panel's `/tmp` (tmpfs — re-stage
-after a reboot) and `phase0` read **READY** on the live panel (budget 8/24, 16
-left, 5 needed). **The window itself is not run** — it needs Lewis at the panel,
-HA on the tuxweb-aware integration with the token first, and the panel left
-disarmed. Runbook order: `phase1` → `token` → put the token in the HA entry →
-`cutover` → **reload the HA entry** (it probes `GetCapabilities` once at setup,
-so it stays in stock mode until reloaded) → verify → (revert = `rm` the conf +
-vendor back).
+**8d DONE — the panel is CUT OVER, 2026-09-12.** tuxweb (release ARM build
+`8ed6abee…`) is the permanent web server: pid 2590, serve conf on mtd17, 2/2
+listeners (80 + 443), 6280/9443 gone, 11 fds, no panic, budget `RESTART-10`
+(14 left). Verified against the real panel over owner-root-checked TLS 1.3:
+capabilities 200, status, push (401/subscribed — the real 504 frame matched the
+capture byte for byte), 80→301, **ArmWithCode stay → `Sucess` after the panel
+confirmed → "259  Secs Remaining"**, **DisarmWithCode → `Sucess` → "Ready To
+Arm"**; panel left DISARMED. HA (`ha-management-02` session) reloaded into
+**tuxweb mode**: push connected, capabilities detected, entity disarmed, no
+errors; the cutover looked like a reconnect from HA's side, not an outage.
+Pending in that session: arm STAY / disarm through the HA entity, on Lewis's
+go-ahead there. **Revert remains one command:** `sh /tmp/stage8-panel.sh
+revert` (rm the conf, vendor back from `vendor/Barracuda` `0066ad95`, two
+kills). `/tmp` is tmpfs — the runbook and staged binary vanish on reboot, but
+the serve conf and token store are on mtd17 and survive; a reboot relaunches
+tuxweb in serve mode by itself.
 
 **`ha-tuxedo-touch` is done:** branch `tuxweb-api`, commit `477d2b1`, pushed
 to GitHub + gitea, CI green on Linux with **359 tests** (the HA layer cannot
