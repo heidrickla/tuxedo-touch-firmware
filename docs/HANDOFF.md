@@ -54,6 +54,17 @@ and the **Envisalink integration on a separate ECP path recorded the same
 transitions** — real at the VISTA. Push held one connection throughout. Panel
 left DISARMED. **Stage 8 is complete.** (Envisalink says `armed_home` instantly;
 Tuxedo says `arming` for the 60 s exit delay first — both correct.)
+**v15 FLASHED 2026-09-12 (`RELEASES.md`):** tuxweb is IN the image now
+(`TUXWEB_MD5 ff389839`), the vendor parked at `vendor/Barracuda`, and
+**P16-dst-isdst** — `/tuxedo` set `tm_isdst=0` before `mktime`, so the clock
+ran an hour ahead all summer; `tm_isdst=-1` took it from +3578 s to **−22 s**
+against real UTC, confirmed on hardware. `patches.tsv` has 285 rows and its
+vendor rows name `vendor/Barracuda`. Two hard-won facts from the day: a plain
+`reboot` did NOT reprogram — the flash needed a touchscreen confirmation — and
+supervis relaunches a dead Barracuda only on its **10-minute tick**, so
+`stage8-panel.sh` now starts the binary itself after a kill (`relaunch_now`).
+Also on the stream now: the keypad LCD as `0:20:2…` console records (console
+mode held on), and a silence re-register for the Home/Back gap.
 **Revert remains one command:** `sh /tmp/stage8-panel.sh
 revert` (rm the conf, vendor back from `vendor/Barracuda` `0066ad95`, two
 kills). `/tmp` is tmpfs — the runbook and staged binary vanish on reboot, but
