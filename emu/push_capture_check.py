@@ -205,10 +205,21 @@ def serve_tux(deadline_s, cmdlog):
 
 # -- HTTP helpers ------------------------------------------------------------
 
-def _http(hostport, request, secs):
+def _http(hostport, request, secs, plain=False):
+    """One HTTP exchange. If TLS_CA is set in the environment (and `plain` is
+    not asked for), the connection is TLS with the certificate chain VERIFIED
+    against that CA and the hostname/IP checked -- so a TLS run proves the
+    listener serves our certificate, not merely that bytes flowed."""
     import socket
     host, port = hostport.rsplit(":", 1)
     sk = socket.create_connection((host, int(port)), timeout=5)
+    ca = os.environ.get("TLS_CA")
+    if ca and not plain:
+        import ssl
+        ctx = ssl.create_default_context(cafile=ca)
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        sk = ctx.wrap_socket(sk, server_hostname=host)
     sk.sendall(request)
     sk.settimeout(float(secs))
     got = bytearray()
@@ -269,8 +280,9 @@ def apicall(method, hostport, path, body, token, expect, needle):
 
 
 def redirectget(hostport, path):
+    # the 80 leg is plaintext by definition, whatever the main listener does
     got = _http(hostport, ("GET %s HTTP/1.1\r\nHost: panel.test\r\nConnection: close\r\n\r\n"
-                           % path).encode(), 5)
+                           % path).encode(), 5, plain=True)
     head = got.split(b"\r\n\r\n", 1)[0].decode("latin-1", "replace")
     status = head.split("\r\n")[0]
     want_loc = "Location: https://panel.test%s" % path

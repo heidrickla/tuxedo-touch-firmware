@@ -165,7 +165,8 @@ impl Sink {
     /// Wrap an accepted socket, doing the TLS handshake lazily on first use as
     /// rustls does. The read timeout is set on the socket underneath either
     /// way, so a client that connects and says nothing cannot hold a slot.
-    fn accept(
+    /// `pub` because the stage-8 serve mode wraps its listener the same way.
+    pub fn accept(
         c: TcpStream,
         tls: Option<&std::sync::Arc<rustls::ServerConfig>>,
     ) -> Result<Sink, String> {

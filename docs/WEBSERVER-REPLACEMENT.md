@@ -3078,11 +3078,23 @@ update lands alongside.
   byte-correct); the queue saw exactly `500, (2,1234), (3,1234), 501` — ARM_STAY
   with the user code at `+0x0C`, in order. `cargo test` 105 green.
 
+- **TLS on the serve listener — DONE.** `serve::Config::tls` is built by
+  `main::tls_from_env` from `TUXWEB_CHAIN`/`TUXWEB_KEY` (exits if set but
+  unusable, never silently plaintext) and wraps the listener with the same
+  `Sink::accept` the stage-3 shim proved. `TLS=1 emu/push-serve-test.sh` runs
+  the **whole flow above over rustls**, every client VERIFYING the chain and
+  the IP SAN against a throwaway P-256 cert — 401/subscribe/capability/
+  status/arm/disarm/negatives/live stream all pass identically to plaintext.
+  The 80 leg stays plaintext by definition.
+
 All of the above is on the build VM at `/work/tuxweb-8a` and its harnesses at
-`/work/push-emu`. Still to do for stage 8: TLS on the serve listener (rustls is
-proven since stage 3; it is a `Sink::accept` away, and needs the cert path from
-stage 4 to exercise), the `ha-tuxedo-touch` update (in progress, separately),
-then the 8d window.
+`/work/push-emu`. **The tuxweb side of stage 8 is complete on the bench.**
+Still to do: land the `ha-tuxedo-touch` update (in progress, separately), then
+the 8d window — build the release ARM binary (CI's cross-build already proves
+it compiles static for the panel), stage it as `/opt/webserver/Barracuda` with
+the vendor at `vendor/`, install the stage-4 cert, `--issue-token` for HA,
+`kill -9` the vendor, verify push + arm + disarm + status from HA, leave
+disarmed. Revert = `mv` the vendor back.
 
 ### Stage 9 — Decommission
 

@@ -16,6 +16,8 @@
 #
 #   sudo bash emu/push-serve-test.sh
 #   BIN=/path/to/tuxweb sudo -E bash emu/push-serve-test.sh
+#   TLS=1 sudo -E bash emu/push-serve-test.sh     # the whole flow over rustls,
+#                                                 # chain VERIFIED by the client
 set -u
 BIN=${BIN:-/work/tuxweb-8a/target/debug/tuxweb}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -43,6 +45,21 @@ echo "  issued a 64-hex token; store: $("$BIN" --list-tokens "$TOK" | tr -s ' ')
 
 say "1. create both queues at the panel geometry"
 python3 "$CHK" mkqueues || { python3 "$CHK" unlink; exit 1; }
+
+# TLS=1: a throwaway self-signed cert with an IP SAN, served by rustls and
+# VERIFIED by every client below (chain + IP match). Plaintext otherwise.
+TLSDIR=/tmp/tls-test
+if [ "${TLS:-0}" = 1 ]; then
+    say "1b. TLS: throwaway cert (P-256, SAN IP:127.0.0.1)"
+    rm -rf "$TLSDIR"; mkdir -p "$TLSDIR"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+        -keyout "$TLSDIR/server.key" -out "$TLSDIR/chain.pem" -days 2 \
+        -subj "/CN=tuxweb-bench" -addext "subjectAltName=IP:127.0.0.1" 2>/dev/null \
+        || { echo "ABORT: openssl could not make a cert"; exit 1; }
+    export TUXWEB_CHAIN="$TLSDIR/chain.pem" TUXWEB_KEY="$TLSDIR/server.key"
+    export TLS_CA="$TLSDIR/chain.pem"
+    echo "  $(openssl x509 -in "$TLSDIR/chain.pem" -noout -subject -ext subjectAltName | tr '\n' ' ')"
+fi
 
 say "2. reactive fake /tuxedo, then tuxweb --serve with the token store"
 python3 "$CHK" serve_tux 40 "$CMDLOG" & TUX=$!
@@ -98,7 +115,9 @@ step python3 "$CHK" verify_cmds "$CMDLOG"
 say "13. cleanup"
 python3 "$CHK" unlink
 rm -f "$QA" "$TOK" "$CMDLOG" "$OUT" /tmp/serve.log
+rm -rf "$TLSDIR"
 
 echo
-[ "$fail" = 0 ] && echo "OK push-serve" || echo "FAIL push-serve"
+MODE=$([ "${TLS:-0}" = 1 ] && echo "over TLS" || echo "plaintext")
+[ "$fail" = 0 ] && echo "OK push-serve ($MODE)" || echo "FAIL push-serve ($MODE)"
 exit "$fail"

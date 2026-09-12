@@ -66,6 +66,12 @@ pub struct Config {
     /// The token store path (`auth.rs`). The push stream and the write API are
     /// gated on a token from it (§4.10.1); an empty store authenticates nobody.
     pub token_store: String,
+    /// TLS for the push + API listener (this is the `:443` leg on the panel).
+    /// `None` serves plaintext -- only for the bench. rustls on this hardware
+    /// has been proven since stage 3; `main::tls_from_env` builds this from
+    /// `TUXWEB_CHAIN`/`TUXWEB_KEY` and exits rather than silently serving in the
+    /// clear if they are set but unusable.
+    pub tls: Option<Arc<rustls::ServerConfig>>,
 }
 
 /// How long to wait for an arm/disarm to be confirmed by a state-byte flip on
@@ -346,6 +352,11 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let acc_store = Arc::clone(&store);
     let acc_commands = Arc::clone(&commands);
     let acc_session = cfg.session;
+    let acc_tls = cfg.tls.clone();
+    match &acc_tls {
+        Some(_) => println!("serve: listener is TLS (rustls)"),
+        None => println!("serve: *** listener is PLAINTEXT -- bench only ***"),
+    }
     let accept = std::thread::spawn(move || {
         for s in listener.incoming() {
             let raw = match s {
@@ -356,13 +367,19 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 }
             };
             let peer = raw.peer_addr().map(|a| a.to_string()).unwrap_or_default();
-            // Plaintext this cut; TLS wraps here in the serve entrypoint. Set both
-            // timeouts on the socket before wrapping so a client that connects and
-            // says nothing cannot hold a slot, and a stuck write cannot wedge the
-            // fan-out.
+            // Set both timeouts on the socket before wrapping so a client that
+            // connects and says nothing cannot hold a slot, and a stuck write
+            // cannot wedge the fan-out. TLS (if configured) wraps the same socket;
+            // the handshake happens lazily on the first read.
             let _ = raw.set_read_timeout(Some(Duration::from_secs(10)));
             let _ = raw.set_write_timeout(Some(Duration::from_secs(5)));
-            let mut sink = Sink::Plain(raw);
+            let mut sink = match Sink::accept(raw, acc_tls.as_ref()) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("serve: {peer}: {e}");
+                    continue;
+                }
+            };
             let (head, body0) = match crate::proxy::read_head(&mut sink, 16 * 1024) {
                 Ok(h) => h,
                 Err(e) => {
@@ -493,6 +510,7 @@ mod tests {
             window: Some(Duration::from_millis(1)),
             redirect_bind: None,
             token_store: "/nonexistent".into(),
+            tls: None,
         })
         .unwrap_err();
         assert!(e.contains("non-zero"), "{e}");

@@ -633,6 +633,8 @@ fn main() {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| auth::TOKEN_STORE.to_string()),
+            // TUXWEB_CHAIN + TUXWEB_KEY -> TLS; exits if set but unusable.
+            tls: tls_from_env(),
         };
         match serve::run(cfg) {
             Ok(()) => std::process::exit(0),
