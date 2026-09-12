@@ -6,7 +6,7 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
-## v15 — 2026-09-12 — BUILT AND STAGED ON THE CARD; flash pending
+## v15 — 2026-09-12 — FLASHED AND VERIFIED
 
 **What it is: v14 plus tuxweb as the web server, the vendor parked, and the
 summer clock fix.** The stage-8 cutover (`WEBSERVER-REPLACEMENT.md` §8d) had put
@@ -63,13 +63,29 @@ The tuxweb binary itself is the one already running on the panel, verified live
 (`emu/stage8-verify.py`: capabilities, status, token-gated push with console
 records, 301, arm and disarm confirmed by the panel).
 
-### To flash
+### Flashed 2026-09-12
 
-`reboot`. Then: `verify-panel.sh` (285 sites at the new paths), `stage8-verify.py`,
-the clock against the VM (expect ≈ −22 s, the VISTA's own error, not +3578),
-`/etc/tuxedo-build` reads `BUILD=v15`, and HA reconnects in tuxweb mode.
-Rollback: `push-image.sh /work/v14/app2.hdr --reboot` (vendor at the top, no
-tuxweb; the serve conf on mtd17 is then ignored).
+**A plain `reboot` did NOT reprogram this time** — the panel came back on v14
+in 30 s with the v15 card untouched, so "reflashes when the card differs" is
+not the flasher's trigger as recorded for v14. Lewis confirmed the flash on the
+touchscreen at the next reboot, and it reprogrammed: SSH gone for ~90 s, back
+at `BUILD=v15`, `SYSTEM START` logged 08:33:47 panel time.
+
+| check | result |
+|---|---|
+| `/etc/tuxedo-build` | `BUILD=v15`; `TUXEDO_MD5 c744e3f1` (P16), `TUXWEB_MD5 ff389839`, `VENDOR_BARRACUDA_MD5 0066ad95` — all three match the image |
+| layout | tuxweb at `/opt/webserver/Barracuda`, vendor at `vendor/Barracuda` |
+| mtd17 | serve conf, token store and cert all survived the reflash; tuxweb came up in serve mode by itself |
+| `verify-panel.sh` | **285 sites ok**, listeners exactly 22/80/443, 6800 gone, services, NAND 9 bad blocks (baseline), card rw, hosts clean — "panel matches expectations" |
+| `stage8-verify.py` | capabilities 200, status, push 401/subscribed with console records (`****DISARMED****\|  Ready to Arm  `), 301 — all pass |
+| **clock** | panel − real UTC = **−22 s** (same-instant against the VM), from **+3578 s** before P16: the VISTA's own error and nothing else. **P16 confirmed on hardware.** |
+| HA | resubscribed on its own in tuxweb mode (took the boot's first `setCid`) |
+| rootfs | 55.7 MB free |
+
+Rollback: `push-image.sh /work/v14/app2.hdr --reboot` and confirm on the
+touchscreen (vendor at the top, no tuxweb; the serve conf on mtd17 is then
+ignored). Without a reflash: `rm` the serve conf and `kill -9` the Barracuda
+pid falls back to the parked vendor.
 
 ---
 
