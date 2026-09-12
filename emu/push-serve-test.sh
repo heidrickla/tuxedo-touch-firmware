@@ -130,6 +130,12 @@ step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/Nope" - "$TOKEN" 404 -
 say "9. the 80->301 leg preserves the path"
 step python3 "$CHK" redirectget "127.0.0.1:$RPORT" "/authenticated/tuxedoapi.html?url=x"
 
+say "9b. a subscriber joining after the offline episode gets the recovery only"
+OUT2=/tmp/pushserve-late.out
+sleep 2                                   # the episode (22, -1, recovered) has been sent
+python3 "$CHK" client "127.0.0.1:$PORT" 3 "$OUT2" "$TOKEN"
+step python3 "$CHK" verify_snapshot "$OUT2"
+
 wait "$CLI" 2>/dev/null
 if [ "${VIA_CONF:-0}" = 1 ]; then
     # a permanent server has no window: stop it the way the panel would
@@ -149,7 +155,7 @@ if [ "${VIA_CONF:-0}" = 1 ]; then
         || { echo "  FAIL: launch counter is '$(cat "$CTR" 2>/dev/null)', expected 1"; fail=1; }
 fi
 
-say "11. oracle: the subscriber saw snapshot, then LIVE armed, then LIVE ready"
+say "11. oracle: the subscriber saw snapshot, LIVE armed, LIVE ready, then the offline episode"
 step python3 "$CHK" verify_serve "$OUT"
 
 say "12. oracle: the fake tuxedo saw 500, arm(2,1234), disarm(3,1234)${PERM:+ and no 501}"
@@ -157,7 +163,7 @@ step python3 "$CHK" verify_cmds "$CMDLOG" $PERM
 
 say "13. cleanup"
 python3 "$CHK" unlink
-rm -f "$QA" "$TOK" "$CMDLOG" "$OUT" /tmp/serve.log /tmp/guard.log "$CONF" "$CTR" /tmp/Barracuda
+rm -f "$QA" "$TOK" "$CMDLOG" "$OUT" "$OUT2" /tmp/serve.log /tmp/guard.log "$CONF" "$CTR" /tmp/Barracuda
 rm -rf "$TLSDIR"
 
 echo

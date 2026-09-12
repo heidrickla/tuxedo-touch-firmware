@@ -2967,7 +2967,9 @@ the byte-verified `ipc::frame_*` builders, and `tuxweb/src/session.rs`
   partition (from the last 504's `+0x90`), exactly as §5.12 measured.
 - **Unknown types are diagnosed, not guessed** (§2.5): msgType 22 has no fixture,
   so it is routed to a diagnostic channel with its raw bytes rather than
-  fabricated onto the stream.
+  fabricated onto the stream. *(Superseded in 8d.2: the 22 handler was read off
+  the disassembly and is relayed since v16; the serve loop had been dropping the
+  diagnostic silently, which is the failure mode this rule was meant to avoid.)*
 - **Verified two ways.** `cargo test` (77 pass) includes
   `push::tests::every_reply_reproduces_its_captured_run`, which reconstructs
   every real status frame in both captures and asserts `on_reply` reproduces it
@@ -3213,7 +3215,7 @@ tuxweb from the queues, with the consumer's contract intact, witnessed by the
 consumer and by an independent path. **Stage 8 is complete.** Stage 9 waits,
 per its own text, until this has run for a release.
 
-#### 8d.1 — two things the first serve build got wrong, fixed 2026-09-12 (bench-proven, deploy pending)
+#### 8d.1 — two things the first serve build got wrong, fixed 2026-09-12 (bench-proven, shipped in v15, live-verified below)
 
 **A latent silence.** `home_back_press()` in `/tuxedo` zeroes `F7_Mesgs_enabled`
 — the same byte a 501 clears — and a Home or Back press on the touchscreen
@@ -3234,11 +3236,12 @@ shape, read from the type-20 handler at `0xdb8c` with the decompiler and its
 literals resolved: `%d%s%d%s%s` with `(session, ":", 20, ":2", text′)` —
 **the `2` is the literal `":2"` at `0x852f4`, a constant, not a colour digit**
 — `text′` is the LCD text with its first `:` (index > 0) replaced by `-`, then
-**three** `0:-1:2<raw text>` copies; only when the reply session is 0. No
-push-stream capture holds a console record (the vendor integration dropped
-them before anything logged them), so the decompilation is the arbiter and
-`ipc::frame_console`'s test pins it, with the stage-7c window's real LCD text
-as the sample. **Console mode is now a standing panel behaviour: display only,
+**three** `0:-1:2<raw text>` copies; only when the reply session is 0. At the
+time no push-stream capture held a console record (the vendor integration
+dropped them before anything logged them), so the decompilation was the
+arbiter and `ipc::frame_console`'s test pins it, with the stage-7c window's
+real LCD text as the sample; the live capture below has since confirmed the
+shape on the wire. **Console mode is now a standing panel behaviour: display only,
 no key path; whoever opens the touchscreen's console page finds it already on.**
 
 Proven by `emu/push-serve-test.sh` (plaintext, TLS, and launched as `Barracuda`
@@ -3259,6 +3262,81 @@ measurement and dropped; "who" is in the VISTA's event log (command 17, paged),
 a separate feature. Note also that the LCD's `May Exit Now 60` is a 60 s window
 while the status frame counts the whole delay (`259  Secs Remaining`) — the two
 disagree during arming by design.
+
+#### 8d.2 — the offline path: three defects the fixtures could not show, fixed 2026-09-12 (bench-proven with a control; ships in v16)
+
+Found by reading `/tuxedo`'s status sender in the decompiler instead of only
+the captures. `CReceiverThread::sltSendChangedPartitionStatus(int)` @`0x144880`:
+
+```
+msgType = 21
+if (GetCurrentPartition() != part) return          ; ONE partition on the stream
+text  = <enableDisarmOption() ? 0xFF : 0xFE> <getBarType()> <getstatus()>
+if (GetOnlineStatus() != 1) { this->offline = 1; msgType = 22 }
++0x08 = PanelIsTalking() ? GetOnlineStatus() : -1
+osal_MqSend(Q_ServCmdTrsmtr, buf, 0x22c)
+```
+
+`GetOnlineStatus()` reads `myPanel+0x67`, a byte the VISTA reports about itself
+(`HandlePanelStatus` @`0x589454` copies it out of the panel's status response
+next to AC, battery and telco; `SetOnlineStatus` accepts 1..4; 1 is online,
+the others are the "Panel Busy / Downloading / Panel Offline" family in the
+string table). `PanelIsTalking()` reads `myPanel+0x65`, set by the ECP receiver
+and cleared when it stops hearing the panel. Two different facts, and the frame
+carries both: **the type says whether the VISTA calls itself online; `+0x08`
+says whether the Tuxedo can hear it.**
+
+Against that, three things in the v15 tuxweb were wrong, none of them visible
+in the two capture fixtures because the panel has never been offline or off
+the air during a capture:
+
+1. **`+0x08` was formatted unsigned.** The vendor's `bprintf` uses `%d`; `ipc.rs`
+   printed the `u32`, so a not-talking status went out as
+   `0:21:4294967295:fe:…` instead of `0:21:-1:fe:…`. The integration's dead-link
+   test is `panel_status_code == -1`, so the ECP-link sensor shipped in
+   ha-tuxedo-touch 0.6.0 could not have tripped on tuxweb at all.
+2. **msgType 22 was dropped silently.** `push.rs` routed it to the diagnostic
+   channel as "no fixture", and the serve loop discards diagnostics without a
+   log line. The vendor's handler @`0xd9c4` (disassembled) formats it with the
+   18/22 shape `%d%s%d%s%s%s%d` = `session:22:<flag><css><text>:<+0x08>`
+   (`ldr r3,[sp,#0x27c]` is `+0x08`, seventh conversion) and follows it with
+   **two** `-1` copies (`mvn r7,#0`; `bprintf` @`0xda40`, `0xda60`), then
+   `setPartStatus(22, …)`, `setpanelOnline(0)`; session 0 only, like the 21.
+3. **The replay cache keyed statuses on `(msgType, arg)`** on the reading that
+   `arg` was the partition. It is the online status, so after a `-1` and the
+   recovery to `1` the map held both and — `BTreeMap` order, `1 <
+   0xFFFFFFFF` — replayed the stale `-1` LAST to every new subscriber: a dead
+   link reported to a client joining a healthy panel, until the next live
+   status.
+
+Fixes: `ipc::push_int` formats every `%d` field signed; `push::on_reply` has a
+22 arm (`frame_typed(+0x08)` + `OFFLINE_FILLERS = 2`, session 0 only, else
+diagnostic); `PanelState` keeps one `last_status` slot that a 21 or a 22
+replaces, plus `last_18`, in place of the map. `cargo test` 116 green with
+three new pins (`an_offline_status_is_a_typed_frame_and_two_fillers`,
+`status_frame_prints_a_negative_arg_as_the_vendor_does`,
+`a_recovered_link_is_not_replayed_as_dead`); the byte-for-byte captured-run
+test is unchanged and still passes.
+
+**Bench, with a control.** `emu/push-serve-test.sh`'s fake `/tuxedo` now sends
+an offline episode after the disarm — a 22 with `+0x08 = 3`, a 21 with `-1`,
+then the recovery — and a second subscriber joins afterwards. All three modes
+(plaintext, `TLS=1`, `VIA_CONF=1 TLS=1`) pass: the first subscriber sees
+`0:22:þ1Ready To Arm:3` + 2 copies, `0:21:-1:fe:…` + 3, the recovery + 3, in
+order; the late subscriber's snapshot carries the recovered status once and no
+`0:22:` or `0:21:-1:` frame. The same harness against a binary built from the
+committed (pre-fix) sources **fails both new oracles** — `0:21:4294967295:…`
+on the wire, no 22 at all, and the stale `-1` replayed after the recovery —
+so the oracles discriminate.
+
+**Not proven: that the panel actually sends these.** The `-1` and the 22 are
+read out of the producer; neither has been observed on this panel's wire,
+which would need the VISTA taken offline or the ECP cable pulled. What the
+fixes guarantee is that IF `/tuxedo` sends them, tuxweb relays them as the
+vendor did. The consumer side is open: ha-tuxedo-touch 0.6.0 ignores command
+id 22 (`STATUS_CMDS` is `{21, -1}`) and reads the status code from field 2,
+where a 22 carries its text; a "panel offline" reading needs a decoder change
+there, specified to the HA session 2026-09-12.
 
 ### Stage 9 — Decommission
 

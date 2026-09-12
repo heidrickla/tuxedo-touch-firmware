@@ -481,6 +481,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let started = Instant::now();
     let mut last_reply = Instant::now();
     let mut reregisters = 0u32;
+    // Reply types with no frame shape, each logged once. Before this the
+    // diagnostic emission was dropped in silence, which is how a msgType 22
+    // (the panel-offline status) went unrelayed from the cutover to v16.
+    let mut undecoded_seen = std::collections::BTreeSet::new();
     loop {
         if let Some(w) = cfg.window {
             if started.elapsed() >= w {
@@ -518,6 +522,16 @@ pub fn run(cfg: Config) -> Result<(), String> {
             _ => 0,
         };
         let em = state.lock().unwrap().observe(&raw, quick);
+        if let Some((t, r)) = &em.undecoded {
+            if undecoded_seen.insert(*t) {
+                let head: Vec<String> = r.iter().take(16).map(|b| format!("{b:02x}")).collect();
+                eprintln!(
+                    "serve: reply msgType {t} has no frame shape; not relayed \
+                     (first 16 bytes {}; said once per type)",
+                    head.join(" ")
+                );
+            }
+        }
         if em.parts.is_empty() {
             continue;
         }

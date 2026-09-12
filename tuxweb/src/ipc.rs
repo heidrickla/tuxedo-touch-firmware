@@ -45,14 +45,23 @@ pub const COMMAND_LEN: usize = 404;
 ///   `strcpy`s then `strcat`s it there from `apl_getEcpConsoleModeData()`, so
 ///   `parse` is right for the console-mode message as well as for status.
 /// * **`arg` is a container, not a meaning.** On `sltSendChangedPartitionStatus`
-///   (msgType 21) `+0x08` is `GetOnlineStatus()`, so the observed
-///   `0:21:1:fe:...` frame means *online*.
+///   (msgTypes 21 and 22) `+0x08` is `PanelIsTalking() ? GetOnlineStatus() : -1`
+///   (decompiled at `0x144880`, 2026-09-12), so the observed `0:21:1:fe:...`
+///   frame means *online and talking*. It is NOT the partition: that function
+///   sends only when `GetCurrentPartition()` matches, so one partition is ever
+///   on the stream. The same function picks the type: **21 while
+///   `GetOnlineStatus() == 1`, 22 otherwise** (`SERV_PANEL_OFFLINE_MSG_BROADCAST`
+///   -- the VISTA reporting itself busy, downloading or offline, values 2..4,
+///   which `HandlePanelStatus` copies out of the panel's own status response).
+///   `-1` is a different fact: the ECP receiver has stopped hearing the panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {
     pub session: u32,
     pub msg_type: u32,
-    /// `+0x08`. Per-type: `GetOnlineStatus()` on msgType 21's
-    /// `sltSendChangedPartitionStatus`. See `reply-layouts.txt`.
+    /// `+0x08`, a 32-bit word the vendor prints with `%d`, so `-1` is on the
+    /// wire as `-1` and must be formatted SIGNED (`push_int`). Per-type: on
+    /// msgTypes 21/22 (`sltSendChangedPartitionStatus`) it is the online
+    /// status, or `-1` when the panel is not talking. See `reply-layouts.txt`.
     pub arg: u32,
     /// From `+0x0E`, NUL-terminated, latin-1. Not utf-8: the first byte is
     /// commonly 0xFE or 0xFF.
@@ -224,26 +233,32 @@ pub mod cmd {
 // separator as an ARGUMENT rather than putting it in the format string. The
 // formats below are the vendor's own, from the handlers named in each comment.
 
-fn push_u32(out: &mut Vec<u8>, v: u32) {
-    out.extend_from_slice(v.to_string().as_bytes());
+/// One `%d` conversion: the vendor passes each 32-bit word to `bprintf` as a
+/// signed int, so `+0x08 = -1` (panel not talking) prints as `-1`. Formatting
+/// the word unsigned put `4294967295` there instead -- a value the consumer's
+/// dead-link test (`panel_status_code == -1`) can never match. Neither capture
+/// holds a negative field, which is why the byte-for-byte replay did not catch
+/// it; `status_frame_prints_a_negative_arg_as_the_vendor_does` now does.
+fn push_int(out: &mut Vec<u8>, v: u32) {
+    out.extend_from_slice((v as i32).to_string().as_bytes());
 }
 
 /// msgType 21, handler `0xda80`: `%d%s%d%s%d%s%x%s%s%s%d`
 /// = session : type : arg : state-as-HEX : text : quick-arm.
 pub fn frame_status(r: &Reply, quick_arm: u32) -> Vec<u8> {
     let mut o = Vec::new();
-    push_u32(&mut o, r.session);
+    push_int(&mut o, r.session);
     o.push(b':');
-    push_u32(&mut o, r.msg_type);
+    push_int(&mut o, r.msg_type);
     o.push(b':');
-    push_u32(&mut o, r.arg);
+    push_int(&mut o, r.arg);
     o.push(b':');
     // %x of the state byte -- lowercase hex, no padding, as printf gives
     o.extend_from_slice(format!("{:x}", r.state_byte().unwrap_or(0)).as_bytes());
     o.push(b':');
     o.extend_from_slice(&r.text);
     o.push(b':');
-    push_u32(&mut o, quick_arm);
+    push_int(&mut o, quick_arm);
     o
 }
 
@@ -252,6 +267,16 @@ pub fn frame_status(r: &Reply, quick_arm: u32) -> Vec<u8> {
 ///
 /// 18 and 22 share this format, so a decoder keyed on format shape alone would
 /// conflate them.
+///
+/// **For msgType 22 the trailing value is a real one.** Read off the handler's
+/// argument set-up (disassembled 2026-09-12): `ldr r3,[sp,#0x27c]` is `+0x08`
+/// of the buffer at `sp+0x274`, stored at `[sp,#16]` as the seventh conversion;
+/// `r6 + 14` is the text. So the frame is `session:22:<flag><css><text>:<arg>`
+/// with `arg` the `PanelIsTalking() ? GetOnlineStatus() : -1` word the same
+/// `/tuxedo` function writes for a 21 -- and then TWO `frame_filler` copies
+/// (`mvn r7,#0` at `0xda24`, two `bprintf`s at `0xda40` and `0xda60`), not the
+/// three a 21 gets. The vendor takes this arm only when the reply's session is
+/// 0, then `setPartStatus(22, text, arg)` and `setpanelOnline(0)`.
 ///
 /// **`trailing` is the reply's `+0x08`, and for msgType 18 nothing initialises
 /// it.** `sltSendNewPartitionDetails` @`0x13e0c4` does `sub sp,sp,#0x250`, then
@@ -266,13 +291,13 @@ pub fn frame_status(r: &Reply, quick_arm: u32) -> Vec<u8> {
 /// reading uninitialised memory.
 pub fn frame_typed(r: &Reply, trailing: u32) -> Vec<u8> {
     let mut o = Vec::new();
-    push_u32(&mut o, r.session);
+    push_int(&mut o, r.session);
     o.push(b':');
-    push_u32(&mut o, r.msg_type);
+    push_int(&mut o, r.msg_type);
     o.push(b':');
     o.extend_from_slice(&r.text);
     o.push(b':');
-    push_u32(&mut o, trailing);
+    push_int(&mut o, trailing);
     o
 }
 
@@ -294,16 +319,16 @@ pub fn frame_typed(r: &Reply, trailing: u32) -> Vec<u8> {
 /// has always been four long, and the current partition is the `arg` field.
 pub fn frame_registration(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
     let mut o = Vec::new();
-    push_u32(&mut o, r.session);
+    push_int(&mut o, r.session);
     o.push(b':');
-    push_u32(&mut o, r.msg_type);
+    push_int(&mut o, r.msg_type);
     o.push(b':');
-    push_u32(&mut o, r.arg);
+    push_int(&mut o, r.arg);
     o.push(b':');
     o.extend_from_slice(&r.text);
     for v in extra {
         o.push(b':');
-        push_u32(&mut o, v);
+        push_int(&mut o, v);
     }
     o
 }
@@ -316,14 +341,14 @@ pub fn frame_registration(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
 /// printed rather than taken from the reply.
 pub fn frame_registration_filler(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
     let mut o = Vec::new();
-    push_u32(&mut o, r.session);
+    push_int(&mut o, r.session);
     o.extend_from_slice(b":-1:");
-    push_u32(&mut o, r.arg);
+    push_int(&mut o, r.arg);
     o.push(b':');
     o.extend_from_slice(&r.text);
     for v in extra {
         o.push(b':');
-        push_u32(&mut o, v);
+        push_int(&mut o, v);
     }
     o
 }
@@ -338,7 +363,7 @@ pub fn frame_registration_filler(r: &Reply, extra: [u32; 4]) -> Vec<u8> {
 /// of this line said "after every status frame", which was too broad.
 pub fn frame_filler(r: &Reply) -> Vec<u8> {
     let mut o = Vec::new();
-    push_u32(&mut o, r.session);
+    push_int(&mut o, r.session);
     o.extend_from_slice(b":-1:");
     o.extend_from_slice(&r.text);
     o
@@ -371,7 +396,7 @@ pub fn frame_console(r: &Reply) -> Vec<u8> {
         }
     }
     let mut o = Vec::new();
-    push_u32(&mut o, r.session);
+    push_int(&mut o, r.session);
     o.extend_from_slice(b":20:2");
     o.extend_from_slice(&text);
     o
@@ -382,7 +407,7 @@ pub fn frame_console(r: &Reply) -> Vec<u8> {
 /// no colon replacement. Emitted three times after each [`frame_console`].
 pub fn frame_console_unsolicited(r: &Reply) -> Vec<u8> {
     let mut o = Vec::new();
-    push_u32(&mut o, r.session);
+    push_int(&mut o, r.session);
     o.extend_from_slice(b":-1:2");
     o.extend_from_slice(&r.text);
     o

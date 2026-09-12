@@ -108,6 +108,13 @@ HOME = reply_typed(18, 2, "1 P1  H")
 # one carries a ':' so the vendor's first-colon-to-'-' rule is exercised.
 LCD_DISARMED = reply_typed(20, 0, "****DISARMED****|  Ready to Arm  ")
 LCD_ARMED = reply_typed(20, 0, "ARMED ***STAY***|Exit: 59 secs")
+# An offline episode, as /tuxedo's sltSendChangedPartitionStatus (0x144880)
+# writes it: +0x08 is PanelIsTalking() ? GetOnlineStatus() : -1, and the type
+# is 22 instead of 21 whenever GetOnlineStatus() != 1 (the VISTA reporting
+# itself busy / downloading / offline, 2..4). Same state byte and text as a 21.
+OFFLINE = reply_status(22, 3, FE, "1Ready To Arm")     # panel says "downloading"
+LINKDOWN = reply_status(21, -1, FE, "1Ready To Arm")   # ECP receiver hears nothing
+RECOVERED = READY                                      # online and talking again
 
 
 def s(*parts):
@@ -131,6 +138,13 @@ T_LCD_DIS = b"0:20:2****DISARMED****|  Ready to Arm  "
 T_LCD_DISU = b"0:-1:2****DISARMED****|  Ready to Arm  "
 T_LCD_ARM = b"0:20:2ARMED ***STAY***|Exit- 59 secs"
 T_LCD_ARMU = b"0:-1:2ARMED ***STAY***|Exit: 59 secs"
+# the offline episode on the wire (Barracuda handlers 0xd9c4 and 0xda80,
+# disassembled): a 22 is session:22:<text>:<+0x08> and gets TWO -1 copies; a
+# 21 prints +0x08 with %d, so -1 is "-1" and never "4294967295"
+T_OFFLINE = s("0:22:", bytes([FE]), "1Ready To Arm:3")
+T_OFFLINEF = T_READYF
+T_LINKDOWN = s("0:21:-1:fe:", bytes([FE]), "1Ready To Arm:2")
+T_LINKDOWNF = T_READYF
 
 
 def _open_tux():
@@ -222,6 +236,12 @@ def serve_tux(deadline_s, cmdlog):
                 send(READY)
                 if console:
                     send(LCD_DISARMED)
+                # then an offline episode: the VISTA reports itself not online
+                # (a 22), the ECP link goes quiet (-1), and both recover. What
+                # a late subscriber is replayed afterwards must be the recovery
+                # alone (verify_snapshot).
+                print("  fake tuxedo (serve): offline episode -> 22, then -1, then recovered")
+                send(OFFLINE, LINKDOWN, RECOVERED)
             elif code == 501:
                 print("  fake tuxedo (serve): got 501, done")
                 return
@@ -397,23 +417,56 @@ def verify_serve(path):
         die("FAIL: part 2 should be noOfClient, got %r" % (labels[2],))
     got = [t for (k, t) in labels[3:] if k == "status"]
     # snapshot (504 + Ready + the current LCD line), then LIVE: armed + its LCD
-    # line (from the arm API call), then ready + its LCD line (from the disarm).
-    # Console frames are 1 x id 20 + 3 x id -1 copies each.
+    # line (from the arm API call), then ready + its LCD line (from the disarm),
+    # then the offline episode the fake sends after the disarm: a 22 with TWO
+    # copies, a -1 status with three, the recovery with three. Console frames
+    # are 1 x id 20 + 3 x id -1 copies each.
     want = ([T_REG] + [T_REGF] * 3 + [T_READY] + [T_READYF] * 3
             + [T_LCD_DIS] + [T_LCD_DISU] * 3
             + [T_ARMED] + [T_ARMEDF] * 3 + [T_LCD_ARM] + [T_LCD_ARMU] * 3
-            + [T_READY] + [T_READYF] * 3 + [T_LCD_DIS] + [T_LCD_DISU] * 3)
+            + [T_READY] + [T_READYF] * 3 + [T_LCD_DIS] + [T_LCD_DISU] * 3
+            + [T_OFFLINE] + [T_OFFLINEF] * 2
+            + [T_LINKDOWN] + [T_LINKDOWNF] * 3
+            + [T_READY] + [T_READYF] * 3)
     # Required PREFIX: a silence re-register late in the capture window would
     # legitimately append another 504 + Ready + LCD set, so trailing frames are
     # reported, not failed.
     if got[:len(want)] == want:
         extra = len(got) - len(want)
-        print("  PASS: snapshot then live arm/disarm with LCD lines, in order (%d frames%s)"
+        print("  PASS: snapshot, live arm/disarm with LCD lines, then the offline "
+              "episode (22 + 2 copies, -1 + 3, recovery + 3), in order (%d frames%s)"
               % (len(want), ", +%d after (re-register)" % extra if extra else ""))
         for t in got[:len(want)]:
             print("        " + t.decode("latin-1"))
         return
     _report(got, want, "served stream")
+
+
+def verify_snapshot(path):
+    """A subscriber joining AFTER the offline episode: its snapshot must carry
+    the recovered status once and nothing from the episode. The (msgType, arg)
+    replay map this guards against kept the -1 and the 22 beside the recovery
+    and replayed them after it, so a client joining a healthy panel was told
+    the link was dead until the next live status."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    head_end = raw.find(b"\r\n\r\n")
+    if head_end < 0:
+        die("FAIL: no subscribe head; got:\n    %r" % raw[:120])
+    labels = [label_of(p) for p in parse_parts(raw[head_end + 4:])]
+    if len(labels) < 3 or labels[0][0] != "setCid" or labels[2][0] != "noOfClient":
+        die("FAIL: expected the setCid / Client Connected / noOfClient preamble, got %r" % labels[:3])
+    got = [t for (k, t) in labels[3:] if k == "status"]
+    want = [T_REG] + [T_REGF] * 3 + [T_READY] + [T_READYF] * 3 + [T_LCD_DIS] + [T_LCD_DISU] * 3
+    if got[:len(want)] != want:
+        _report(got, want, "late subscriber's snapshot")
+        return
+    stale = [t for t in got if t.startswith(b"0:22:") or t.startswith(b"0:21:-1:")]
+    if stale:
+        die("FAIL: the snapshot replayed %d stale frame(s) from the episode: %r"
+            % (len(stale), stale[:2]))
+    print("  PASS: late subscriber got the recovered status once, no 22 and no -1 (%d frames)"
+          % len(want))
 
 
 def verify_cmds(cmdlog, permanent=False):
@@ -474,6 +527,8 @@ if __name__ == "__main__":
         verify(a[0])
     elif cmd == "verify_serve":
         verify_serve(a[0])
+    elif cmd == "verify_snapshot":
+        verify_snapshot(a[0])
     elif cmd == "verify_cmds":
         verify_cmds(a[0], permanent=(len(a) > 1 and a[1] == "permanent"))
     elif cmd == "unlink":
