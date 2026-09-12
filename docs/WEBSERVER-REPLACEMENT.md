@@ -3249,6 +3249,17 @@ copies) and the disarmed line, 28 frames in order; when the fake panel goes
 quiet the command log shows `500, 19` again, after the disarm, never during
 traffic. `cargo test` 113 green.
 
+**Live, on v15 (`emu/lcd-capture.py`, arm STAY → disarm through the API):** the
+real LCD reads `****DISARMED****|  Ready to Arm  ` → `ARMED ***STAY***|May Exit
+Now  60` (repainted every ~2 s, counting down by two) → `****DISARMED****|
+Ready to Arm  `. 14 id-20 records in 40 s, each followed by its three `-1`
+copies. **The display never names the user on an arm or a disarm**, so the
+integration's `changed_by`-from-the-LCD idea (its spec item 3) is refuted by
+measurement and dropped; "who" is in the VISTA's event log (command 17, paged),
+a separate feature. Note also that the LCD's `May Exit Now 60` is a 60 s window
+while the status frame counts the whole delay (`259  Secs Remaining`) — the two
+disagree during arming by design.
+
 ### Stage 9 — Decommission
 
 **Change:** remove the vendor binary from the built image; remove proxy mode and
