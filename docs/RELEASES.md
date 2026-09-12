@@ -6,6 +6,73 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
+## v15 — 2026-09-12 — BUILT AND STAGED ON THE CARD; flash pending
+
+**What it is: v14 plus tuxweb as the web server, the vendor parked, and the
+summer clock fix.** The stage-8 cutover (`WEBSERVER-REPLACEMENT.md` §8d) had put
+tuxweb on the panel over SSH ahead of any image; v15 folds it in so the card and
+the rootfs carry it and a reflash cannot undo the cutover.
+
+### Artefacts
+
+| | |
+|---|---|
+| `app2.hdr` | 126,451,920 bytes, md5 `aa78763effed8c4b9fa52badea5b9e01` |
+| payload | `v15.jffs2` 126,451,792 bytes |
+| header | size field `126451792`, checksum `0xa87b` computed and matching, verified as ProgCV does |
+| `/opt/webserver/Barracuda` | **tuxweb**, md5 `ff3898390e17da26222d205857de9b56` (the binary the panel has run since the same day's SSH upgrade) |
+| `/opt/webserver/vendor/Barracuda` | the v14 vendor, md5 `0066ad95c82602930f939294f9e80af1`, kept for passthrough and revert |
+| `/tuxedo` | md5 `c744e3f162ed0240338381dc64ecbd7b` — changed by P16 |
+| built at | `/work/v15` on the build VM, by `build-image.sh` (first release the script built end to end) |
+
+728,604 bytes larger than v14: tuxweb (1.1 MB) minus JFFS2 compression.
+
+### New in v15
+
+- **tuxweb** (`tuxweb/`), installed where supervis launches by name. Serve mode is
+  switched on by `/opt/tuxedo/configuration/tuxweb-serve.conf` on mtd17 — present
+  on this panel since the cutover; **absent means passthrough to the vendor**, so
+  a stock-configured panel flashed with v15 behaves as v14 did until cut over.
+  TLS 1.3 on 443, 301-only on 80, 6280/9443 unbound, token-gated push stream and
+  API, keypad LCD on the stream (console mode held on), silence re-register.
+- **Layout change:** the vendor lives at `vendor/Barracuda`; `patches.tsv`'s 282
+  vendor rows name that path now, and `build-image.sh` moves the vendor aside
+  before the patch pass (`TUXWEB=` option).
+- **P16-dst-isdst** (`/tuxedo` `0x59ea4c`, 8 bytes): `dal_setCurrentTime` set
+  `tm_isdst = 0` before `mktime()`, so under the DST-aware `TZ` the VISTA's local
+  time was converted as standard time — the clock ran **one hour ahead for two
+  thirds of the year** (measured +3578 s on 2026-09-12). `tm_isdst = -1` lets
+  `mktime` apply the rule; the spare `tm_yday` load becomes the `mvn`. Found
+  with the decompiler; the patched copy disassembles to
+  `mvn r3,#0 / str r3,[fp,#-40]` and exactly 4 bytes differ. `TRAPS.md` §6.
+- Marker gains `TUXWEB_MD5` and `VENDOR_BARRACUDA_MD5`; `build-image.sh` gains
+  `vm:<path>` bases and `MARKER_SET=` for the carried-forward prose.
+
+### Verified before staging
+
+| gate | v15 |
+|---|---|
+| base | `/work/v14/v14.jffs2`, md5 `a7065e21…` as recorded for v14 |
+| all paths `root:root` | yes |
+| patches | **285 sites: 284 already patched, 1 applied (P16)**; 285/285 in the re-extracted tree |
+| round trip | zero real differences |
+| header | `0xa87b` computed = stored, PASS both ways |
+| card | `app2.hdr` md5 matches on the panel after transfer; `ProgCV.hdr`, `app1.hdr`, `app3.hdr`, `seconboot.hdr` byte-identical to the stock set |
+
+The tuxweb binary itself is the one already running on the panel, verified live
+(`emu/stage8-verify.py`: capabilities, status, token-gated push with console
+records, 301, arm and disarm confirmed by the panel).
+
+### To flash
+
+`reboot`. Then: `verify-panel.sh` (285 sites at the new paths), `stage8-verify.py`,
+the clock against the VM (expect ≈ −22 s, the VISTA's own error, not +3578),
+`/etc/tuxedo-build` reads `BUILD=v15`, and HA reconnects in tuxweb mode.
+Rollback: `push-image.sh /work/v14/app2.hdr --reboot` (vendor at the top, no
+tuxweb; the serve conf on mtd17 is then ignored).
+
+---
+
 ## v14 — 2026-09-09 — FLASHED AND VERIFIED
 
 **What it is: v13 plus every leak fix that had been hot-patched over SSH.** First

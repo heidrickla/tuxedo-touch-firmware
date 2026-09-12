@@ -543,6 +543,37 @@ and left sitting there saying the opposite of the truth.
   result against a second.** This one reached the file: an entry saying the
   block was "NOT evidence" stood over a decoded safety mechanism until it was
   caught.
+- **A killed Barracuda is relaunched on supervis's 10-MINUTE TICK, not "soon".**
+  Every `BARRACUDA_RESTART-N` in `SupervisionLog.txt` lands on the same
+  timestamp as an `E_SUPVTRD_FTPCLI_RESTART` line (`03:43:34`, `07:53:43`…):
+  the dead-Barracuda check runs on the FTPCLI 600 s timer. That is the whole
+  explanation for "the respawn took 90 s once and SEVEN MINUTES another time" —
+  it is the phase of the tick, and the worst case is ten minutes with no web
+  server. tuxweb has no `sigHandler`, so nothing shortens it. On 2026-09-12 a
+  `kill -9` at real 06:48 UTC relaunched at 06:53:43 and looked, from HA, like a
+  six-minute outage; `stage8-panel.sh` now starts the new binary itself after
+  the kill instead of waiting for the tick.
+- **The panel's clock is ONE HOUR AHEAD of real UTC for two thirds of the year,
+  and it is `/tuxedo`, not the OS.** Measured 2026-09-12: panel − real UTC =
+  **+3578 s** (59 m 38 s); `devices.md` had it 5 h 0 m 23 s BEHIND on vendor
+  firmware, before the `TZ` export. Both readings carry the same ~22 s residual
+  (the VISTA's own clock). Mechanism, decompiled: `dal_setCurrentTime` builds a
+  `struct tm` from the VISTA's LOCAL time and sets **`tm_isdst = 0`** before
+  `mktime()` — "this is standard time" — so under
+  `TZ=CST6CDT,M3.2.0/2,M11.1.0/2` a CDT time is converted as CST, +6 h instead
+  of +5. Correct all winter, an hour ahead from the second Sunday of March to
+  the first Sunday of November (238 of 365 days). It is re-asserted on every
+  VISTA time poll, so NTP at boot cannot hold it (`TUXEDO-NTP-PROPOSAL.md`).
+  **Fix: `P16-dst-isdst`** (`patches.tsv`, v15): `tm_isdst = -1`, let `mktime`
+  apply the rule. Prediction to check the reading against, from the
+  `ha-management` session: an UNPATCHED panel silently becomes correct on
+  2026-11-01 and breaks by exactly one hour on 2027-03-14. **Never trust a
+  panel-side timestamp against an external one without measuring the offset
+  that day** — a January spot-check finds the clock right and writes it down.
+  Quote UTC from HA or the VM for anything cross-referenced. (The OS side is
+  fine: TZ is inherited by `/tuxedo`, `supervis` and tuxweb, and this libc's
+  `date -d` applies the rule correctly; `/etc/adjtime` says `LOCAL`, so the RTC
+  holds local time and reads 5 h low until NTP at boot — harmless.)
 - **`E_SUPVTRD_FTPCLI_RESTART` every 10 minutes forever is EXPECTED. Do not
   chase it.** `supervis` supervises `/ftpclient`, and that binary **has never
   shipped** — absent from the extracted v12 and v13 rootfs and from every image
