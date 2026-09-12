@@ -143,6 +143,17 @@ def main():
         ok("subscribed: %d parts in 6s; first: %s" % (len(texts), [t.decode("latin-1", "replace")[:40] for t in texts[:5]]))
     else:
         bad("subscribe -> %s, %d parts" % (st, len(texts)))
+    # the keypad LCD: id-20 records carry `0:20:2<line1>|<line2>`; the three -1
+    # copies per line are the vendor's rebroadcast. Informational: whether one
+    # arrives inside the 6 s sample depends on the panel having sent the display
+    # since console mode was switched on.
+    lcd = [t for t in texts if t.startswith(b"0:20:2")]
+    copies = [t for t in texts if t.startswith(b"0:-1:2")]
+    if lcd:
+        ok("console: %d id-20 record(s), %d -1 copies; LCD now: %r"
+           % (len(lcd), len(copies), lcd[-1][6:].decode("latin-1", "replace")))
+    else:
+        print("  NOTE no console record in this 6 s sample (%d -1 copies)" % len(copies))
 
     print("=== 4. plain :80 -> 301 https, path preserved ===")
     st, head, _ = http(H, 80, CA, False, "GET", "/authenticated/tuxedoapi.html?url=x", read_secs=4)
