@@ -48,8 +48,13 @@ confirmed → "259  Secs Remaining"**, **DisarmWithCode → `Sucess` → "Ready 
 Arm"**; panel left DISARMED. HA (`ha-management-02` session) reloaded into
 **tuxweb mode**: push connected, capabilities detected, entity disarmed, no
 errors; the cutover looked like a reconnect from HA's side, not an outage.
-Pending in that session: arm STAY / disarm through the HA entity, on Lewis's
-go-ahead there. **Revert remains one command:** `sh /tmp/stage8-panel.sh
+**Arm STAY / disarm through the HA entity PASSED** on Lewis's go there:
+`arming` → `armed_home` after the 60 s exit delay → `disarmed`, all by stream,
+and the **Envisalink integration on a separate ECP path recorded the same
+transitions** — real at the VISTA. Push held one connection throughout. Panel
+left DISARMED. **Stage 8 is complete.** (Envisalink says `armed_home` instantly;
+Tuxedo says `arming` for the 60 s exit delay first — both correct.)
+**Revert remains one command:** `sh /tmp/stage8-panel.sh
 revert` (rm the conf, vendor back from `vendor/Barracuda` `0066ad95`, two
 kills). `/tmp` is tmpfs — the runbook and staged binary vanish on reboot, but
 the serve conf and token store are on mtd17 and survive; a reboot relaunches
