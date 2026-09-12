@@ -3161,9 +3161,37 @@ chain against the owner root, and the SAN matched `IP:10.10.52.5`. Demo
 stopped, port released. The cutover's TLS leg is therefore proven with this
 exact binary and these exact files before the kill.
 
-**The cutover itself waits on a permission the auto-mode classifier denied**
-for the `kill -9` on the live panel; the rule is never to evade that, so the
-command is handed to Lewis to run or allow.
+#### Stage 8d — CUT OVER on the live panel, 2026-09-12. The vendor is out of the request path.
+
+Run with Lewis present, in order: `phase1` (passthrough, 4/4, supervis
+accepted this build as pid 5565) → `token` (issued `home-assistant`, stored
+hashed on mtd17) → `cutover` (Lewis authorised the `kill -9` after the
+auto-mode classifier denied it). tuxweb relaunched as **pid 2590 in serve
+mode**: 2/2 listeners, 6280/9443 gone, launch counter 1, budget stepped
+`RESTART-9 → 10` (14 left).
+
+**Verified from the workstation against the real panel, every TLS connection
+checked against the owner root** (`emu/stage8-verify.py`):
+
+| check | result |
+|---|---|
+| `GetCapabilities`, no token | `200` JSON `contract:1`, TLS 1.3 — where the vendor's 1.0.1h stack refused a modern client an hour earlier |
+| `GetSecurityStatus`, token | `{"partition":1,"armed":false,"state":"1Ready To Arm"}` from the live model |
+| push, no token / with token | `401` / subscribed, 12 parts in 6 s — and **the real `/tuxedo`'s registration came through as `0:504:1:P1  H:1:0:3:3`, the exact captured frame** |
+| `:80` | `301 https://…/authenticated/tuxedoapi.html?url=x`, path preserved |
+| **ArmWithCode** stay, token, code at `+0x0C` | `200 Sucess` **after the panel confirmed** — status then `armed:true, "259  Secs Remaining"`, the panel's own exit-delay text |
+| **DisarmWithCode** | `200 Sucess` with disarm's `Result` key — status `armed:false, "1Ready To Arm"`. **Panel left disarmed.** |
+
+After: tuxweb still pid 2590 holding **11 fds** (the vendor's fd growth is
+gone by construction), no panic file, counter still 1, MemFree 70 → 76.7 MB,
+vendor intact at `vendor/Barracuda` (`0066ad95`) so `revert` remains a file
+move and a kill. The `E_SUPVTRD_FTPCLI_RESTART` lines every 10 min are the
+known, harmless missing-binary loop (`TRAPS.md` §6).
+
+That is the proof stage 8 set out to give: **the vendor binary is no longer in
+the request path for anything** — push, status, arm, disarm all served by
+tuxweb from the queues, with the consumer's contract intact. Home Assistant is
+switched by reloading its entry (it then asks for the token on its reauth card).
 
 ### Stage 9 — Decommission
 
