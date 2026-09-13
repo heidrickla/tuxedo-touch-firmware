@@ -130,9 +130,173 @@ impl TokenStore {
     }
 }
 
+/// The store as the running server sees it: re-read from disk on every check,
+/// so a token issued or revoked while tuxweb runs takes effect on the next
+/// request rather than at the next relaunch.
+///
+/// Found on the v16 flash day: `serve.rs` loaded the store once, so a token
+/// issued at runtime answered 401 until a kill -- which costs one of six
+/// tuxweb launches and one of supervis's 24 relaunches per boot -- and a
+/// revoked token kept working just as long. The file is a few hundred bytes
+/// on mtd17 and a check happens once per push subscribe or API call (every
+/// ~30 s from the integration), so reading it each time is nothing, and it
+/// is compared by CONTENT rather than by mtime: JFFS2 keeps mtime to the
+/// second, and re-issuing a token under the same label rewrites the file at
+/// the same length, so neither mtime nor size can be trusted to change.
+///
+/// A file that stops parsing keeps the LAST GOOD store in force and says so
+/// once: an admin's half-typed edit must not log every client out, and the
+/// startup rule ("a malformed store is an error, not an empty store") has
+/// the same reason.
+pub struct LiveTokenStore {
+    path: String,
+    inner: std::sync::Mutex<LiveInner>,
+}
+
+struct LiveInner {
+    store: TokenStore,
+    /// The bytes the current `store` was parsed from (empty for an absent file).
+    bytes: Vec<u8>,
+    /// Whether the last read failed to parse, so the complaint is logged once
+    /// per bad file rather than once per request.
+    complained: bool,
+}
+
+impl LiveTokenStore {
+    /// Load the store as `TokenStore::load` would; the same errors apply.
+    pub fn open(path: &str) -> Result<LiveTokenStore, String> {
+        let store = TokenStore::load(path)?;
+        let bytes = std::fs::read(path).unwrap_or_default();
+        Ok(LiveTokenStore {
+            path: path.to_string(),
+            inner: std::sync::Mutex::new(LiveInner { store, bytes, complained: false }),
+        })
+    }
+
+    /// How many tokens the store holds right now.
+    pub fn len(&self) -> usize {
+        self.refresh();
+        self.inner.lock().unwrap().store.tokens.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// `TokenStore::is_valid` against the store as it is on disk right now.
+    pub fn is_valid(&self, token: &str) -> bool {
+        self.refresh();
+        self.inner.lock().unwrap().store.is_valid(token)
+    }
+
+    /// Re-read the file; swap the store in if the bytes changed and parse.
+    ///
+    /// A file that is GONE is an empty store -- deleting it is the one-step
+    /// "revoke everything", and it is what startup does with an absent file.
+    /// A file that is present but does not parse, an empty one included, is
+    /// a bad edit: the last good store stays in force, as startup would have
+    /// refused to run on it.
+    fn refresh(&self) {
+        let (bytes, present) = match std::fs::read(&self.path) {
+            Ok(b) => (b, true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), false),
+            Err(e) => {
+                // Unreadable is not "gone": keep what we have and say so once.
+                let mut g = self.inner.lock().unwrap();
+                if !g.complained {
+                    eprintln!("serve: token store {}: {e}; keeping the loaded tokens", self.path);
+                    g.complained = true;
+                }
+                return;
+            }
+        };
+        let mut g = self.inner.lock().unwrap();
+        if bytes == g.bytes {
+            return;
+        }
+        let parsed = if !present {
+            Ok(TokenStore::default())
+        } else {
+            serde_json::from_slice::<TokenStore>(&bytes).map_err(|e| e.to_string())
+        };
+        match parsed {
+            Ok(store) => {
+                println!(
+                    "serve: token store {} changed on disk: {} token(s) now in force",
+                    self.path,
+                    store.tokens.len()
+                );
+                g.store = store;
+                g.bytes = bytes;
+                g.complained = false;
+            }
+            Err(e) => {
+                if !g.complained {
+                    eprintln!(
+                        "serve: token store {} no longer parses ({e}); keeping the {} token(s) \
+                         loaded before the change until it parses again",
+                        self.path,
+                        g.store.tokens.len()
+                    );
+                    g.complained = true;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_live_store_sees_tokens_issued_and_revoked_while_it_is_open() {
+        let dir = std::env::temp_dir().join(format!("tuxweb-live-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("tokens.json");
+        let p = path.to_str().unwrap();
+        let _ = std::fs::remove_file(p);
+
+        // absent file: an empty store that authenticates nobody
+        let live = LiveTokenStore::open(p).unwrap();
+        assert!(live.is_empty());
+        assert!(!live.is_valid("anything"));
+
+        // an admin issues a token into the same file while the server runs
+        let mut on_disk = TokenStore::default();
+        let first = on_disk.issue("first").unwrap();
+        on_disk.save(p).unwrap();
+        assert!(live.is_valid(&first), "issued at runtime, honoured at the next check");
+        assert_eq!(live.len(), 1);
+
+        // re-issue under the same label: same length, same second -- content differs
+        let second = on_disk.issue("first").unwrap();
+        on_disk.save(p).unwrap();
+        assert!(!live.is_valid(&first), "the replaced token is out");
+        assert!(live.is_valid(&second));
+
+        // revoke: out on the next check, no relaunch
+        assert!(on_disk.revoke("first"));
+        on_disk.save(p).unwrap();
+        assert!(!live.is_valid(&second));
+        assert!(live.is_empty());
+
+        // a half-written file keeps the last good store in force
+        on_disk.issue("again").unwrap();
+        on_disk.save(p).unwrap();
+        let again = on_disk.issue("again").unwrap();
+        on_disk.save(p).unwrap();
+        assert!(live.is_valid(&again));
+        std::fs::write(p, b"{\"tokens\": [ {\"label\": \"broken").unwrap();
+        assert!(live.is_valid(&again), "a file that no longer parses changes nothing");
+        std::fs::write(p, b"").unwrap();
+        assert!(live.is_valid(&again), "an emptied file is a bad edit too, not a revocation");
+        std::fs::remove_file(p).unwrap();
+        assert!(!live.is_valid(&again), "a DELETED file is the empty store, as at startup");
+        assert!(live.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn hash_is_stable_and_lowercase_hex_of_the_right_length() {

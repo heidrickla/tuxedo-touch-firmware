@@ -83,12 +83,14 @@ than a hot-deploy (Lewis's call), flashed with him at the touchscreen
 `TUXWEB_MD5 d1db8988` = the running binary, HA recovered unattended (the poll
 restored the entity 25 s before the stream reconnected — the API answers before
 the push stream after a reflash). Two things to carry: **a token issued while
-tuxweb runs is not honoured until a relaunch** (the store loads once at start;
-v17 item: re-read on a miss), and on v15 running the installed `Barracuda`
+tuxweb runs is not honoured until a relaunch ON v16** (the store loaded once at
+start; fixed in the tree by `auth::LiveTokenStore`, re-read on every check,
+bench step 9c — ARM build `0b1c357c` ready for a v17, not flashed), and on v15 running the installed `Barracuda`
 binary by hand with a flag started a second server — fixed in v16, do not do it
-on a v15 panel. The HA side does not read a 22 yet (`STATUS_CMDS` is `{21,
--1}`) — specified to the HA session the same day, implementation on branch
-`panel-offline`.
+on a v15 panel. The HA side: cmd 22 decoded and a `panel_offline` problem sensor added on
+`ha-tuxedo-touch` branch `panel-offline` (`b7be9d6`), reviewed, pushed to
+both remotes, CI 423, deployed and live-checked by the HA session the same
+night; the 0.7.0 release (merge + bump) is with Lewis.
 
 **`ha-tuxedo-touch` is done:** branch `tuxweb-api`, commit `477d2b1`, pushed
 to GitHub + gitea, CI green on Linux with **359 tests** (the HA layer cannot
