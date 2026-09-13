@@ -248,6 +248,14 @@ produces all of those numbers.
 
 ### Tooling traps
 
+- **Two sessions, one repo action: claim it before acting.** On 2026-09-13 Lewis
+  gave "merge the firmware to main" to this session and to the HA-management
+  session within a minute of each other, and both did it. It came out right only
+  because a fast-forward is idempotent — the second push saw "up-to-date" (and
+  git refused the other session's `branch -f` on a checked-out branch). A real
+  merge, a rebase or a force would have left divergent history or a lost commit.
+  When an instruction could plausibly have gone to both sessions, say which one
+  is doing it and wait for the other to stand down BEFORE touching the ref.
 - **`ci/checks.sh` runs `sh -n`, and on this Windows host `sh` is Git Bash, not
   dash.** A bashism (process substitution) passed locally and failed CI twice. To
   check properly, ship the scripts to the build VM where `/bin/sh` really is dash.
