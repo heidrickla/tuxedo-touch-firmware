@@ -346,11 +346,24 @@ fn main() {
 
     // Invoked under the vendor's own name, or told to explicitly: hand over.
     // Checked before anything else so no other argument parsing can shadow it.
+    //
+    // Except for tuxweb's own tool flags. supervis launches the installed
+    // binary with NO arguments (`system("/opt/webserver/Barracuda &")`), so an
+    // explicit `--list-tokens` and friends can only come from a person at a
+    // shell -- and on 2026-09-12 that person ran `/opt/webserver/Barracuda
+    // --list-tokens` on the live panel and got a SECOND serve instance: it
+    // registered again (flushing the reply queue for the real one), spent a
+    // launch from the per-boot budget, and died only because 443 was taken.
+    // A tool flag under the vendor's name is the tool, not a launch.
     let called_as = std::path::Path::new(&args[0])
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    if called_as == "Barracuda" {
+    let own_tool_flag = matches!(
+        args.get(1).map(String::as_str),
+        Some("--issue-token" | "--revoke-token" | "--list-tokens" | "--push-capture" | "--serve")
+    );
+    if called_as == "Barracuda" && !own_tool_flag {
         // Stage 8d: the PERMANENT server, switched on by a conf file on mtd17
         // (conf.rs). Checked first: while it exists every relaunch serves;
         // remove it and the next relaunch passes through to the vendor. The
