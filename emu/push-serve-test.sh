@@ -91,6 +91,18 @@ if [ "${VIA_CONF:-0}" = 1 ]; then
         echo "  FAIL: guard did not trip"; sed 's/^/     /' /tmp/guard.log; fail=1
     fi
     rm -f "$CTR"
+    say "2b. a tool flag under the vendor's name is the tool, not a launch"
+    # `/opt/webserver/Barracuda --list-tokens` on the live panel once started a
+    # second server (it registered, spent a launch, died on the taken port).
+    TUXWEB_SERVE_CONF="$CONF" TUXWEB_LAUNCH_COUNTER="$CTR" \
+        timeout 5 /tmp/Barracuda --list-tokens "$TOK" > /tmp/tool.log 2>&1; trc=$?
+    if [ "$trc" = 0 ] && grep -q "bench" /tmp/tool.log && ! grep -q "REGISTER" /tmp/tool.log \
+        && [ ! -f "$CTR" ]; then
+        echo "  PASS: --list-tokens listed the store, sent nothing, counted no launch"
+    else
+        echo "  FAIL: tool flag under the vendor's name (exit $trc)"; sed 's/^/     /' /tmp/tool.log; fail=1
+    fi
+    rm -f "$CTR" /tmp/tool.log
     TUXWEB_SERVE_CONF="$CONF" TUXWEB_LAUNCH_COUNTER="$CTR" \
         /tmp/Barracuda > /tmp/serve.log 2>&1 & SRV=$!
 else

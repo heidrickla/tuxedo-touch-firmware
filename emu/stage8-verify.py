@@ -154,6 +154,22 @@ def main():
            % (len(lcd), len(copies), lcd[-1][6:].decode("latin-1", "replace")))
     else:
         print("  NOTE no console record in this 6 s sample (%d -1 copies)" % len(copies))
+    # the offline path (WEBSERVER-REPLACEMENT.md 8d.2): a status whose code is
+    # -1 means the Tuxedo is not hearing the VISTA; an id-22 record means the
+    # VISTA reports itself not online. Neither has ever been seen on this
+    # panel's wire, so seeing one here is news worth printing loudly. A code
+    # of 4294967295 is the v15 signedness bug and must not appear on v16.
+    statuses = [t for t in texts if t.startswith(b"0:21:") or t.startswith(b"0:22:")]
+    link_down = [t for t in statuses if t.startswith(b"0:21:-1:") or t.endswith(b":-1")]
+    offline = [t for t in statuses if t.startswith(b"0:22:")]
+    unsigned = [t for t in statuses if b"4294967295" in t]
+    if unsigned:
+        bad("status carries 4294967295 -- the unsigned -1 of v15 tuxweb: %r" % unsigned[0][:60])
+    if link_down or offline:
+        print("  !! PANEL OFF THE AIR in this sample: %d link-down (-1) and %d id-22 (VISTA not online) "
+              "status record(s); first: %r" % (len(link_down), len(offline), (link_down + offline)[0][:60]))
+    elif statuses:
+        ok("panel online and talking in all %d status record(s) (no -1, no id 22)" % len(statuses))
 
     print("=== 4. plain :80 -> 301 https, path preserved ===")
     st, head, _ = http(H, 80, CA, False, "GET", "/authenticated/tuxedoapi.html?url=x", read_secs=4)
