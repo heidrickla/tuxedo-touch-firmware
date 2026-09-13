@@ -4,10 +4,10 @@ Where the work stands, what is next, and the traps that cost time in this sessio
 Written to survive a context compaction: everything here is verifiable from the repo
 or the panel, not from memory of a conversation.
 
-Repo at `66617ba` on `stage8-webserver`, both remotes in sync, CI green, 285 patch
-sites. Panel on **v16** (tuxweb `d1db8988` serving 80/443, vendor parked at
-`vendor/Barracuda` `0066ad95`), disarmed, launch 1 of 6 this boot. Merging
-`stage8-webserver` to `main` is Lewis's call.
+`stage8-webserver` was fast-forwarded to `main` on 2026-09-13 on Lewis's go, both
+remotes in sync, CI green, 285 patch sites. Panel on **v16** (tuxweb `d1db8988`
+serving 80/443, vendor parked at `vendor/Barracuda` `0066ad95`), disarmed,
+launch 1 of 6 this boot. ha-tuxedo-touch 0.7.0 was released the same day.
 
 ---
 
@@ -92,7 +92,7 @@ binary by hand with a flag started a second server — fixed in v16, do not do i
 on a v15 panel. The HA side: cmd 22 decoded and a `panel_offline` problem sensor added on
 `ha-tuxedo-touch` branch `panel-offline` (`b7be9d6`), reviewed, pushed to
 both remotes, CI 423, deployed and live-checked by the HA session the same
-night; the 0.7.0 release (merge + bump) is with Lewis.
+night; released as 0.7.0 on Lewis's go (`dad667e`).
 
 **`ha-tuxedo-touch` is done:** branch `tuxweb-api`, commit `477d2b1`, pushed
 to GitHub + gitea, CI green on Linux with **359 tests** (the HA layer cannot
@@ -127,7 +127,7 @@ are the two least consequential, so running them is optional rather than blockin
 ## 2. What is worth doing next, in order
 
 **1. Stage 8 — DONE.** The vendor is out of the request path (v15/v16). What is
-left around it is Lewis's: merge `stage8-webserver` to `main`; decide when a v17
+left around it is Lewis's: decide when a v17
 carrying the live token store (`66617ba`) is worth a flash; stage 9 when the
 parked vendor has earned its retirement. The leak items below are therefore
 vendor-binary work that only matters if the vendor ever serves again
