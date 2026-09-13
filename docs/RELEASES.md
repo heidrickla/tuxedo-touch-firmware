@@ -6,7 +6,7 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
-## v16 — 2026-09-12 — BUILT AND STAGED ON THE CARD, NOT FLASHED
+## v16 — 2026-09-12 — FLASHED 2026-09-13 AND VERIFIED
 
 **What it is: v15 with one file changed — tuxweb's offline path
 (`WEBSERVER-REPLACEMENT.md` §8d.2).** Nothing else in the rootfs differs.
@@ -63,19 +63,39 @@ never held an offline panel):
 | tuxweb | `cargo test` 116 green (three new pins); `emu/push-serve-test.sh` plaintext, `TLS=1`, `VIA_CONF=1 TLS=1` all pass with the new offline episode and late-subscriber oracle; **a binary from the pre-fix sources fails both new oracles** (`0:21:4294967295:…`, no 22, stale `-1` replayed) |
 | card | `app2.hdr` md5 `a3b50d3a…` matches on the panel after transfer (`push-image.sh`, 2026-09-13 00:12 UTC, second transfer — the first reported an md5 mismatch and was not left in place); the other four `.hdr` files untouched |
 
-### Not yet flashed
+### Flashed 2026-09-13
 
-The panel runs v15 (`ff389839`). The card holds v16; the next reboot with the
-flash confirmed on the touchscreen installs it — a plain reboot did not
-reprogram for v15, so expect to confirm. After the flash: `verify-panel.sh
-10.10.52.5` (285 sites, `BUILD=v16`, `TUXWEB_MD5 d1db8988`), then
-`stage8-verify.py` for the HTTP contract. The serve conf, token store and cert
-on mtd17 survive.
+Lewis at the touchscreen, reboot issued 00:22:12 UTC, SSH back after 143 s,
+tuxweb serving at uptime ~65 s. The whole exchange ran between the two
+sessions (`ha-management-02` watched the HA side, sampled every 5 s).
+
+| check | result |
+|---|---|
+| `verify-panel.sh 10.10.52.5` | **285 sites ok, 0 failures**; `BUILD=v16`; `TUXWEB_MD5 d1db8988` = the running binary (zero drift); vendor `0066ad95` at `vendor/`; listeners exactly 22/80/443, 6800 gone; NAND 9 bad blocks (baseline); card rw; hosts clean; no panic file |
+| mtd17 | serve conf and token store survived; tuxweb came up in serve mode by itself, launch 1 of 6 |
+| tool-flag fix, live | `--issue-token` / `--list-tokens` / `--revoke-token` under the installed `Barracuda` name ran the tool: no second server, launch counter unmoved |
+| `stage8-verify.py` | capabilities 200 (contract 1, three caps), 401 without a token, 80→301 path preserved — pass. The token-gated legs answered 401 to a token issued at runtime — see the limitation below — and are proven instead by HA with the real token |
+| HA (peer's timeline) | stream held ~110 s after the reboot (the network going away is what it learns from), dropped at t+100 s, **the poll restored the entity at t+231 s** (`tuxedo_source` → `poll`), the stream reconnected at t+256 s on the boot's first cid; entity unavailable 131 s in all; **no login attempt across the reboot**; final: tuxweb mode, caps 3, push connected, console records flowing, `ecp_link` off, alarm disarmed, Envisalink agreeing |
+| clock | −23 s against the workstation, unchanged from v15 |
+
+Two things learned:
+
+- **After a reflash the API answers before the push stream does**, so the
+  coordinator's middle rung (poll before stream) is used on real hardware,
+  25 s before the stream came back. First time it was seen outside a test.
+- **A token issued while tuxweb runs is not honoured until a relaunch**:
+  `serve.rs` loads the store once at start (`TokenStore::load`, "N token(s)
+  loaded"). Issue tokens before the launch, or accept a kill (one of 6 tuxweb
+  launches and one of supervis's 24). The fix is small — re-read the store on
+  a miss, rate-limited — and is a v17 item; not worth a second stream outage
+  on the day.
 
 **What the flash does not prove:** the `-1` and the 22 have never been seen on
 this panel's wire. They are read from the producer; making the VISTA go offline
 or pulling the ECP cable is the only way to observe them, and that is a choice
-for the owner, not a verification step.
+for the owner, not a verification step. And the integration deployed today
+(0.6.0) still drops command 22, so until its section-4 change lands the link
+sensor can trip only via a 21 carrying `-1`, and panel-offline is invisible.
 
 Rollback: `HOST=10.10.52.5 ./push-image.sh build/v15/app2.hdr --reboot`
 (local copy, md5 `aa78763e…`; also `/work/v15/app2.hdr` on the VM) and confirm
