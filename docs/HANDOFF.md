@@ -71,6 +71,19 @@ kills). `/tmp` is tmpfs — the runbook and staged binary vanish on reboot, but
 the serve conf and token store are on mtd17 and survive; a reboot relaunches
 tuxweb in serve mode by itself.
 
+**v16 BUILT AND STAGED ON THE CARD, NOT FLASHED (2026-09-12, `RELEASES.md`):**
+v15 plus one file, tuxweb `28d5ba4e` (`290cfdb`), fixing the offline path
+(`WEBSERVER-REPLACEMENT.md` §8d.2): `+0x08` printed signed (`-1`, not
+`4294967295` — the value the HA ECP-link sensor tests for), msgType 22
+(`SERV_PANEL_OFFLINE_MSG_BROADCAST`) relayed as the vendor did instead of
+dropped, one status slot in the replay instead of a map keyed on the misread
+"partition" word. Bench-proven with a pre-fix control. **Lewis chose to land it
+at the next flash rather than hot-deploy**, so the panel still runs v15's
+`ff389839` until he reboots and confirms on the touchscreen; then
+`verify-panel.sh 10.10.52.5` expects `BUILD=v16`, `TUXWEB_MD5 28d5ba4e`.
+The HA side does not read a 22 yet (`STATUS_CMDS` is `{21, -1}`) — specified
+to the HA session the same day.
+
 **`ha-tuxedo-touch` is done:** branch `tuxweb-api`, commit `477d2b1`, pushed
 to GitHub + gitea, CI green on Linux with **359 tests** (the HA layer cannot
 run on Windows — `fcntl`). Detection via `GetCapabilities` (200 ⇒ tuxweb),

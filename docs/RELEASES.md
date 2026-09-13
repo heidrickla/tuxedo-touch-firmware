@@ -6,6 +6,73 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
+## v16 — 2026-09-12 — BUILT AND STAGED ON THE CARD, NOT FLASHED
+
+**What it is: v15 with one file changed — tuxweb's offline path
+(`WEBSERVER-REPLACEMENT.md` §8d.2).** Nothing else in the rootfs differs.
+
+### Artefacts
+
+| | |
+|---|---|
+| `app2.hdr` | 126,451,920 bytes, md5 `22fdd0589de02522978a3488678c2a26` |
+| payload | `v16.jffs2` 126,451,792 bytes |
+| header | size field `126451792`, checksum `0x0e73` computed and matching, verified as ProgCV does |
+| `/opt/webserver/Barracuda` | **tuxweb**, md5 `28d5ba4e793ebd5765284bd11fde0eca`, 1,101,128 bytes — built from `290cfdb` |
+| `/opt/webserver/vendor/Barracuda` | the v14 vendor, md5 `0066ad95…`, unchanged |
+| `/tuxedo` | md5 `c744e3f1…`, unchanged from v15 |
+| built at | `/work/v16` on the build VM, by `build-image.sh vm:/work/v15/v15.jffs2 v16` with `TUXWEB=` and `MARKER_SET=` |
+
+### New in v16
+
+Three defects in tuxweb's handling of a panel that is off the air, found by
+decompiling `/tuxedo`'s status sender rather than trusting the captures (which
+never held an offline panel):
+
+- **`+0x08` printed signed.** The vendor's `%d` puts `-1` on the wire when the
+  ECP receiver is not hearing the VISTA; tuxweb printed the `u32`,
+  `4294967295`, which the integration's dead-link test (`== -1`) can never
+  match. The ECP-link sensor that shipped in ha-tuxedo-touch 0.6.0 could not
+  have tripped against v15.
+- **msgType 22 relayed.** `SERV_PANEL_OFFLINE_MSG_BROADCAST` — the status
+  `/tuxedo` sends in place of a 21 whenever the VISTA reports itself busy,
+  downloading or offline — was dropped silently. Now `session:22:<text>:<+0x08>`
+  plus two `-1` copies, the vendor's exact shape from its handler at `0xd9c4`.
+- **One status slot in the replay.** The cache keyed statuses on the
+  online-status word, misread as the partition, and replayed a stale `-1`
+  after the recovery to every new subscriber.
+- The serve loop now logs a reply type it cannot relay, once per type.
+
+### Verified before staging
+
+| gate | v16 |
+|---|---|
+| base | `/work/v15/v15.jffs2`, md5 `f27b9fd6…` |
+| all paths `root:root` | yes |
+| patches | **285 sites: 285 already patched, 0 applied**; 285/285 in the re-extracted tree |
+| round trip | zero real differences |
+| header | `0x0e73` computed = stored, PASS both ways |
+| tuxweb | `cargo test` 116 green (three new pins); `emu/push-serve-test.sh` plaintext, `TLS=1`, `VIA_CONF=1 TLS=1` all pass with the new offline episode and late-subscriber oracle; **a binary from the pre-fix sources fails both new oracles** (`0:21:4294967295:…`, no 22, stale `-1` replayed) |
+| card | `app2.hdr` md5 `22fdd058…` matches on the panel after transfer (`push-image.sh`, 2026-09-12 23:59 UTC); the other four `.hdr` files untouched |
+
+### Not yet flashed
+
+The panel runs v15 (`ff389839`). The card holds v16; the next reboot with the
+flash confirmed on the touchscreen installs it — a plain reboot did not
+reprogram for v15, so expect to confirm. After the flash: `verify-panel.sh
+10.10.52.5` (285 sites, `BUILD=v16`, `TUXWEB_MD5 28d5ba4e`), then
+`stage8-verify.py` for the HTTP contract. The serve conf, token store and cert
+on mtd17 survive.
+
+**What the flash does not prove:** the `-1` and the 22 have never been seen on
+this panel's wire. They are read from the producer; making the VISTA go offline
+or pulling the ECP cable is the only way to observe them, and that is a choice
+for the owner, not a verification step.
+
+Rollback: `HOST=10.10.52.5 ./push-image.sh build/v15/app2.hdr --reboot`
+(local copy, md5 `aa78763e…`; also `/work/v15/app2.hdr` on the VM) and confirm
+on the touchscreen.
+
 ## v15 — 2026-09-12 — FLASHED AND VERIFIED
 
 **What it is: v14 plus tuxweb as the web server, the vendor parked, and the
