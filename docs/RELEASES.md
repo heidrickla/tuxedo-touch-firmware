@@ -86,9 +86,14 @@ Two things learned:
 - **A token issued while tuxweb runs is not honoured until a relaunch**:
   `serve.rs` loads the store once at start (`TokenStore::load`, "N token(s)
   loaded"). Issue tokens before the launch, or accept a kill (one of 6 tuxweb
-  launches and one of supervis's 24). The fix is small — re-read the store on
-  a miss, rate-limited — and is a v17 item; not worth a second stream outage
-  on the day.
+  launches and one of supervis's 24). Fixed in the tree the same night —
+  `auth::LiveTokenStore` re-reads the file on every check, compared by content
+  (JFFS2 mtime is one second and a same-label re-issue keeps the length), a
+  file that stops parsing keeps the last good store, a deleted file is the
+  empty store; harness step 9c issues a token against the running server and
+  gets 200, revokes it and gets 401. **Not on the panel**: it ships with the
+  next image (ARM build `0b1c357c` ready), which is a flash Lewis has not
+  asked for; v16 stays as flashed.
 
 **What the flash does not prove:** the `-1` and the 22 have never been seen on
 this panel's wire. They are read from the producer; making the VISTA go offline

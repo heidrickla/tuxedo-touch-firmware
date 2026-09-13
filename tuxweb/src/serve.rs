@@ -309,14 +309,16 @@ pub fn run(cfg: Config) -> Result<(), String> {
         attr.maxmsg, attr.msgsize, attr.curmsgs
     );
 
-    let store = Arc::new(crate::auth::TokenStore::load(&cfg.token_store)?);
-    match store.tokens.len() {
+    // Re-read on every check (auth::LiveTokenStore), so `--issue-token` and
+    // `--revoke-token` take effect on the next request, not the next relaunch.
+    let store = Arc::new(crate::auth::LiveTokenStore::open(&cfg.token_store)?);
+    match store.len() {
         0 => println!(
             "serve: *** token store {} has NO tokens -- the push stream and the write \
              API will deny everyone until one is issued (tuxweb --issue-token) ***",
             cfg.token_store
         ),
-        n => println!("serve: {n} token(s) loaded from {}", cfg.token_store),
+        n => println!("serve: {n} token(s) loaded from {} (re-read on every check)", cfg.token_store),
     }
 
     let state = Arc::new(Mutex::new(PanelState::new()));

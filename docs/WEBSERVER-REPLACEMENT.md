@@ -3333,10 +3333,27 @@ so the oracles discriminate.
 read out of the producer; neither has been observed on this panel's wire,
 which would need the VISTA taken offline or the ECP cable pulled. What the
 fixes guarantee is that IF `/tuxedo` sends them, tuxweb relays them as the
-vendor did. The consumer side is open: ha-tuxedo-touch 0.6.0 ignores command
-id 22 (`STATUS_CMDS` is `{21, -1}`) and reads the status code from field 2,
-where a 22 carries its text; a "panel offline" reading needs a decoder change
-there, specified to the HA session 2026-09-12.
+vendor did. The consumer side followed the same night: ha-tuxedo-touch branch
+`panel-offline` (`b7be9d6`) decodes command 22 with the code from the last
+field and adds a `panel_offline` problem sensor on both firmwares; reviewed,
+deployed and live-checked by the HA session, release with Lewis. **Shipped as
+v16, flashed 2026-09-13 (`RELEASES.md`).**
+
+#### 8d.3 — the token store is re-read on every check (in the tree, not flashed)
+
+Found while verifying v16: `serve.rs` loaded the token store once, so a token
+issued at runtime (`--issue-token`) answered 401 until a relaunch, and a
+revoked one kept working just as long. `auth::LiveTokenStore` now re-reads
+`tuxweb-tokens.json` on every check — a few hundred bytes on mtd17, once per
+push subscribe or API call — compared by content rather than mtime (JFFS2
+keeps mtime to the second, and a same-label re-issue rewrites the file at the
+same length). A file that stops parsing keeps the last good store in force and
+says so once; a deleted file is the empty store, which is the one-step
+"revoke everything" and what startup does with an absent file. Unit test
+`a_live_store_sees_tokens_issued_and_revoked_while_it_is_open`; harness step 9c
+issues a token against the running server (200), revokes it (401), and the
+original still works. `cargo test` 117. ARM build `0b1c357c`, not on the panel:
+it goes into the next image whenever one is worth a flash.
 
 ### Stage 9 — Decommission
 

@@ -148,6 +148,16 @@ sleep 2                                   # the episode (22, -1, recovered) has 
 python3 "$CHK" client "127.0.0.1:$PORT" 3 "$OUT2" "$TOKEN"
 step python3 "$CHK" verify_snapshot "$OUT2"
 
+say "9c. a token issued while the server runs works on the next request; revoked, it stops"
+# v16 loaded the store once, so a runtime-issued token answered 401 until a
+# relaunch (RELEASES.md v16). The store is re-read on every check now.
+LATE=$("$BIN" --issue-token late "$TOK" | sed -n '2p')
+[ ${#LATE} -eq 64 ] || { echo "  FAIL: could not issue the late token"; fail=1; }
+step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/GetSecurityStatus" - "$LATE" 200 '"armed":false'
+"$BIN" --revoke-token late "$TOK" > /dev/null
+step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/GetSecurityStatus" - "$LATE" 401 -
+step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/GetSecurityStatus" - "$TOKEN" 200 '"armed":false'
+
 wait "$CLI" 2>/dev/null
 if [ "${VIA_CONF:-0}" = 1 ]; then
     # a permanent server has no window: stop it the way the panel would
