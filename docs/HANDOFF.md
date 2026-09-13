@@ -1,11 +1,13 @@
-# Handoff, 2026-09-11
+# Handoff, 2026-09-11, brought up to date 2026-09-13
 
 Where the work stands, what is next, and the traps that cost time in this session.
 Written to survive a context compaction: everything here is verifiable from the repo
 or the panel, not from memory of a conversation.
 
-Repo at `5654644`, both remotes in sync, CI green, 284 patch sites.
-Panel on v14 (`0066ad95`), 4/4 listeners, disarmed, budget 8 of 24 this boot.
+Repo at `66617ba` on `stage8-webserver`, both remotes in sync, CI green, 285 patch
+sites. Panel on **v16** (tuxweb `d1db8988` serving 80/443, vendor parked at
+`vendor/Barracuda` `0066ad95`), disarmed, launch 1 of 6 this boot. Merging
+`stage8-webserver` to `main` is Lewis's call.
 
 ---
 
@@ -20,8 +22,8 @@ Panel on v14 (`0066ad95`), 4/4 listeners, disarmed, budget 8 of 24 this boot.
 | 7a, 7b | bench-proven (`emu/stage7-test.sh`) |
 | 7c | **PASSES on the panel** — console mode streamed real console text |
 | 7d | **PASSES on the panel** — `VALID USER CODE`, armed STAY, disarmed |
-| 8 | **in progress** — decomposed 8a–8d (`WEBSERVER-REPLACEMENT.md`). 8a DONE, 8b/8c bench pieces done and emu-proven, see below |
-| 9 | not started — decommission |
+| 8 | **DONE** — cut over live 2026-09-12, in the image since v15, offline path fixed in v16 (`WEBSERVER-REPLACEMENT.md` §8d–8d.3, below) |
+| 9 | not started — decommission: the vendor leaves the image and proxy mode leaves the source; the doc says keep the parked vendor on the panel one more release first, so this waits for Lewis |
 
 **Stage 8 progress this session — on branch `stage8-webserver`.** New in
 `tuxweb/src`: `push.rs` (push stream generated from IPC replies, byte-verified vs
@@ -124,9 +126,12 @@ are the two least consequential, so running them is optional rather than blockin
 
 ## 2. What is worth doing next, in order
 
-**1. Stage 8.** This is the actual goal — the vendor stops being in the request path.
-Everything stage 7 was gating is now answered. This is the highest-value remaining
-work and it does not depend on any leak fix.
+**1. Stage 8 — DONE.** The vendor is out of the request path (v15/v16). What is
+left around it is Lewis's: merge `stage8-webserver` to `main`; decide when a v17
+carrying the live token store (`66617ba`) is worth a flash; stage 9 when the
+parked vendor has earned its retirement. The leak items below are therefore
+vendor-binary work that only matters if the vendor ever serves again
+(passthrough with the serve conf removed) or on a stock panel.
 
 **2. The LEAK 30 cave** (§3). Bounded, well-understood, one tree per request. Do it
 on the bench with an A/B against the measured baselines before any window.
