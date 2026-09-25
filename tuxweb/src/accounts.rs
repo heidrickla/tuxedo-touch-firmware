@@ -106,6 +106,10 @@ pub fn enc_name_pass(user_name: &str, password: &str) -> String {
 
 impl User {
     /// Recompute the digest from the current name and password.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn reseal(&mut self) {
         self.enc_name_pass = enc_name_pass(&self.user_name, &self.password);
     }
@@ -115,10 +119,8 @@ impl User {
     /// A mismatch means someone edited the file by hand, or wrote it with a
     /// different rule. Worth refusing to build on rather than silently fixing.
     pub fn is_sealed(&self) -> bool {
-        self.enc_name_pass.eq_ignore_ascii_case(&enc_name_pass(
-            &self.user_name,
-            &self.password,
-        ))
+        self.enc_name_pass
+            .eq_ignore_ascii_case(&enc_name_pass(&self.user_name, &self.password))
     }
 }
 
@@ -198,6 +200,10 @@ impl Store {
 /// The store is validated before anything is written. Refusing to serialise an
 /// inconsistent store is the point: this function is the last place that can
 /// tell the difference between a deliberate change and a mistake.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "staged: tested, not yet called from main")
+)]
 pub fn save(env: &Envelope, store: &Store, main: &str, mirror: &str) -> Result<usize, String> {
     store.validate()?;
     let bytes = store.encode(env)?;
@@ -218,6 +224,10 @@ pub fn save(env: &Envelope, store: &Store, main: &str, mirror: &str) -> Result<u
 /// failed and the network must not: "no such user" and "wrong code" told apart
 /// is a user enumeration oracle, and on a four-digit secret that matters more
 /// than usual.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "staged: tested, not yet called from main")
+)]
 #[derive(Debug, PartialEq)]
 pub enum Denied {
     NoSuchUser,
@@ -231,7 +241,7 @@ pub enum Denied {
 }
 
 /// Constant-time compare, so a wrong code cannot be found a digit at a time.
-fn ct_eq(a: &str, b: &str) -> bool {
+pub(crate) fn ct_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
         return false;
@@ -252,6 +262,10 @@ impl Store {
     ///
     /// Every candidate is examined rather than returning at the first match, so
     /// the work done does not depend on where in the file the user sits.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn authenticate(&self, user_name: &str, password: &str) -> Result<&User, Denied> {
         let mut found: Option<&User> = None;
         for u in &self.users {
@@ -299,9 +313,7 @@ fn read_va(d: &[u8], va: u64) -> Option<[u8; 16]> {
         return None; // 32-bit ELF only; the panel has nothing else
     }
     let u16at = |o: usize| u16::from_le_bytes([d[o], d[o + 1]]) as usize;
-    let u32at = |o: usize| {
-        u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as u64
-    };
+    let u32at = |o: usize| u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as u64;
     let phoff = u32at(0x1C) as usize;
     let phentsize = u16at(0x2A);
     let phnum = u16at(0x2C);
@@ -369,8 +381,14 @@ mod tests {
         );
         // the case fold is the part that distinguishes this from the seven
         // other constructions that scored 0/5 against the real file
-        assert_eq!(enc_name_pass("ALICE", "1234"), enc_name_pass("alice", "1234"));
-        assert_ne!(enc_name_pass("alice", "1234"), enc_name_pass("alice", "4321"));
+        assert_eq!(
+            enc_name_pass("ALICE", "1234"),
+            enc_name_pass("alice", "1234")
+        );
+        assert_ne!(
+            enc_name_pass("alice", "1234"),
+            enc_name_pass("alice", "4321")
+        );
     }
 
     #[test]
@@ -400,9 +418,17 @@ mod tests {
     fn the_json_carries_the_vendor_field_names() {
         let text = serde_json::to_string(&store()).unwrap();
         for name in [
-            "WEBUSERS", "u8UserId", "userName", "passWord", "EncNamePass",
-            "status", "accountLocked", "accLockedTime", "userCreatedDate",
-            "userUpdatedDate", "accLockedCount",
+            "WEBUSERS",
+            "u8UserId",
+            "userName",
+            "passWord",
+            "EncNamePass",
+            "status",
+            "accountLocked",
+            "accLockedTime",
+            "userCreatedDate",
+            "userUpdatedDate",
+            "accLockedCount",
         ] {
             assert!(text.contains(&format!("\"{name}\"")), "missing {name}");
         }
@@ -434,10 +460,19 @@ mod tests {
     #[test]
     fn a_truncated_or_wrongly_keyed_file_is_an_error_not_a_panic() {
         let env = test_env();
-        let other = Envelope { key: *b"ffffffffffffffff", iv: test_env().iv };
+        let other = Envelope {
+            key: *b"ffffffffffffffff",
+            iv: test_env().iv,
+        };
         let blob = store().encode(&env).unwrap();
-        assert!(Store::decode(&other, &blob).is_err(), "wrong key must not parse");
-        assert!(Store::decode(&env, &blob[..20]).is_err(), "truncation must not parse");
+        assert!(
+            Store::decode(&other, &blob).is_err(),
+            "wrong key must not parse"
+        );
+        assert!(
+            Store::decode(&env, &blob[..20]).is_err(),
+            "truncation must not parse"
+        );
         assert!(Store::decode(&env, &[]).is_err(), "empty must not parse");
     }
 
@@ -523,7 +558,10 @@ mod tests {
         s.users[0].password = "9999".into(); // changed without resealing
         let e = save(&env, &s, main.to_str().unwrap(), mirror.to_str().unwrap()).unwrap_err();
         assert!(e.contains("EncNamePass"), "{e}");
-        assert!(!main.exists(), "nothing may be written when validation fails");
+        assert!(
+            !main.exists(),
+            "nothing may be written when validation fails"
+        );
         assert!(!mirror.exists());
         std::fs::remove_dir_all(&dir).ok();
     }

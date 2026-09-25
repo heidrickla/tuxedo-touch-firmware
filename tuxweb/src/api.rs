@@ -139,7 +139,11 @@ pub fn capabilities_response() -> Vec<u8> {
 /// MEASURED). 404 must remain the absence answer permanently (§4.10.6); a client
 /// keys its silent path on it, so this is a hard contract, not a nicety.
 pub fn not_found() -> Vec<u8> {
-    http("404 Not Found", "application/json", b"{Status:\"Not Found\"}")
+    http(
+        "404 Not Found",
+        "application/json",
+        b"{Status:\"Not Found\"}",
+    )
 }
 
 /// `405`, the answer for a known endpoint reached with the wrong method — one of
@@ -233,16 +237,30 @@ mod tests {
     #[test]
     fn arm_and_disarm_are_post_only_and_carry_the_right_codes() {
         assert_eq!(
-            classify("POST", "/system_http_api/API_REV01/AdvancedSecurity/ArmWithCode", cmd::ARM_AWAY),
-            Action::Arm { code: cmd::ARM_AWAY }
+            classify(
+                "POST",
+                "/system_http_api/API_REV01/AdvancedSecurity/ArmWithCode",
+                cmd::ARM_AWAY
+            ),
+            Action::Arm {
+                code: cmd::ARM_AWAY
+            }
         );
         assert_eq!(
-            classify("POST", "/system_http_api/API_REV01/AdvancedSecurity/DisarmWithCode", 0),
+            classify(
+                "POST",
+                "/system_http_api/API_REV01/AdvancedSecurity/DisarmWithCode",
+                0
+            ),
             Action::Disarm
         );
         // GET on a write endpoint is a 405, never a silent no-op
         assert_eq!(
-            classify("GET", "/system_http_api/API_REV01/AdvancedSecurity/ArmWithCode", 0),
+            classify(
+                "GET",
+                "/system_http_api/API_REV01/AdvancedSecurity/ArmWithCode",
+                0
+            ),
             Action::MethodNotAllowed
         );
     }
@@ -302,14 +320,26 @@ mod tests {
     #[test]
     fn arm_and_disarm_bodies_preserve_the_vendor_quirks() {
         let arm = s(&arm_success());
-        assert!(arm.contains("\"Status\":\"Sucess\""), "the misspelling is the contract");
-        assert!(arm.contains("\"Response\":\"Command sent sucessfully\""), "{arm}");
+        assert!(
+            arm.contains("\"Status\":\"Sucess\""),
+            "the misspelling is the contract"
+        );
+        assert!(
+            arm.contains("\"Response\":\"Command sent sucessfully\""),
+            "{arm}"
+        );
 
         let dis = s(&disarm_success("Disarmed"));
         assert!(dis.contains("\"Status\":\"Sucess\""));
         // disarm uses "Result", not "Response" -- the asymmetry is load-bearing
-        assert!(dis.contains("\"Result\":{\"Result\":\"Disarmed\"}"), "{dis}");
-        assert!(!dis.contains("\"Response\""), "disarm must not use arm's key");
+        assert!(
+            dis.contains("\"Result\":{\"Result\":\"Disarmed\"}"),
+            "{dis}"
+        );
+        assert!(
+            !dis.contains("\"Response\""),
+            "disarm must not use arm's key"
+        );
     }
 
     #[test]

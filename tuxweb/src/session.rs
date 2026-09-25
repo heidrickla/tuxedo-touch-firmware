@@ -52,7 +52,13 @@ pub struct Outcome {
 }
 
 fn command(session: u32, code: u32) -> Vec<u8> {
-    let v = Command { head: session, code, p1: 0, p2: 0 }.encode();
+    let v = Command {
+        head: session,
+        code,
+        p1: 0,
+        p2: 0,
+    }
+    .encode();
     debug_assert_eq!(v.len(), COMMAND_LEN);
     v
 }
@@ -78,8 +84,8 @@ pub fn run_capture(cfg: &Config) -> Result<Outcome, String> {
         attr.maxmsg, attr.msgsize, attr.curmsgs
     );
 
-    let mut out = std::fs::File::create(&cfg.out)
-        .map_err(|e| format!("cannot open {}: {e}", cfg.out))?;
+    let mut out =
+        std::fs::File::create(&cfg.out).map_err(|e| format!("cannot open {}: {e}", cfg.out))?;
     let mut state = PanelState::new();
     let mut o = Outcome::default();
 

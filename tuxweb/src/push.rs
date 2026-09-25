@@ -36,7 +36,6 @@
 //! than from re-registering -- re-registering would flush the reply queue for
 //! every other consumer (B7).
 
-
 use crate::frame::{self, Part};
 use crate::ipc::{self, Reply};
 
@@ -70,10 +69,16 @@ pub struct Emission {
 
 impl Emission {
     fn frames(parts: Vec<Part>) -> Emission {
-        Emission { parts, undecoded: None }
+        Emission {
+            parts,
+            undecoded: None,
+        }
     }
     fn unknown(msg_type: u32, raw: &[u8]) -> Emission {
-        Emission { parts: Vec::new(), undecoded: Some((msg_type, raw.to_vec())) }
+        Emission {
+            parts: Vec::new(),
+            undecoded: Some((msg_type, raw.to_vec())),
+        }
     }
 }
 
@@ -93,8 +98,7 @@ pub fn on_reply(raw: &[u8], quick_arm: u32) -> Emission {
     match base.msg_type {
         504 => {
             // A 504 keeps nothing at +0x08 or +0x0E: read it at its own offsets.
-            let (Some(r), Some(extra)) =
-                (Reply::parse_504(raw), Reply::registration_extra(raw))
+            let (Some(r), Some(extra)) = (Reply::parse_504(raw), Reply::registration_extra(raw))
             else {
                 return Emission::unknown(504, raw);
             };
@@ -263,18 +267,32 @@ impl PanelState {
     }
 
     /// The current keypad LCD text (msgType 20 payload, raw), if one has been seen.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn console_text(&self) -> Option<Vec<u8>> {
-        self.last_20.as_ref().and_then(|r| Reply::parse(r)).map(|r| r.text)
+        self.last_20
+            .as_ref()
+            .and_then(|r| Reply::parse(r))
+            .map(|r| r.text)
     }
 
     /// The current arm-state byte from the latest status: `0xFF` armed/arming,
     /// `0xFE` ready/disarmed (`enableDisarmOption()`, §2.5). `None` until a
     /// status has been seen.
     pub fn arm_state_byte(&self) -> Option<u8> {
-        self.last_status.as_ref().and_then(|r| Reply::parse(r)).and_then(|r| r.state_byte())
+        self.last_status
+            .as_ref()
+            .and_then(|r| Reply::parse(r))
+            .and_then(|r| r.state_byte())
     }
 
     /// Whether the panel is armed or arming right now (`0xFF`).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn is_armed(&self) -> Option<bool> {
         self.arm_state_byte().map(|b| b == 0xFF)
     }
@@ -288,7 +306,11 @@ impl PanelState {
         let (armed, display) = match self.last_status.as_ref().and_then(|r| Reply::parse(r)) {
             Some(r) => {
                 let armed = r.state_byte() == Some(0xFF);
-                let disp = if r.text.len() > 1 { &r.text[1..] } else { &[][..] };
+                let disp = if r.text.len() > 1 {
+                    &r.text[1..]
+                } else {
+                    &[][..]
+                };
                 (armed, String::from_utf8_lossy(disp).to_string())
             }
             None => (false, String::new()),
@@ -324,6 +346,10 @@ impl PanelState {
         parts
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn has_registration(&self) -> bool {
         self.last_504.is_some()
     }
@@ -408,7 +434,12 @@ mod tests {
         assert!(e.undecoded.is_none());
         assert_eq!(e.parts.len(), 1 + STATUS_FILLERS);
         // the head is the status frame, the tail three identical fillers
-        let base = Reply { session: 0, msg_type: 21, arg: 1, text: text.clone() };
+        let base = Reply {
+            session: 0,
+            msg_type: 21,
+            arg: 1,
+            text: text.clone(),
+        };
         assert_eq!(e.parts[0], frame::status_part(&ipc::frame_status(&base, 2)));
         let filler = frame::status_part(&ipc::frame_filler(&base));
         for p in &e.parts[1..] {
@@ -421,7 +452,12 @@ mod tests {
         let e = on_reply(&raw_reply(0, 18, 2, b"1 P1  H"), 0);
         assert!(e.undecoded.is_none());
         assert_eq!(e.parts.len(), 1, "msgType 18 gets zero fillers");
-        let base = Reply { session: 0, msg_type: 18, arg: 2, text: b"1 P1  H".to_vec() };
+        let base = Reply {
+            session: 0,
+            msg_type: 18,
+            arg: 2,
+            text: b"1 P1  H".to_vec(),
+        };
         assert_eq!(e.parts[0], frame::status_part(&ipc::frame_typed(&base, 2)));
     }
 
@@ -430,9 +466,15 @@ mod tests {
         let e = on_reply(&raw_504(0, 1, b"P1  H", [1, 0, 3, 3]), 0);
         assert!(e.undecoded.is_none());
         assert_eq!(e.parts.len(), 1 + REG_FILLERS);
-        assert_eq!(e.parts[0].0, b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"0:504:1:P1  H:1:0:3:3\"]]");
+        assert_eq!(
+            e.parts[0].0,
+            b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"0:504:1:P1  H:1:0:3:3\"]]"
+        );
         // the fillers differ from the head only in the type slot (-1)
-        assert_eq!(e.parts[1].0, b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"0:-1:1:P1  H:1:0:3:3\"]]");
+        assert_eq!(
+            e.parts[1].0,
+            b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"0:-1:1:P1  H:1:0:3:3\"]]"
+        );
     }
 
     #[test]
@@ -443,9 +485,17 @@ mod tests {
         assert!(e.undecoded.is_none());
         let texts = emitted_texts(&e);
         assert_eq!(texts.len(), 1 + CONSOLE_UNSOLICITED);
-        assert_eq!(texts[0], b"0:20:2ZONE 05- FRONT|DOOR: OPEN".to_vec(), "first ':' -> '-'");
+        assert_eq!(
+            texts[0],
+            b"0:20:2ZONE 05- FRONT|DOOR: OPEN".to_vec(),
+            "first ':' -> '-'"
+        );
         for t in &texts[1..] {
-            assert_eq!(*t, b"0:-1:2ZONE 05: FRONT|DOOR: OPEN".to_vec(), "raw text on the -1 copies");
+            assert_eq!(
+                *t,
+                b"0:-1:2ZONE 05: FRONT|DOOR: OPEN".to_vec(),
+                "raw text on the -1 copies"
+            );
         }
         // the vendor's arm runs only for session 0: anything else is diagnosed
         let odd = raw_reply(7, 20, 0, b"x|y");
@@ -458,14 +508,25 @@ mod tests {
     fn panel_state_replays_the_current_lcd_line() {
         let mut st = PanelState::new();
         assert_eq!(st.console_text(), None);
-        st.observe(&raw_reply(0, 20, 0, b"****DISARMED****|  Ready to Arm  "), 0);
+        st.observe(
+            &raw_reply(0, 20, 0, b"****DISARMED****|  Ready to Arm  "),
+            0,
+        );
         st.observe(&raw_reply(0, 20, 0, b"ARMED STAY|  EXIT NOW  "), 0);
-        assert_eq!(st.console_text().as_deref(), Some(&b"ARMED STAY|  EXIT NOW  "[..]));
+        assert_eq!(
+            st.console_text().as_deref(),
+            Some(&b"ARMED STAY|  EXIT NOW  "[..])
+        );
         let snap = st.snapshot(1, 1, "/nonexistent");
-        let has = |s: &[u8]| snap.iter().any(|p| {
+        let has = |s: &[u8]| {
+            snap.iter().any(|p| {
             matches!(frame::classify(p), frame::Message::StatusText(t) if t.windows(s.len()).any(|w| w == s))
-        });
-        assert!(has(b"0:20:2ARMED STAY|  EXIT NOW  "), "latest LCD line replayed");
+        })
+        };
+        assert!(
+            has(b"0:20:2ARMED STAY|  EXIT NOW  "),
+            "latest LCD line replayed"
+        );
         assert!(!has(b"DISARMED"), "the superseded line is not");
     }
 
@@ -511,7 +572,11 @@ mod tests {
         let e = on_reply(&raw, 2);
         assert!(e.parts.is_empty(), "no fabricated frame for an unread type");
         assert_eq!(e.undecoded.as_ref().map(|(t, _)| *t), Some(23));
-        assert_eq!(e.undecoded.unwrap().1, raw, "the raw reply is preserved verbatim");
+        assert_eq!(
+            e.undecoded.unwrap().1,
+            raw,
+            "the raw reply is preserved verbatim"
+        );
     }
 
     #[test]
@@ -531,17 +596,29 @@ mod tests {
         let statuses: Vec<Vec<u8>> = snap
             .iter()
             .filter_map(|p| match frame::classify(p) {
-                frame::Message::StatusText(t) if t.starts_with(b"0:21:") || t.starts_with(b"0:22:") => Some(t),
+                frame::Message::StatusText(t)
+                    if t.starts_with(b"0:21:") || t.starts_with(b"0:22:") =>
+                {
+                    Some(t)
+                }
                 _ => None,
             })
             .collect();
-        assert_eq!(statuses, vec![b"0:21:1:fe:\xfe1Ready To Arm:2".to_vec()], "only the newest status, once");
+        assert_eq!(
+            statuses,
+            vec![b"0:21:1:fe:\xfe1Ready To Arm:2".to_vec()],
+            "only the newest status, once"
+        );
 
         // and a 22 arriving last is the one replayed, with the arm state read from it
         let mut armed = vec![0xFFu8];
         armed.extend_from_slice(b"2Armed Stay");
         st.observe(&raw_reply(0, 22, 4, &armed), 2);
-        assert_eq!(st.is_armed(), Some(true), "a 22 carries the state byte like a 21");
+        assert_eq!(
+            st.is_armed(),
+            Some(true),
+            "a 22 carries the state byte like a 21"
+        );
         assert!(st.status_json().contains("\"armed\":true"));
     }
 
@@ -554,8 +631,14 @@ mod tests {
         assert_eq!(p[2], frame::noofclient_part(2));
         // and each classifies back to the shape it is
         assert!(matches!(frame::classify(&p[0]), frame::Message::SetCid(_)));
-        assert!(matches!(frame::classify(&p[1]), frame::Message::StatusText(_)));
-        assert!(matches!(frame::classify(&p[2]), frame::Message::NoOfClient(_)));
+        assert!(matches!(
+            frame::classify(&p[1]),
+            frame::Message::StatusText(_)
+        ));
+        assert!(matches!(
+            frame::classify(&p[2]),
+            frame::Message::NoOfClient(_)
+        ));
     }
 
     #[test]
@@ -579,15 +662,26 @@ mod tests {
         let _ = std::fs::remove_file(&qa);
 
         // the first part is the per-connection setCid
-        assert!(matches!(frame::classify(&snap[0]), frame::Message::SetCid(_)));
+        assert!(matches!(
+            frame::classify(&snap[0]),
+            frame::Message::SetCid(_)
+        ));
         // registration present, and the LATEST status (armed), not the stale one,
         // and it must carry the quick_arm read from the file (:7), not a 0
-        let text_of = |s: &[u8]| snap.iter().any(|p| {
+        let text_of = |s: &[u8]| {
+            snap.iter().any(|p| {
             matches!(frame::classify(p), frame::Message::StatusText(t) if t.windows(s.len()).any(|w| w == s))
-        });
+        })
+        };
         assert!(text_of(b"504:1:P1  H"), "registration must be replayed");
-        assert!(text_of(b"2Armed Stay:7"), "latest status replayed WITH the file's quick_arm");
-        assert!(!text_of(b"1Ready To Arm"), "the superseded status must not be");
+        assert!(
+            text_of(b"2Armed Stay:7"),
+            "latest status replayed WITH the file's quick_arm"
+        );
+        assert!(
+            !text_of(b"1Ready To Arm"),
+            "the superseded status must not be"
+        );
     }
 
     #[test]
@@ -610,13 +704,21 @@ mod tests {
         st.observe(&raw_reply(0, 21, 1, &armed), 2);
         assert_eq!(st.arm_state_byte(), Some(0xFF));
         assert_eq!(st.is_armed(), Some(true));
-        assert!(st.status_json().contains("\"armed\":true"), "{}", st.status_json());
+        assert!(
+            st.status_json().contains("\"armed\":true"),
+            "{}",
+            st.status_json()
+        );
     }
 
     #[test]
     fn current_partition_comes_from_the_registration() {
         let mut st = PanelState::new();
-        assert_eq!(st.current_partition(), 1, "default is partition 1 before any 504");
+        assert_eq!(
+            st.current_partition(),
+            1,
+            "default is partition 1 before any 504"
+        );
         st.observe(&raw_504(0, 2, b"P2  H", [1, 0, 3, 3]), 0);
         assert_eq!(st.current_partition(), 2);
     }
@@ -626,9 +728,17 @@ mod tests {
         let p = std::env::temp_dir().join(format!("qa-{}", std::process::id()));
         std::fs::write(&p, "2 5 0 0 0 0 0 0\n").unwrap();
         let path = p.to_str().unwrap();
-        assert_eq!(read_quick_arm(path, 1), 2, "partition 1 -> first value, as §5.12 measured");
+        assert_eq!(
+            read_quick_arm(path, 1),
+            2,
+            "partition 1 -> first value, as §5.12 measured"
+        );
         assert_eq!(read_quick_arm(path, 2), 5);
-        assert_eq!(read_quick_arm(path, 9), 0, "past the eight ints -> 0, not a panic");
+        assert_eq!(
+            read_quick_arm(path, 9),
+            0,
+            "past the eight ints -> 0, not a panic"
+        );
         let _ = std::fs::remove_file(&p);
         // a missing file is tolerated (no quickarmstate_ sidecar either) -> 0
         assert_eq!(read_quick_arm(path, 1), 0);
@@ -669,7 +779,8 @@ mod tests {
                 let t = &texts[i];
                 let f: Vec<&[u8]> = t.split(|&b| b == b':').collect();
                 // a real status frame has a numeric type in field 1 that is not -1
-                let is_real = f.len() >= 2 && f[1] != b"-1" && num(f[0]).is_some() && num(f[1]).is_some();
+                let is_real =
+                    f.len() >= 2 && f[1] != b"-1" && num(f[0]).is_some() && num(f[1]).is_some();
                 if !is_real {
                     i += 1;
                     continue;
@@ -693,7 +804,8 @@ mod tests {
                     21 => {
                         // session:21:arg:hex:text:quick
                         assert_eq!(f.len(), 6, "unexpected 21 field count: {t:?}");
-                        let (s, arg, q) = (num(f[0]).unwrap(), num(f[2]).unwrap(), num(f[5]).unwrap());
+                        let (s, arg, q) =
+                            (num(f[0]).unwrap(), num(f[2]).unwrap(), num(f[5]).unwrap());
                         (raw_reply(s, 21, arg, f[4]), q)
                     }
                     18 => {
@@ -707,7 +819,12 @@ mod tests {
                         assert_eq!(f.len(), 8, "unexpected 504 field count: {t:?}");
                         let s = num(f[0]).unwrap();
                         let arg = num(f[2]).unwrap() as u8;
-                        let e = [num(f[4]).unwrap(), num(f[5]).unwrap(), num(f[6]).unwrap(), num(f[7]).unwrap()];
+                        let e = [
+                            num(f[4]).unwrap(),
+                            num(f[5]).unwrap(),
+                            num(f[6]).unwrap(),
+                            num(f[7]).unwrap(),
+                        ];
                         // session goes at +0x00, but the captured frames all use 0
                         let mut b = raw_504(s, arg, f[3], e);
                         b[0x00..0x04].copy_from_slice(&s.to_le_bytes());
@@ -718,13 +835,17 @@ mod tests {
 
                 let got = on_reply(&raw, quick);
                 assert!(got.undecoded.is_none(), "type {ty} routed to diagnostic");
-                let want: Vec<Vec<u8>> = std::iter::once(t.clone()).chain(fillers.clone()).collect();
+                let want: Vec<Vec<u8>> =
+                    std::iter::once(t.clone()).chain(fillers.clone()).collect();
                 assert_eq!(emitted_texts(&got), want, "run for msgType {ty} drifted");
                 checked += 1;
                 i = j;
             }
         }
-        assert!(checked >= 30, "expected many runs reproduced, got {checked}");
+        assert!(
+            checked >= 30,
+            "expected many runs reproduced, got {checked}"
+        );
         println!("reproduced {checked} reply->run emissions from the captures");
     }
 }

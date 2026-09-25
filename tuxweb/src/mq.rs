@@ -45,7 +45,11 @@ pub struct Attr {
 /// The rule "never create a queue" is worth more as an executable check than as
 /// a comment, because the failure it prevents is silent.
 pub fn open_flags(read_only: bool) -> i32 {
-    let access = if read_only { libc::O_RDONLY } else { libc::O_RDWR };
+    let access = if read_only {
+        libc::O_RDONLY
+    } else {
+        libc::O_RDWR
+    };
     access | libc::O_CLOEXEC
 }
 
@@ -76,7 +80,10 @@ impl Queue {
                 _ => format!("{name}: {e}"),
             });
         }
-        Ok(Queue { fd, name: name.to_string() })
+        Ok(Queue {
+            fd,
+            name: name.to_string(),
+        })
     }
 
     /// Send one message. Stage 7a and later only; stage 6 must never reach this.
@@ -91,9 +98,8 @@ impl Queue {
     /// and a full command queue means `/tuxedo` has stopped draining it, which is a
     /// condition to report rather than to block on.
     pub fn send(&self, msg: &[u8]) -> Result<(), String> {
-        let n = unsafe {
-            libc::mq_send(self.fd, msg.as_ptr() as *const libc::c_char, msg.len(), 1)
-        };
+        let n =
+            unsafe { libc::mq_send(self.fd, msg.as_ptr() as *const libc::c_char, msg.len(), 1) };
         if n == 0 {
             return Ok(());
         }
@@ -118,14 +124,14 @@ impl Queue {
         })
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
     pub fn attr(&self) -> Result<Attr, String> {
         let mut a: libc::mq_attr = unsafe { std::mem::zeroed() };
         if unsafe { libc::mq_getattr(self.fd, &mut a) } == -1 {
-            return Err(format!("{}: {}", self.name, std::io::Error::last_os_error()));
+            return Err(format!(
+                "{}: {}",
+                self.name,
+                std::io::Error::last_os_error()
+            ));
         }
         Ok(Attr {
             flags: a.mq_flags as i64,
@@ -149,9 +155,15 @@ impl Queue {
     /// normal idle case and not an error. Distinguishing it from a real failure
     /// is what lets the caller loop without treating silence as breakage.
     pub fn receive(&self, buf: &mut [u8], timeout: Duration) -> Result<Option<usize>, String> {
-        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
         if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) } == -1 {
-            return Err(format!("clock_gettime: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "clock_gettime: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         let total = ts.tv_nsec as u64 + timeout.subsec_nanos() as u64;
         ts.tv_sec += timeout.as_secs() as libc::time_t + (total / 1_000_000_000) as libc::time_t;
@@ -259,8 +271,15 @@ mod tests {
 
         // nothing waiting: a timeout is Ok(None), not an error
         let mut buf = q.buffer().expect("buffer");
-        assert_eq!(buf.len(), 556, "the buffer is sized from the queue, not a constant");
-        assert_eq!(q.receive(&mut buf, Duration::from_millis(50)).unwrap(), None);
+        assert_eq!(
+            buf.len(),
+            556,
+            "the buffer is sized from the queue, not a constant"
+        );
+        assert_eq!(
+            q.receive(&mut buf, Duration::from_millis(50)).unwrap(),
+            None
+        );
 
         let msg = vec![0xABu8; 556];
         assert_eq!(
@@ -273,7 +292,9 @@ mod tests {
 
         // a short buffer must produce the explaining error, not a silent stall
         let mut small = vec![0u8; 8];
-        let e = q.receive(&mut small, Duration::from_millis(50)).unwrap_err();
+        let e = q
+            .receive(&mut small, Duration::from_millis(50))
+            .unwrap_err();
         assert!(e.contains("msgsize"), "{e}");
 
         drop(q);

@@ -73,9 +73,7 @@ impl Reply {
         if buf.len() < 0x0F {
             return None;
         }
-        let w = |o: usize| {
-            u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]])
-        };
+        let w = |o: usize| u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
         let tail = &buf[0x0E..];
         let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
         Some(Reply {
@@ -105,9 +103,7 @@ impl Reply {
         if buf.len() < REPLY_LEN {
             return None;
         }
-        let w = |o: usize| {
-            u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]])
-        };
+        let w = |o: usize| u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
         let tail = &buf[0x91..];
         let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
         Some(Reply {
@@ -421,6 +417,10 @@ pub fn frame_console_unsolicited(r: &Reply) -> Vec<u8> {
 pub mod literal {
     /// Sent very frequently; distinct from the `session:-1:text` filler, which
     /// does carry the status text.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub const BARE_FILLER: &[u8] = b"-1";
     /// The first `statusMessageText` a client receives.
     pub const CLIENT_CONNECTED: &[u8] = b"Client Connected";
@@ -432,7 +432,12 @@ mod tests {
 
     /// Build the reply the panel must have sent to produce a captured frame.
     fn reply(msg_type: u32, arg: u32, text: &[u8]) -> Reply {
-        Reply { session: 0, msg_type, arg, text: text.to_vec() }
+        Reply {
+            session: 0,
+            msg_type,
+            arg,
+            text: text.to_vec(),
+        }
     }
 
     #[test]
@@ -475,8 +480,10 @@ mod tests {
         assert_eq!(frame_registration(&r, extra), b"0:504:1:P1  H:1:0:3:3");
 
         // and the -1 repeat that follows it in the same capture
-        assert_eq!(frame_registration_filler(&r, extra),
-                   b"0:-1:1:P1  H:1:0:3:3");
+        assert_eq!(
+            frame_registration_filler(&r, extra),
+            b"0:-1:1:P1  H:1:0:3:3"
+        );
 
         // Reply::parse would put +0x08 in the third field and read text from
         // +0x0E; both are wrong here, which is the whole point of parse_504.
@@ -526,7 +533,10 @@ mod tests {
     #[test]
     fn console_frames_carry_the_constant_2_and_replace_only_the_first_colon() {
         let r = reply(20, 0, b"****DISARMED****|  Ready to Arm  ");
-        assert_eq!(frame_console(&r), b"0:20:2****DISARMED****|  Ready to Arm  ".to_vec());
+        assert_eq!(
+            frame_console(&r),
+            b"0:20:2****DISARMED****|  Ready to Arm  ".to_vec()
+        );
         assert_eq!(
             frame_console_unsolicited(&r),
             b"0:-1:2****DISARMED****|  Ready to Arm  ".to_vec()
@@ -535,8 +545,14 @@ mod tests {
         // a colon inside the display: the id-20 record gets '-' for the FIRST one
         // only; the -1 copies carry the raw text
         let r = reply(20, 0, b"ZONE 05: FRONT|DOOR: OPEN");
-        assert_eq!(frame_console(&r), b"0:20:2ZONE 05- FRONT|DOOR: OPEN".to_vec());
-        assert_eq!(frame_console_unsolicited(&r), b"0:-1:2ZONE 05: FRONT|DOOR: OPEN".to_vec());
+        assert_eq!(
+            frame_console(&r),
+            b"0:20:2ZONE 05- FRONT|DOOR: OPEN".to_vec()
+        );
+        assert_eq!(
+            frame_console_unsolicited(&r),
+            b"0:-1:2ZONE 05: FRONT|DOOR: OPEN".to_vec()
+        );
 
         // the vendor's `if (0 < pos)`: a colon at index 0 is left alone
         let r = reply(20, 0, b":LEADING|x");
@@ -573,30 +589,58 @@ mod tests {
                     // session:type:arg:hex:text:quick  -- the status frame
                     let (Some(s), Some(ty), Some(arg), Some(q)) =
                         (num(f[0]), num(f[1]), num(f[2]), num(f[5]))
-                    else { skipped += 1; continue };
-                    let r = Reply { session: s, msg_type: ty, arg, text: f[4].to_vec() };
+                    else {
+                        skipped += 1;
+                        continue;
+                    };
+                    let r = Reply {
+                        session: s,
+                        msg_type: ty,
+                        arg,
+                        text: f[4].to_vec(),
+                    };
                     assert_eq!(frame_status(&r, q), t, "status frame drifted");
                     checked += 1;
                 } else if f.len() == 4 && num(f[0]).is_some() && num(f[1]).is_some() {
                     // session:type:text:trailing
-                    let (Some(s), Some(ty), Some(tr)) = (num(f[0]), num(f[1]), num(f[3]))
-                    else { skipped += 1; continue };
-                    let r = Reply { session: s, msg_type: ty, arg: 0, text: f[2].to_vec() };
+                    let (Some(s), Some(ty), Some(tr)) = (num(f[0]), num(f[1]), num(f[3])) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    let r = Reply {
+                        session: s,
+                        msg_type: ty,
+                        arg: 0,
+                        text: f[2].to_vec(),
+                    };
                     assert_eq!(frame_typed(&r, tr), t, "typed frame drifted");
                     checked += 1;
                 } else if f.len() == 8 && num(f[0]).is_some() {
                     // session:type:arg:text:a:b:c:d -- the 504 registration,
                     // and its -1 repeat, which differs only in that one field
-                    let (Some(s), Some(arg)) = (num(f[0]), num(f[2]))
-                    else { skipped += 1; continue };
+                    let (Some(s), Some(arg)) = (num(f[0]), num(f[2])) else {
+                        skipped += 1;
+                        continue;
+                    };
                     let extra: Vec<u32> = f[4..].iter().filter_map(|x| num(x)).collect();
-                    if extra.len() != 4 { skipped += 1; continue }
+                    if extra.len() != 4 {
+                        skipped += 1;
+                        continue;
+                    }
                     let e = [extra[0], extra[1], extra[2], extra[3]];
-                    let r = Reply { session: s, msg_type: 504, arg, text: f[3].to_vec() };
+                    let r = Reply {
+                        session: s,
+                        msg_type: 504,
+                        arg,
+                        text: f[3].to_vec(),
+                    };
                     let got = if f[1] == b"-1" {
                         frame_registration_filler(&r, e)
                     } else {
-                        let Some(ty) = num(f[1]) else { skipped += 1; continue };
+                        let Some(ty) = num(f[1]) else {
+                            skipped += 1;
+                            continue;
+                        };
                         frame_registration(&Reply { msg_type: ty, ..r }, e)
                     };
                     assert_eq!(got, t, "registration frame drifted");
@@ -604,7 +648,9 @@ mod tests {
                 } else if f.len() == 3 && f[1] == b"-1" && num(f[0]).is_some() {
                     // session:-1:text  -- the filler
                     let r = Reply {
-                        session: num(f[0]).unwrap(), msg_type: 21, arg: 0,
+                        session: num(f[0]).unwrap(),
+                        msg_type: 21,
+                        arg: 0,
                         text: f[2].to_vec(),
                     };
                     assert_eq!(frame_filler(&r), t, "filler frame drifted");
@@ -617,7 +663,10 @@ mod tests {
                 }
             }
         }
-        assert!(checked >= 40, "expected to reproduce many frames, got {checked}");
+        assert!(
+            checked >= 40,
+            "expected to reproduce many frames, got {checked}"
+        );
         // Every statusMessageText in both captures is now accounted for: the
         // formatted shapes above, plus the two literals. If this ever fails,
         // the panel has emitted a shape this module cannot produce, which is
@@ -653,7 +702,13 @@ mod tests {
             (cmd::CONSOLE_MODE, "requestconsolemode"),
             (cmd::REGISTER, "registerclient"),
         ] {
-            let b = Command { head: 0, code, p1: 0, p2: 0 }.encode();
+            let b = Command {
+                head: 0,
+                code,
+                p1: 0,
+                p2: 0,
+            }
+            .encode();
             let got = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
             assert_eq!(got, code, "{name} must land at +0x04");
         }
@@ -664,7 +719,12 @@ mod tests {
 
     #[test]
     fn command_encodes_to_the_wire_size_and_offsets() {
-        let c = Command { head: 0, code: cmd::ARM_STAY, p1: 1, p2: 0 };
+        let c = Command {
+            head: 0,
+            code: cmd::ARM_STAY,
+            p1: 1,
+            p2: 0,
+        };
         let b = c.encode();
         assert_eq!(b.len(), COMMAND_LEN, "the queue takes exactly 404 bytes");
         assert_eq!(&b[0x04..0x08], &2u32.to_le_bytes(), "code lives at +0x04");

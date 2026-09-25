@@ -80,7 +80,13 @@ fn command(session: u32, code: u32) -> Vec<u8> {
 
 /// `p2` at +0x0C is the user code for the arming commands; zero for everything else.
 fn command_with(session: u32, code: u32, p2: u32) -> Vec<u8> {
-    let v = Command { head: session, code, p1: 0, p2 }.encode();
+    let v = Command {
+        head: session,
+        code,
+        p1: 0,
+        p2,
+    }
+    .encode();
     debug_assert_eq!(v.len(), COMMAND_LEN);
     v
 }
@@ -109,10 +115,7 @@ pub fn user_code() -> Option<u32> {
 
 /// The four commands that carry a user code at `+0x0C`.
 pub fn is_arming(code: u32) -> bool {
-    code == cmd::ARM_AWAY
-        || code == cmd::ARM_STAY
-        || code == cmd::DISARM
-        || code == cmd::ARM_NIGHT
+    code == cmd::ARM_AWAY || code == cmd::ARM_STAY || code == cmd::DISARM || code == cmd::ARM_NIGHT
 }
 
 /// Commands that switch the broadcast firehose OFF for every consumer.
@@ -160,13 +163,13 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
 
     let attr = replies.attr()?;
     println!(
-        "{}: replies maxmsg={} msgsize={} curmsgs={}", cfg.label,
-        attr.maxmsg, attr.msgsize, attr.curmsgs
+        "{}: replies maxmsg={} msgsize={} curmsgs={}",
+        cfg.label, attr.maxmsg, attr.msgsize, attr.curmsgs
     );
     if attr.curmsgs > 0 {
         println!(
-            "{}: NOTE {} message(s) already queued -- the 500 below will FLUSH them", cfg.label,
-            attr.curmsgs
+            "{}: NOTE {} message(s) already queued -- the 500 below will FLUSH them",
+            cfg.label, attr.curmsgs
         );
     }
 
@@ -182,10 +185,13 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
     };
     let mut tally: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
 
-    let mut log = std::fs::File::create(&cfg.log)
-        .map_err(|e| format!("cannot open {}: {e}", cfg.log))?;
+    let mut log =
+        std::fs::File::create(&cfg.log).map_err(|e| format!("cannot open {}: {e}", cfg.log))?;
 
-    println!("{}: sending 500 REGISTER, session {}", cfg.label, cfg.session);
+    println!(
+        "{}: sending 500 REGISTER, session {}",
+        cfg.label, cfg.session
+    );
     commands.send(&command(cfg.session, cmd::REGISTER))?;
     out.sent_register = true;
 
@@ -198,8 +204,15 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
         let p2 = if is_arming(*code) { cfg.user_code } else { 0 };
         println!(
             "{}: sending query {} of {}: code {}{}",
-            cfg.label, i + 1, cfg.queries.len(), code,
-            if is_arming(*code) { "  (with the user code at +0x0C)" } else { "" }
+            cfg.label,
+            i + 1,
+            cfg.queries.len(),
+            code,
+            if is_arming(*code) {
+                "  (with the user code at +0x0C)"
+            } else {
+                ""
+            }
         );
         if let Err(e) = commands.send(&command_with(cfg.session, *code, p2)) {
             // Report and keep going to the unregister: a half-sent query set is
@@ -248,7 +261,11 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
     // After the watch: HOME/BACK and anything else whose effect is not observable
     // here by design. Ordered last because they end the broadcast.
     for code in &cfg.after_watch {
-        let note = if kills_firehose(*code) { "  (ends the broadcast)" } else { "" };
+        let note = if kills_firehose(*code) {
+            "  (ends the broadcast)"
+        } else {
+            ""
+        };
         println!("{}: sending post-watch command {}{}", cfg.label, code, note);
         match commands.send(&command(cfg.session, *code)) {
             Ok(()) => out.after_sent += 1,
@@ -260,7 +277,10 @@ pub fn run(cfg: &Config) -> Result<Outcome, String> {
     println!("{}: sending 501 UNREGISTER", cfg.label);
     match commands.send(&command(cfg.session, cmd::UNREGISTER)) {
         Ok(()) => out.sent_unregister = true,
-        Err(e) => println!("{}: UNREGISTER FAILED: {e} -- the firehose may still be on", cfg.label),
+        Err(e) => println!(
+            "{}: UNREGISTER FAILED: {e} -- the firehose may still be on",
+            cfg.label
+        ),
     }
 
     Ok(out)
@@ -337,7 +357,10 @@ mod tests {
         ] {
             let cfg = crate::stage7_from_marker(m).expect(m);
             assert_eq!(cfg.queries, vec![want]);
-            assert!(cfg.after_watch.is_empty(), "7d sends nothing after the watch");
+            assert!(
+                cfg.after_watch.is_empty(),
+                "7d sends nothing after the watch"
+            );
         }
     }
 
@@ -350,9 +373,16 @@ mod tests {
         );
         let c = crate::stage7_from_marker("7c").unwrap();
         assert_eq!(c.queries, vec![cmd::CONSOLE_MODE]);
-        assert_eq!(c.after_watch, vec![cmd::BACK], "BACK is after the watch, never in it");
+        assert_eq!(
+            c.after_watch,
+            vec![cmd::BACK],
+            "BACK is after the watch, never in it"
+        );
         // the optional watch length
-        assert_eq!(crate::stage7_from_marker("7a s45").unwrap().watch.as_secs(), 45);
+        assert_eq!(
+            crate::stage7_from_marker("7a s45").unwrap().watch.as_secs(),
+            45
+        );
     }
 
     #[test]

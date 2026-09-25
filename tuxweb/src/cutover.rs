@@ -71,9 +71,7 @@ pub fn take_arm_marker(path: &str) -> Option<String> {
             if body.is_empty() {
                 println!("tuxweb cutover: consumed {path} -- this is the one armed window");
             } else {
-                println!(
-                    "tuxweb cutover: consumed {path} -- one armed window, stage {body:?}"
-                );
+                println!("tuxweb cutover: consumed {path} -- one armed window, stage {body:?}");
             }
             Some(body)
         }
@@ -115,10 +113,15 @@ pub fn log_line(seq: u64, at: Duration, raw: &[u8]) -> String {
             r.session,
             r.msg_type,
             r.arg,
-            r.state_byte().map(|b| format!("0x{b:02x}")).unwrap_or_else(|| "-".into()),
+            r.state_byte()
+                .map(|b| format!("0x{b:02x}"))
+                .unwrap_or_else(|| "-".into()),
             // latin-1: the text is not utf-8 and lossy-decoding it would
             // destroy the very bytes this log exists to preserve
-            r.text.iter().map(|&b| format!("{b:02x}")).collect::<String>(),
+            r.text
+                .iter()
+                .map(|&b| format!("{b:02x}"))
+                .collect::<String>(),
             hex = hex,
         ),
         None => format!("{seq}\t{:.3}\tSHORT\t{hex}\n", at.as_secs_f64()),
@@ -134,7 +137,10 @@ pub fn run(cfg: Config) -> ! {
     // recovery that could not work. Order matters here even when the outcome
     // does not, because the log is what someone reads at 2am.
     if !std::path::Path::new(&cfg.vendor).is_file() {
-        eprintln!("tuxweb cutover: {} is missing; REFUSING to start", cfg.vendor);
+        eprintln!(
+            "tuxweb cutover: {} is missing; REFUSING to start",
+            cfg.vendor
+        );
         eprintln!("tuxweb cutover: nothing was armed and no queue was opened");
         std::process::exit(2);
     }
@@ -216,8 +222,11 @@ pub fn run(cfg: Config) -> ! {
                     tally.undecodable += 1;
                 }
                 if log.write_all(line.as_bytes()).is_err() || log.flush().is_err() {
-                    fail("the log became unwritable; the window's evidence is the \
-                          point of it, so there is no value in continuing".into());
+                    fail(
+                        "the log became unwritable; the window's evidence is the \
+                          point of it, so there is no value in continuing"
+                            .into(),
+                    );
                 }
                 if tally.received % 10 == 0 {
                     println!(
@@ -254,7 +263,10 @@ mod tests {
 
         // absent: this is a passthrough launch, not a window
         let _ = std::fs::remove_file(&p);
-        assert!(take_arm_marker(path).is_none(), "no marker must mean no window");
+        assert!(
+            take_arm_marker(path).is_none(),
+            "no marker must mean no window"
+        );
 
         std::fs::write(&p, b"").unwrap();
         assert_eq!(
@@ -265,7 +277,10 @@ mod tests {
         // and the SECOND launch must not get a window. This is the assertion
         // that stands between a crashed cutover and a relaunch loop ending at
         // the 24-relaunch watchdog reset.
-        assert!(take_arm_marker(path).is_none(), "one marker is exactly one window");
+        assert!(
+            take_arm_marker(path).is_none(),
+            "one marker is exactly one window"
+        );
         assert!(!p.exists(), "the marker must be gone, not merely ignored");
 
         // A marker carrying a stage returns it, trimmed -- that string is the only
@@ -297,7 +312,10 @@ mod tests {
         let raw = reply_bytes(20, b"\xff\xfe\x80hello");
         let line = log_line(0, Duration::ZERO, &raw);
         assert!(line.contains("text=fffe80"), "{line}");
-        assert!(!line.contains('\u{fffd}'), "no replacement characters: {line}");
+        assert!(
+            !line.contains('\u{fffd}'),
+            "no replacement characters: {line}"
+        );
     }
 
     #[test]
@@ -313,7 +331,11 @@ mod tests {
     fn log_lines_are_single_lines_so_the_log_stays_parseable() {
         for text in [&b"\x00\x01\x02"[..], b"\xfe1Ready\tTo\nArm", b""] {
             let line = log_line(1, Duration::ZERO, &reply_bytes(19, text));
-            assert_eq!(line.matches('\n').count(), 1, "exactly one newline: {line:?}");
+            assert_eq!(
+                line.matches('\n').count(),
+                1,
+                "exactly one newline: {line:?}"
+            );
             assert!(!line[..line.len() - 1].contains('\n'));
         }
     }

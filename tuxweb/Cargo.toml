@@ -2,10 +2,11 @@
 name = "tuxweb"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
+# PEM parsing is pki-types' own, through rustls; rustls-pemfile is unmaintained (RUSTSEC-2025-0134).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-rustls-pemfile = "2"
 # already in the tree via rustls; named directly so login.rs can use HMAC-SHA512
 ring = "0.17"
 # The vendor account store (accounts.rs, WEBSERVER-REPLACEMENT.md 1.6 decision

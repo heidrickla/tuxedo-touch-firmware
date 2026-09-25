@@ -105,7 +105,9 @@ fn token_eq(a: &str, b: &str) -> bool {
 /// header and adding a second one is cheaper than a new code path for it.
 fn presents_token(req_head: &str, want: &str) -> bool {
     for line in req_head.split("\r\n") {
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         let (k, v) = (k.trim(), v.trim());
         if k.eq_ignore_ascii_case("authorization") {
             if let Some(t) = v.strip_prefix("Bearer ") {
@@ -212,8 +214,7 @@ pub fn carries_credentials(head: &str, body_seen: &[u8]) -> bool {
     if !method.eq_ignore_ascii_case("POST") {
         return false;
     }
-    path.starts_with("/authenticated/")
-        || String::from_utf8_lossy(body_seen).contains("log1=")
+    path.starts_with("/authenticated/") || String::from_utf8_lossy(body_seen).contains("log1=")
 }
 
 impl Shim {
@@ -224,7 +225,7 @@ impl Shim {
     /// this must never become a retry loop.
     fn open_upstream(&self) -> Result<TcpStream, String> {
         match self.open_upstream_once() {
-            Ok(s) => return Ok(s),
+            Ok(s) => Ok(s),
             Err(e) if e.contains("401") => {
                 let Some(c) = self.creds.as_ref() else {
                     return Err(format!(
@@ -235,9 +236,9 @@ impl Shim {
                 let fresh = crate::login::login(&self.upstream, &c.user, &c.password)
                     .map_err(|le| format!("re-login failed: {le}"))?;
                 *self.cookie.borrow_mut() = fresh;
-                return self.open_upstream_once();
+                self.open_upstream_once()
             }
-            Err(e) => return Err(e),
+            Err(e) => Err(e),
         }
     }
 
@@ -250,7 +251,8 @@ impl Shim {
              Cookie: {}\r\nConnection: keep-alive\r\n\r\n",
             self.cookie.borrow()
         );
-        s.write_all(req.as_bytes()).map_err(|e| format!("upstream write: {e}"))?;
+        s.write_all(req.as_bytes())
+            .map_err(|e| format!("upstream write: {e}"))?;
         s.set_read_timeout(Some(Duration::from_secs(40)))
             .map_err(|e| format!("upstream timeout: {e}"))?;
 
@@ -331,16 +333,25 @@ impl Shim {
             for s in l.incoming() {
                 let raw = match s {
                     Ok(c) => c,
-                    Err(e) => { eprintln!("accept: {e}"); continue; }
+                    Err(e) => {
+                        eprintln!("accept: {e}");
+                        continue;
+                    }
                 };
                 let peer = raw.peer_addr().map(|a| a.to_string()).unwrap_or_default();
                 let mut c = match Sink::accept(raw, tls.as_ref()) {
                     Ok(c) => c,
-                    Err(e) => { eprintln!("shim: {peer}: {e}"); continue; }
+                    Err(e) => {
+                        eprintln!("shim: {peer}: {e}");
+                        continue;
+                    }
                 };
                 let (head, body) = match crate::proxy::read_head(&mut c, 16 * 1024) {
                     Ok(h) => h,
-                    Err(e) => { eprintln!("shim: {peer}: {e}"); continue; }
+                    Err(e) => {
+                        eprintln!("shim: {peer}: {e}");
+                        continue;
+                    }
                 };
 
                 // Everything that is not the push stream is Barracuda's to
@@ -348,7 +359,8 @@ impl Shim {
                 // and it makes the consumer's session bind to loopback so it
                 // stays valid for every later request through here.
                 if !crate::proxy::path(&head).starts_with("/SimpleDebugger.interface/") {
-                    if carries_credentials(&head, &body) && !c.is_encrypted()
+                    if carries_credentials(&head, &body)
+                        && !c.is_encrypted()
                         && !allow_plaintext_login
                     {
                         let _ = c.write_all(NO_PLAINTEXT_LOGIN);
@@ -362,9 +374,7 @@ impl Shim {
                     // loopback. Putting it back on a TLS client connection is
                     // the one place this defect can be fixed.
                     let secure = c.is_encrypted();
-                    if let Err(e) =
-                        crate::proxy::forward(&upstream, &head, &body, &mut c, secure)
-                    {
+                    if let Err(e) = crate::proxy::forward(&upstream, &head, &body, &mut c, secure) {
                         eprintln!("shim: {peer}: proxy: {e}");
                     }
                     continue;
@@ -387,8 +397,10 @@ impl Shim {
                     continue;
                 }
                 let _ = c.flush();
-                println!("shim: {peer} subscribed ({})",
-                         if by_token { "token" } else { "session" });
+                println!(
+                    "shim: {peer} subscribed ({})",
+                    if by_token { "token" } else { "session" }
+                );
                 c.set_write_timeout(Duration::from_secs(5));
                 accept_clients.lock().unwrap().push(c);
             }
@@ -406,14 +418,19 @@ impl Shim {
                 continue;
             }
             let mut up = match self.open_upstream() {
-                Ok(u) => { drops = 0; u }
+                Ok(u) => {
+                    drops = 0;
+                    u
+                }
                 Err(e) => {
                     if drops as usize >= BACKOFF.len() {
                         return Err(format!("upstream unavailable: {e}"));
                     }
                     let w = BACKOFF[drops as usize];
                     drops += 1;
-                    eprintln!("shim: upstream open failed ({e}); retry {drops}/{MAX_RECONNECTS} in {w}s");
+                    eprintln!(
+                        "shim: upstream open failed ({e}); retry {drops}/{MAX_RECONNECTS} in {w}s"
+                    );
                     std::thread::sleep(Duration::from_secs(w));
                     continue;
                 }
@@ -480,7 +497,10 @@ mod tests {
     fn head_reproduces_the_vendor_quirks() {
         let h = String::from_utf8(HEAD.to_vec()).unwrap();
         // Server present but EMPTY -- conformance.py asserts exactly this
-        assert!(h.contains("\r\nServer: \r\n"), "Server: must be present and empty");
+        assert!(
+            h.contains("\r\nServer: \r\n"),
+            "Server: must be present and empty"
+        );
         // Connection: Close on a stream that is then held open
         assert!(h.contains("Connection: Close"));
         assert!(h.contains("multipart/x-mixed-replace;boundary=\"EH912ZZ\""));
@@ -492,8 +512,14 @@ mod tests {
         let want = "s3cr3t-token";
         let head = |h: &str| format!("GET / HTTP/1.1\r\n{h}\r\n\r\n");
 
-        assert!(presents_token(&head("Authorization: Bearer s3cr3t-token"), want));
-        assert!(presents_token(&head("Cookie: a=b; tuxweb_token=s3cr3t-token"), want));
+        assert!(presents_token(
+            &head("Authorization: Bearer s3cr3t-token"),
+            want
+        ));
+        assert!(presents_token(
+            &head("Cookie: a=b; tuxweb_token=s3cr3t-token"),
+            want
+        ));
 
         // the exact failure this gate exists to stop: no credential at all
         assert!(!presents_token(&head("Host: x"), want));
@@ -504,14 +530,23 @@ mod tests {
         assert!(!presents_token(&head("Cookie: z9ZAqJtI_1=deadbeef"), want));
         // neither a prefix nor a suffix may pass
         assert!(!presents_token(&head("Authorization: Bearer s3cr3t"), want));
-        assert!(!presents_token(&head("Authorization: Bearer s3cr3t-token-x"), want));
+        assert!(!presents_token(
+            &head("Authorization: Bearer s3cr3t-token-x"),
+            want
+        ));
     }
 
     #[test]
     fn denial_is_a_real_status_not_a_page() {
         let d = String::from_utf8(DENY.to_vec()).unwrap();
-        assert!(d.starts_with("HTTP/1.1 401"), "must be a status a stream client can see");
-        assert!(d.contains("Content-Length: 0"), "no body to read silently to EOF");
+        assert!(
+            d.starts_with("HTTP/1.1 401"),
+            "must be a status a stream client can see"
+        );
+        assert!(
+            d.contains("Content-Length: 0"),
+            "no body to read silently to EOF"
+        );
         assert!(d.to_lowercase().contains("connection: close"));
     }
 
@@ -519,24 +554,36 @@ mod tests {
     fn a_login_is_recognised_wherever_it_is_posted() {
         let post = |p: &str| format!("POST {p} HTTP/1.1\r\nHost: x\r\n\r\n");
         assert!(carries_credentials(
-            &post("/authenticated/index.html?url=tuxedoapi.html"), b""));
+            &post("/authenticated/index.html?url=tuxedoapi.html"),
+            b""
+        ));
         // the query varies with the page the client wanted; the directory does not
         assert!(carries_credentials(&post("/authenticated/index.html"), b""));
         // and a POST anywhere carrying the login body is the same exposure
         assert!(carries_credentials(
-            &post("/somewhere/else"), b"log=aa&log1=bb&identity=cc"));
+            &post("/somewhere/else"),
+            b"log=aa&log1=bb&identity=cc"
+        ));
 
         // reading a page is not a login, and neither is a REST call
         assert!(!carries_credentials(
-            "GET /authenticated/index.html HTTP/1.1\r\n\r\n", b""));
-        assert!(!carries_credentials(&post("/system_http_api/GetSecurityStatus"), b""));
+            "GET /authenticated/index.html HTTP/1.1\r\n\r\n",
+            b""
+        ));
+        assert!(!carries_credentials(
+            &post("/system_http_api/GetSecurityStatus"),
+            b""
+        ));
     }
 
     #[test]
     fn the_plaintext_refusal_says_what_is_wrong() {
         let r = String::from_utf8(NO_PLAINTEXT_LOGIN.to_vec()).unwrap();
         // 403, not 401: a 401 would be read as "wrong password" and retried
-        assert!(r.starts_with("HTTP/1.1 403"), "must not look like bad credentials");
+        assert!(
+            r.starts_with("HTTP/1.1 403"),
+            "must not look like bad credentials"
+        );
         let (head, body) = r.split_once("\r\n\r\n").unwrap();
         let len: usize = head
             .split("\r\n")
@@ -557,7 +604,10 @@ Set-Cookie: z9ZAqJtI_1=abc; path=/; HttpOnly;\r\n\
 Set-Cookie: _zFL=q; path=/; Secure\r\n\
 Location: /x\r\n\r\n";
         let out = crate::proxy::mark_cookies_secure(head);
-        assert!(out.contains("z9ZAqJtI_1=abc; path=/; HttpOnly; Secure\r\n"), "{out}");
+        assert!(
+            out.contains("z9ZAqJtI_1=abc; path=/; HttpOnly; Secure\r\n"),
+            "{out}"
+        );
         // already secure: untouched, not doubled
         assert!(out.contains("_zFL=q; path=/; Secure\r\n"));
         assert_eq!(out.matches("Secure").count(), 2);

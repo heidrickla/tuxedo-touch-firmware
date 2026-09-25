@@ -134,7 +134,10 @@ mod tests {
         assert!(r.contains("Content-Length: 0"));
         assert!(r.to_lowercase().contains("connection: close"));
         // the defects §2.6 names must not reappear
-        assert!(!r.contains("Set-Cookie"), "a redirect must not set a cookie");
+        assert!(
+            !r.contains("Set-Cookie"),
+            "a redirect must not set a cookie"
+        );
         assert!(!r.to_lowercase().contains("200 ok"));
     }
 
@@ -154,7 +157,9 @@ mod tests {
 
     #[test]
     fn an_ipv6_host_keeps_its_brackets_and_loses_only_the_port() {
-        let r = s(&respond("GET /x HTTP/1.1\r\nHost: [2001:db8::1]:80\r\n\r\n"));
+        let r = s(&respond(
+            "GET /x HTTP/1.1\r\nHost: [2001:db8::1]:80\r\n\r\n",
+        ));
         assert!(r.contains("Location: https://[2001:db8::1]/x\r\n"), "{r}");
     }
 
@@ -175,14 +180,21 @@ mod tests {
     fn a_post_is_still_redirected() {
         // 301 on any method; the browser re-issues. A login POST to port 80 must
         // be bounced to https, never accepted here.
-        let r = s(&respond("POST /authenticated/index.html HTTP/1.1\r\nHost: h\r\n\r\n"));
+        let r = s(&respond(
+            "POST /authenticated/index.html HTTP/1.1\r\nHost: h\r\n\r\n",
+        ));
         assert!(r.contains("301 Moved Permanently"));
-        assert!(r.contains("Location: https://h/authenticated/index.html\r\n"), "{r}");
+        assert!(
+            r.contains("Location: https://h/authenticated/index.html\r\n"),
+            "{r}"
+        );
     }
 
     #[test]
     fn absolute_form_contributes_only_path_and_query() {
-        let r = s(&respond("GET http://other/x?z=1 HTTP/1.1\r\nHost: canonical\r\n\r\n"));
+        let r = s(&respond(
+            "GET http://other/x?z=1 HTTP/1.1\r\nHost: canonical\r\n\r\n",
+        ));
         // the Location host is the Host header's, not the absolute target's
         assert!(r.contains("Location: https://canonical/x?z=1\r\n"), "{r}");
     }
