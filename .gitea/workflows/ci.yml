@@ -13,10 +13,73 @@ jobs:
         with:
           fetch-depth: 0   # check_attribution needs full history
 
+      # The runner image ships Python 3.10; tuxedo_api_console.py and tuxedo_push.py
+      # use 3.12 f-string syntax, and every run failed "python syntax" until this.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: install
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq python3 python3-numpy git
+        run: python -m pip install --quiet numpy
 
       - name: run checks
         run: bash ci/checks.sh
+
+  # tuxweb is the Barracuda replacement; its tests pin the wire format the
+  # panel's own consumers depend on.
+  tuxweb:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tuxweb
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.98.1 --component clippy,rustfmt
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      # A release binary checked against its published digest, not a build on every push.
+      - name: cargo-deny (pinned)
+        run: |
+          v=0.20.2
+          d=cargo-deny-$v-x86_64-unknown-linux-musl
+          curl -sSfL -o "$d.tar.gz" "https://github.com/EmbarkStudios/cargo-deny/releases/download/$v/$d.tar.gz"
+          echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  $d.tar.gz" | sha256sum -c -
+          tar -xzf "$d.tar.gz" --strip-components=1 -C "$HOME/.cargo/bin" "$d/cargo-deny"
+
+      - name: format
+        run: cargo fmt --check
+
+      - name: lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --locked --all-targets
+
+      - name: dependencies
+        run: cargo deny check
+
+      # Cross-compilation is what ships: ring needs a C cross-compiler, and cc-rs
+      # looks for one that does not exist on Ubuntu.
+      - name: cross-build for the panel
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq gcc-arm-linux-gnueabi file
+          rustup target add arm-unknown-linux-musleabi
+          cargo build --locked --release --target arm-unknown-linux-musleabi
+        env:
+          CC_arm_unknown_linux_musleabi: arm-linux-gnueabi-gcc
+          AR_arm_unknown_linux_musleabi: arm-linux-gnueabi-ar
+
+      - name: the shipped binary is a static ARM executable
+        run: |
+          f=target/arm-unknown-linux-musleabi/release/tuxweb
+          file "$f"
+          file "$f" | grep -q "ARM" || { echo "not an ARM binary"; exit 1; }
+          file "$f" | grep -q "statically linked" || {
+            echo "not static -- the panel has glibc 2.5 and will not load it"; exit 1; }

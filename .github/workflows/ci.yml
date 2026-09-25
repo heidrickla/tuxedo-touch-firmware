@@ -37,11 +37,31 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - name: toolchain (pinned)
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.1
+
+      # A release binary checked against its published digest, not a build on every push.
+      - name: cargo-deny (pinned)
+        run: |
+          v=0.20.2
+          d=cargo-deny-$v-x86_64-unknown-linux-musl
+          curl -sSfL -o "$d.tar.gz" "https://github.com/EmbarkStudios/cargo-deny/releases/download/$v/$d.tar.gz"
+          echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  $d.tar.gz" | sha256sum -c -
+          tar -xzf "$d.tar.gz" --strip-components=1 -C "$HOME/.cargo/bin" "$d/cargo-deny"
+
+      - name: format
+        run: cargo fmt --check
+
+      - name: lint
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: test
         run: cargo test --locked --all-targets
+
+      - name: dependencies
+        run: cargo deny check
 
       - name: build
         run: cargo build --locked --release
