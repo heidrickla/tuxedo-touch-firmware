@@ -128,7 +128,13 @@ fn run_redirect_listener(bind: String) {
 }
 
 fn command(session: u32, code: u32) -> Vec<u8> {
-    let v = Command { head: session, code, p1: 0, p2: 0 }.encode();
+    let v = Command {
+        head: session,
+        code,
+        p1: 0,
+        p2: 0,
+    }
+    .encode();
     debug_assert_eq!(v.len(), COMMAND_LEN);
     v
 }
@@ -255,7 +261,9 @@ fn handle_security(
     commands: &Queue,
     state: &Arc<Mutex<PanelState>>,
 ) -> Vec<u8> {
-    let ucode: u32 = form_get(form, "ucode").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let ucode: u32 = form_get(form, "ucode")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     // A command with code 0 is DECLINED, and the declined path changes panel
     // state before its own guard (register.rs) -- refuse before sending.
     if ucode == 0 {
@@ -272,7 +280,13 @@ fn handle_security(
         crate::api::Action::Disarm => (cmd::DISARM, 0xFEu8, true),
         _ => return json_response("500 Internal Server Error", b"{\"Status\":\"Failure\"}"),
     };
-    let msg = Command { head: session, code, p1: 0, p2: ucode }.encode();
+    let msg = Command {
+        head: session,
+        code,
+        p1: 0,
+        p2: ucode,
+    }
+    .encode();
     if let Err(e) = commands.send(&msg) {
         eprintln!("serve: command {code} send failed: {e}");
         return json_response(
@@ -318,7 +332,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
              API will deny everyone until one is issued (tuxweb --issue-token) ***",
             cfg.token_store
         ),
-        n => println!("serve: {n} token(s) loaded from {} (re-read on every check)", cfg.token_store),
+        n => println!(
+            "serve: {n} token(s) loaded from {} (re-read on every check)",
+            cfg.token_store
+        ),
     }
 
     let state = Arc::new(Mutex::new(PanelState::new()));
@@ -332,7 +349,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
     // already on. Both the broadcast and console mode are cleared by a Home/Back
     // press, which the silence watchdog below repairs by doing this again.
     let register = |why: &str| -> Result<(), String> {
-        println!("serve: sending 500 REGISTER, session {} ({why})", cfg.session);
+        println!(
+            "serve: sending 500 REGISTER, session {} ({why})",
+            cfg.session
+        );
         commands.send(&command(cfg.session, cmd::REGISTER))?;
         std::thread::sleep(Duration::from_millis(200));
         println!("serve: sending 19 CONSOLE_MODE (keypad LCD on the stream)");
@@ -580,7 +600,10 @@ mod tests {
     #[test]
     fn the_subscribe_head_carries_the_vendor_quirks() {
         let h = String::from_utf8(HEAD.to_vec()).unwrap();
-        assert!(h.contains("\r\nServer: \r\n"), "empty Server is a preserved quirk");
+        assert!(
+            h.contains("\r\nServer: \r\n"),
+            "empty Server is a preserved quirk"
+        );
         assert!(h.contains("Connection: Close"));
         assert!(h.contains("multipart/x-mixed-replace;boundary=\"EH912ZZ\""));
     }

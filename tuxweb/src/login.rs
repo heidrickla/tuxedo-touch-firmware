@@ -104,7 +104,8 @@ fn request(
     if let Some(b) = body {
         req.push_str(b);
     }
-    s.write_all(req.as_bytes()).map_err(|e| format!("write: {e}"))?;
+    s.write_all(req.as_bytes())
+        .map_err(|e| format!("write: {e}"))?;
 
     let mut raw = Vec::new();
     let mut buf = [0u8; 4096];
@@ -133,7 +134,10 @@ fn request(
         .and_then(|c| c.parse().ok())
         .ok_or_else(|| format!("unparsable status line: {status_line:?}"))?;
     let headers = lines
-        .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
+        .filter_map(|l| {
+            l.split_once(':')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        })
         .collect();
     Ok(Response { status, headers })
 }

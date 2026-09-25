@@ -97,21 +97,26 @@ pub fn forward<C: Read + Write>(
     }
     out.push_str("Connection: close\r\n\r\n");
 
-    up.write_all(out.as_bytes()).map_err(|e| format!("upstream write: {e}"))?;
+    up.write_all(out.as_bytes())
+        .map_err(|e| format!("upstream write: {e}"))?;
 
     // forward whatever body the client already sent, then the rest of it
     if !body_seen.is_empty() {
-        up.write_all(body_seen).map_err(|e| format!("upstream body: {e}"))?;
+        up.write_all(body_seen)
+            .map_err(|e| format!("upstream body: {e}"))?;
     }
     if let Some(len) = header(head, "content-length").and_then(|v| v.parse::<usize>().ok()) {
         let mut got = body_seen.len();
         let mut b = [0u8; 4096];
         while got < len {
-            let n = client.read(&mut b).map_err(|e| format!("client body: {e}"))?;
+            let n = client
+                .read(&mut b)
+                .map_err(|e| format!("client body: {e}"))?;
             if n == 0 {
                 break;
             }
-            up.write_all(&b[..n]).map_err(|e| format!("upstream body: {e}"))?;
+            up.write_all(&b[..n])
+                .map_err(|e| format!("upstream body: {e}"))?;
             got += n;
         }
     }
@@ -122,7 +127,9 @@ pub fn forward<C: Read + Write>(
     let mut b = [0u8; 8192];
     if secure_cookies {
         let (rhead, rest) = read_head(&mut up, 64 * 1024)?;
-        if client.write_all(mark_cookies_secure(&rhead).as_bytes()).is_err()
+        if client
+            .write_all(mark_cookies_secure(&rhead).as_bytes())
+            .is_err()
             || client.write_all(&rest).is_err()
         {
             return Ok(());
@@ -172,7 +179,9 @@ pub fn mark_cookies_secure(head: &str) -> String {
 /// session and `200` with the login page to an unrecognised one — the
 /// discrimination measured while closing Gate A.
 pub fn session_is_valid(upstream: &str, cookie: &str) -> bool {
-    let Ok(mut s) = TcpStream::connect(upstream) else { return false };
+    let Ok(mut s) = TcpStream::connect(upstream) else {
+        return false;
+    };
     let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
     let host = upstream.split(':').next().unwrap_or("panel");
     let req = format!(

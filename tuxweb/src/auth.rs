@@ -99,11 +99,10 @@ impl TokenStore {
             return false;
         }
         let want = hash_token(token);
-        let want = want.as_bytes();
         let mut ok = false;
         for e in &self.tokens {
-            // ring's constant-time compare; fold so no early return leaks timing
-            ok |= ring::constant_time::verify_slices_are_equal(e.sha256.as_bytes(), want).is_ok();
+            // Constant-time compare; fold so no early return leaks timing.
+            ok |= crate::accounts::ct_eq(&e.sha256, &want);
         }
         ok
     }
@@ -114,11 +113,15 @@ impl TokenStore {
     pub fn issue(&mut self, label: &str) -> Result<String, String> {
         let rng = ring::rand::SystemRandom::new();
         let mut raw = [0u8; 32];
-        rng.fill(&mut raw).map_err(|_| "CSPRNG failed".to_string())?;
+        rng.fill(&mut raw)
+            .map_err(|_| "CSPRNG failed".to_string())?;
         let token = to_hex(&raw);
         // replace any existing entry with the same label rather than duplicating
         self.tokens.retain(|e| e.label != label);
-        self.tokens.push(TokenEntry { label: label.to_string(), sha256: hash_token(&token) });
+        self.tokens.push(TokenEntry {
+            label: label.to_string(),
+            sha256: hash_token(&token),
+        });
         Ok(token)
     }
 
@@ -169,7 +172,11 @@ impl LiveTokenStore {
         let bytes = std::fs::read(path).unwrap_or_default();
         Ok(LiveTokenStore {
             path: path.to_string(),
-            inner: std::sync::Mutex::new(LiveInner { store, bytes, complained: false }),
+            inner: std::sync::Mutex::new(LiveInner {
+                store,
+                bytes,
+                complained: false,
+            }),
         })
     }
 
@@ -179,6 +186,10 @@ impl LiveTokenStore {
         self.inner.lock().unwrap().store.tokens.len()
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -204,7 +215,10 @@ impl LiveTokenStore {
                 // Unreadable is not "gone": keep what we have and say so once.
                 let mut g = self.inner.lock().unwrap();
                 if !g.complained {
-                    eprintln!("serve: token store {}: {e}; keeping the loaded tokens", self.path);
+                    eprintln!(
+                        "serve: token store {}: {e}; keeping the loaded tokens",
+                        self.path
+                    );
                     g.complained = true;
                 }
                 return;
@@ -266,7 +280,10 @@ mod tests {
         let mut on_disk = TokenStore::default();
         let first = on_disk.issue("first").unwrap();
         on_disk.save(p).unwrap();
-        assert!(live.is_valid(&first), "issued at runtime, honoured at the next check");
+        assert!(
+            live.is_valid(&first),
+            "issued at runtime, honoured at the next check"
+        );
         assert_eq!(live.len(), 1);
 
         // re-issue under the same label: same length, same second -- content differs
@@ -288,11 +305,20 @@ mod tests {
         on_disk.save(p).unwrap();
         assert!(live.is_valid(&again));
         std::fs::write(p, b"{\"tokens\": [ {\"label\": \"broken").unwrap();
-        assert!(live.is_valid(&again), "a file that no longer parses changes nothing");
+        assert!(
+            live.is_valid(&again),
+            "a file that no longer parses changes nothing"
+        );
         std::fs::write(p, b"").unwrap();
-        assert!(live.is_valid(&again), "an emptied file is a bad edit too, not a revocation");
+        assert!(
+            live.is_valid(&again),
+            "an emptied file is a bad edit too, not a revocation"
+        );
         std::fs::remove_file(p).unwrap();
-        assert!(!live.is_valid(&again), "a DELETED file is the empty store, as at startup");
+        assert!(
+            !live.is_valid(&again),
+            "a DELETED file is the empty store, as at startup"
+        );
         assert!(live.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -302,9 +328,14 @@ mod tests {
     fn hash_is_stable_and_lowercase_hex_of_the_right_length() {
         let h = hash_token("hello");
         assert_eq!(h.len(), 64, "sha-256 is 32 bytes = 64 hex chars");
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(h
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         // known SHA-256("hello")
-        assert_eq!(h, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+        assert_eq!(
+            h,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
     }
 
     #[test]
@@ -316,7 +347,10 @@ mod tests {
         assert!(!s.is_valid(""), "an empty token must not");
         // the token is 256 bits of hex, and only its hash is stored
         assert_eq!(t.len(), 64);
-        assert!(s.tokens.iter().all(|e| e.sha256 != t), "the raw token is never stored");
+        assert!(
+            s.tokens.iter().all(|e| e.sha256 != t),
+            "the raw token is never stored"
+        );
     }
 
     #[test]

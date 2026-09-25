@@ -59,15 +59,17 @@ pub fn parse(text: &str) -> Result<ServeConf, String> {
         };
         let k = k.trim();
         match k {
-            "bind" | "redirect_bind" | "chain" | "key" | "token_store" | "quickarm"
-            | "session" | "silence" => {}
+            "bind" | "redirect_bind" | "chain" | "key" | "token_store" | "quickarm" | "session"
+            | "silence" => {}
             other => return Err(format!("line {}: unknown key {other:?}", n + 1)),
         }
         kv.insert(k.to_string(), v.trim().to_string());
     }
     let get = |k: &str| kv.get(k).cloned().filter(|v| !v.is_empty());
     let session = match get("session") {
-        Some(s) => s.parse::<u32>().map_err(|_| format!("session: not a number: {s:?}"))?,
+        Some(s) => s
+            .parse::<u32>()
+            .map_err(|_| format!("session: not a number: {s:?}"))?,
         None => 4242,
     };
     if session == 0 {
@@ -75,7 +77,9 @@ pub fn parse(text: &str) -> Result<ServeConf, String> {
     }
     let silence = match get("silence") {
         Some(s) => {
-            let secs = s.parse::<u64>().map_err(|_| format!("silence: not a number: {s:?}"))?;
+            let secs = s
+                .parse::<u64>()
+                .map_err(|_| format!("silence: not a number: {s:?}"))?;
             if secs == 0 {
                 return Err("silence must be non-zero (it would re-register every tick)".into());
             }
@@ -159,7 +163,9 @@ mod tests {
 
     #[test]
     fn a_typo_or_a_zero_session_is_an_error_not_a_default() {
-        assert!(parse("bnid=1.2.3.4:443").unwrap_err().contains("unknown key"));
+        assert!(parse("bnid=1.2.3.4:443")
+            .unwrap_err()
+            .contains("unknown key"));
         assert!(parse("garbage line").unwrap_err().contains("key=value"));
         assert!(parse("session=0").unwrap_err().contains("non-zero"));
         assert!(parse("session=abc").unwrap_err().contains("not a number"));
@@ -172,7 +178,10 @@ mod tests {
         let _ = std::fs::remove_file(&p);
         assert!(load(path).is_none(), "no file means no serve mode");
         std::fs::write(&p, "nope").unwrap();
-        assert!(matches!(load(path), Some(Err(_))), "a bad file must not select a mode");
+        assert!(
+            matches!(load(path), Some(Err(_))),
+            "a bad file must not select a mode"
+        );
         let _ = std::fs::remove_file(&p);
     }
 
@@ -186,9 +195,12 @@ mod tests {
         for _ in 0..MAX_LAUNCHES_PER_BOOT {
             bump_launches(path);
         }
-        assert!(bump_launches(path) > MAX_LAUNCHES_PER_BOOT, "past the bound: passthrough");
+        assert!(
+            bump_launches(path) > MAX_LAUNCHES_PER_BOOT,
+            "past the bound: passthrough"
+        );
         // and the bound is well inside the 24-relaunch reset
-        assert!(MAX_LAUNCHES_PER_BOOT < 24 / 2);
+        const { assert!(MAX_LAUNCHES_PER_BOOT < 24 / 2) };
         let _ = std::fs::remove_file(&p);
     }
 }

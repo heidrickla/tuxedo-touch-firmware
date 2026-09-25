@@ -42,10 +42,18 @@ pub struct Deadman {
     /// request path can reset with a single relaxed store and no lock.
     deadline_ms: Arc<AtomicU64>,
     origin: Instant,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     window: Duration,
     fired: Arc<AtomicBool>,
     /// Cleared to stop the thread on an orderly shutdown, so a test — or a
     /// clean exit — does not leave a thread waiting to exec.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     running: Arc<AtomicBool>,
 }
 
@@ -103,6 +111,10 @@ impl Deadman {
     ///
     /// Ignored once fired: a reset arriving after the handover has begun must
     /// not look like it worked.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn reset(&self) -> bool {
         if self.fired.load(Ordering::SeqCst) {
             return false;
@@ -126,11 +138,19 @@ impl Deadman {
     /// lists an authenticated immediate revert alongside the timer, and it is
     /// the same code path so it cannot rot separately from the one that gets
     /// exercised.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn trip(&self) {
         self.deadline_ms.store(0, Ordering::Relaxed);
     }
 
     /// Stop the timer thread without firing. For an orderly shutdown only.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "staged: tested, not yet called from main")
+    )]
     pub fn disarm(&self) {
         self.running.store(false, Ordering::Relaxed);
     }
@@ -178,7 +198,11 @@ mod tests {
         let d = Deadman::arm(Duration::from_millis(150), act);
         assert_eq!(n.load(Ordering::SeqCst), 0, "must not fire early");
         std::thread::sleep(Duration::from_millis(900));
-        assert_eq!(n.load(Ordering::SeqCst), 1, "must fire once the window passes");
+        assert_eq!(
+            n.load(Ordering::SeqCst),
+            1,
+            "must fire once the window passes"
+        );
         assert!(d.has_fired());
     }
 
@@ -214,7 +238,11 @@ mod tests {
         assert!(d.remaining() > Duration::from_secs(3000));
         d.trip();
         std::thread::sleep(Duration::from_millis(900));
-        assert_eq!(n.load(Ordering::SeqCst), 1, "the manual revert uses the same path");
+        assert_eq!(
+            n.load(Ordering::SeqCst),
+            1,
+            "the manual revert uses the same path"
+        );
     }
 
     #[test]
@@ -223,7 +251,11 @@ mod tests {
         let d = Deadman::arm(Duration::from_millis(200), act);
         d.disarm();
         std::thread::sleep(Duration::from_millis(700));
-        assert_eq!(n.load(Ordering::SeqCst), 0, "an orderly shutdown must not exec");
+        assert_eq!(
+            n.load(Ordering::SeqCst),
+            0,
+            "an orderly shutdown must not exec"
+        );
     }
 
     #[test]

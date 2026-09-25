@@ -19,3 +19,19 @@ toolchain is only compiling ring's C — nothing gnu ends up linked in.
 
 Output: `target/arm-unknown-linux-musleabi/release/tuxweb`, ~839 KB, `ELF 32-bit
 LSB executable, ARM, EABI5, statically linked, stripped`.
+
+## Gates
+
+Run on Linux before a push; CI (`tuxweb` job) runs the same.
+
+| Gate | Command |
+|---|---|
+| format | `cargo fmt --check` |
+| lint | `cargo clippy --locked --all-targets -- -D warnings` |
+| test | `cargo test --locked --all-targets` |
+| dependencies | `cargo deny check` (`deny.toml`) |
+| cross-build | the build above; the binary must be static ARM |
+
+Code that is tested but not yet called from `main` carries
+`#[cfg_attr(not(test), expect(dead_code, ...))]`; the expectation fails the lint once
+`main` uses it, so remove the attribute then.

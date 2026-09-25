@@ -15,6 +15,10 @@
 //! which is not valid utf-8, so this module works in `[u8]` throughout and
 //! never converts to `String`.
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "staged: tested, not yet called from main")
+)]
 pub const BOUNDARY: &[u8] = b"EH912ZZ";
 
 const OPEN: &[u8] = b"--EH912ZZ\r\n";
@@ -42,8 +46,7 @@ impl Part {
 pub fn parse(body: &[u8]) -> (Vec<Part>, usize) {
     let mut parts = Vec::new();
     let mut i = 0usize;
-    loop {
-        let Some(start) = find(&body[i..], OPEN).map(|p| i + p) else { break };
+    while let Some(start) = find(&body[i..], OPEN).map(|p| i + p) {
         let head = start + OPEN.len();
         if !body[head..].starts_with(PART_HEAD) {
             break;
@@ -64,6 +67,10 @@ pub fn parse(body: &[u8]) -> (Vec<Part>, usize) {
 }
 
 /// The three payload shapes the panel emits.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "staged: tested, not yet called from main")
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// `['setCid',1315689843]`
@@ -76,11 +83,14 @@ pub enum Message {
     Other(Vec<u8>),
 }
 
-const STATUS_PREFIX: &[u8] =
-    b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"";
+const STATUS_PREFIX: &[u8] = b"['ud','SimpleDbgServer2ClientIntf','statusMessageText',[\"";
 const NCLIENT_PREFIX: &[u8] = b"['ud','SimpleDbgServer2ClientIntf','noOfClient',[";
 const SETCID_PREFIX: &[u8] = b"['setCid',";
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "staged: tested, not yet called from main")
+)]
 pub fn classify(p: &Part) -> Message {
     let b = &p.0;
     if b.starts_with(STATUS_PREFIX) && b.ends_with(b"\"]]") {
@@ -165,7 +175,10 @@ mod tests {
         let mut needle = b"boundary=\"".to_vec();
         needle.extend_from_slice(BOUNDARY);
         needle.push(b'"');
-        assert!(find(hdr, &needle).is_some(), "header does not advertise BOUNDARY");
+        assert!(
+            find(hdr, &needle).is_some(),
+            "header does not advertise BOUNDARY"
+        );
     }
 
     #[test]
@@ -173,7 +186,10 @@ mod tests {
         for b in both() {
             let opens = b.windows(OPEN.len()).filter(|w| *w == OPEN).count();
             let closes = b.windows(CLOSE.len()).filter(|w| *w == CLOSE).count();
-            assert_eq!(opens, closes, "the vendor closes every part; see module docs");
+            assert_eq!(
+                opens, closes,
+                "the vendor closes every part; see module docs"
+            );
             assert!(opens > 1, "capture should hold many parts, saw {opens}");
         }
     }
@@ -193,7 +209,10 @@ mod tests {
 
         let ff = texts.iter().filter(|t| t.contains(&0xFFu8)).count();
         let fe = texts.iter().filter(|t| t.contains(&0xFEu8)).count();
-        assert!(ff > 0, "no 0xFF frame: the arm never happened in this capture");
+        assert!(
+            ff > 0,
+            "no 0xFF frame: the arm never happened in this capture"
+        );
         assert!(fe > 0, "no 0xFE frame: the disarm never happened");
 
         // "Secs Remaining" is the exit-delay countdown
@@ -201,7 +220,10 @@ mod tests {
             .iter()
             .filter(|t| find(t, b"Secs Remaining").is_some())
             .count();
-        assert!(countdown > 1, "expected several countdown frames, saw {countdown}");
+        assert!(
+            countdown > 1,
+            "expected several countdown frames, saw {countdown}"
+        );
 
         let armed = texts.iter().any(|t| find(t, b"Armed Stay").is_some());
         assert!(armed, "capture never reached Armed Stay");
@@ -211,7 +233,10 @@ mod tests {
             .iter()
             .rev()
             .find(|t| find(t, b"Ready To Arm").is_some());
-        assert!(last_state.is_some(), "capture does not end back at Ready To Arm");
+        assert!(
+            last_state.is_some(),
+            "capture does not end back at Ready To Arm"
+        );
     }
 
     #[test]

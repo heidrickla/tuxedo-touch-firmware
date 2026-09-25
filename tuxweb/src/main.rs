@@ -31,19 +31,20 @@ mod serve;
 mod session;
 mod shim;
 
-use std::fs::File;
-use std::io::{BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rustls::pki_types::pem::{self, PemObject};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 
 fn load_chain(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
-    let mut rd = BufReader::new(File::open(path).map_err(|e| format!("{path}: {e}"))?);
-    let certs: Result<Vec<_>, _> = rustls_pemfile::certs(&mut rd).collect();
-    let certs = certs.map_err(|e| format!("{path}: {e}"))?;
+    let certs = CertificateDer::pem_file_iter(path)
+        .map_err(|e| format!("{path}: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("{path}: {e}"))?;
     if certs.is_empty() {
         return Err(format!("{path}: no certificates found"));
     }
@@ -51,12 +52,12 @@ fn load_chain(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
 }
 
 fn load_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
-    let mut rd = BufReader::new(File::open(path).map_err(|e| format!("{path}: {e}"))?);
     // The CA emits PKCS#8. Accept the other shapes too rather than failing
     // obscurely if someone hands us an openssl-generated key.
-    rustls_pemfile::private_key(&mut rd)
-        .map_err(|e| format!("{path}: {e}"))?
-        .ok_or_else(|| format!("{path}: no private key found"))
+    PrivateKeyDer::from_pem_file(path).map_err(|e| match e {
+        pem::Error::NoItemsFound => format!("{path}: no private key found"),
+        e => format!("{path}: {e}"),
+    })
 }
 
 /// May a password cross an unencrypted client connection?
@@ -66,7 +67,10 @@ fn load_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
 /// than a refusal because nothing reports it. Only an explicit `1` turns it back
 /// on, so a stray empty variable does not.
 fn plaintext_login_allowed() -> bool {
-    std::env::var("TUXWEB_ALLOW_PLAINTEXT_LOGIN").ok().as_deref() == Some("1")
+    std::env::var("TUXWEB_ALLOW_PLAINTEXT_LOGIN")
+        .ok()
+        .as_deref()
+        == Some("1")
 }
 
 /// Build a TLS config from a chain and key on disk.
@@ -84,10 +88,19 @@ fn tls_from_paths(chain_p: &str, key_p: &str) -> Result<Arc<ServerConfig>, Strin
 /// Exits rather than silently serving in the clear if one is set and unusable:
 /// a listener that was meant to be encrypted and is not should not start.
 fn tls_from_env() -> Option<Arc<ServerConfig>> {
-    let (chain_p, key_p) = (std::env::var("TUXWEB_CHAIN").ok()?, std::env::var("TUXWEB_KEY").ok()?);
+    let (chain_p, key_p) = (
+        std::env::var("TUXWEB_CHAIN").ok()?,
+        std::env::var("TUXWEB_KEY").ok()?,
+    );
     match tls_from_paths(&chain_p, &key_p) {
-        Ok(c) => { println!("tuxweb: serving TLS from {chain_p}"); Some(c) }
-        Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        Ok(c) => {
+            println!("tuxweb: serving TLS from {chain_p}");
+            Some(c)
+        }
+        Err(e) => {
+            eprintln!("tuxweb: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -124,16 +137,21 @@ fn passthrough(argv0: &str, forward: &[String]) -> ! {
         }
         Err(e) => {
             eprintln!("tuxweb passthrough: {target}: {e}");
-            eprintln!("tuxweb passthrough: the vendor binary is not where it was \
-                       expected. Put it back at /opt/webserver/Barracuda.");
+            eprintln!(
+                "tuxweb passthrough: the vendor binary is not where it was \
+                       expected. Put it back at /opt/webserver/Barracuda."
+            );
             std::process::exit(2);
         }
     }
 
-    eprintln!("tuxweb passthrough: exec {target} (pid {} kept)", std::process::id());
+    eprintln!(
+        "tuxweb passthrough: exec {target} (pid {} kept)",
+        std::process::id()
+    );
     let err = std::process::Command::new(&target)
         .args(forward)
-        .arg0(argv0)             // keep the basename supervis matches on
+        .arg0(argv0) // keep the basename supervis matches on
         .exec();
     eprintln!("tuxweb passthrough: exec {target} failed: {err}");
     std::process::exit(2);
@@ -260,7 +278,10 @@ fn main() {
     // Not reachable from the supervis launch path -- that branch is keyed on argv[0]
     // being "Barracuda" and is handled below -- so this can only be run deliberately.
     let stage = args.get(1).map(String::as_str);
-    if matches!(stage, Some("--stage7a" | "--stage7b" | "--stage7c" | "--stage7d")) {
+    if matches!(
+        stage,
+        Some("--stage7a" | "--stage7b" | "--stage7c" | "--stage7d")
+    ) {
         let session: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
         let secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(60);
         // Every stage goes through one register/watch/unregister path, so there is
@@ -304,8 +325,10 @@ fn main() {
                     eprintln!(
                         "stage7d: needs ONE arming command as the 4th argument: \
                          {} ARM_AWAY, {} ARM_STAY, {} DISARM, {} ARM_NIGHT",
-                        ipc::cmd::ARM_AWAY, ipc::cmd::ARM_STAY,
-                        ipc::cmd::DISARM, ipc::cmd::ARM_NIGHT
+                        ipc::cmd::ARM_AWAY,
+                        ipc::cmd::ARM_STAY,
+                        ipc::cmd::DISARM,
+                        ipc::cmd::ARM_NIGHT
                     );
                     eprintln!("stage7d: usage: tuxweb --stage7d <session> <secs> <code>");
                     std::process::exit(2);
@@ -330,8 +353,7 @@ fn main() {
                     o.sent_register, o.queries_sent, o.after_sent, o.received, o.decoded,
                     o.saw_504, o.sent_unregister
                 );
-                let types: Vec<String> =
-                    o.types.iter().map(|(t, n)| format!("{t}x{n}")).collect();
+                let types: Vec<String> = o.types.iter().map(|(t, n)| format!("{t}x{n}")).collect();
                 println!("{name}: msgTypes {}", types.join(" "));
                 // The unregister is what leaves the panel as it was found, so a run
                 // that could not send it is a failure even if it received plenty.
@@ -370,8 +392,8 @@ fn main() {
         // per-boot launch counter bounds a crash loop well inside supervis's
         // 24-relaunch hardware reset. Env overrides exist only so the bench can
         // launch this path by hand; supervis passes no environment a shell sets.
-        let conf_path = std::env::var("TUXWEB_SERVE_CONF")
-            .unwrap_or_else(|_| conf::SERVE_CONF.to_string());
+        let conf_path =
+            std::env::var("TUXWEB_SERVE_CONF").unwrap_or_else(|_| conf::SERVE_CONF.to_string());
         let counter_path = std::env::var("TUXWEB_LAUNCH_COUNTER")
             .unwrap_or_else(|_| conf::LAUNCH_COUNTER.to_string());
         match conf::load(&conf_path) {
@@ -397,9 +419,9 @@ fn main() {
                         _ => Err("chain and key must be set together".to_string()),
                     };
                     match tls {
-                        Err(e) => eprintln!(
-                            "tuxweb: {e}; NOT serving -- passing through to the vendor"
-                        ),
+                        Err(e) => {
+                            eprintln!("tuxweb: {e}; NOT serving -- passing through to the vendor")
+                        }
                         Ok(tls) => {
                             println!(
                                 "tuxweb: serve mode from {conf_path} (launch {n} of {} this boot)",
@@ -419,9 +441,9 @@ fn main() {
                                 Ok(()) => std::process::exit(0),
                                 // Could not even start (queue missing, port held):
                                 // keep the panel a web server by passing through.
-                                Err(e) => eprintln!(
-                                    "tuxweb: serve failed to start: {e}; passing through"
-                                ),
+                                Err(e) => {
+                                    eprintln!("tuxweb: serve failed to start: {e}; passing through")
+                                }
                             }
                         }
                     }
@@ -447,8 +469,14 @@ fn main() {
                             Ok(o) => println!(
                                 "{}: register={} queries={} after={} received={} \
                                  decoded={} saw504={} unregister={}",
-                                cfg.label, o.sent_register, o.queries_sent, o.after_sent,
-                                o.received, o.decoded, o.saw_504, o.sent_unregister
+                                cfg.label,
+                                o.sent_register,
+                                o.queries_sent,
+                                o.after_sent,
+                                o.received,
+                                o.decoded,
+                                o.saw_504,
+                                o.sent_unregister
                             ),
                             Err(e) => eprintln!("{}: {e}", cfg.label),
                         }
@@ -493,20 +521,36 @@ fn main() {
     // is worth keeping even though anyone holding the firmware could write the
     // dumper in ten minutes.
     if args.len() >= 3 && args[1] == "--accounts" {
-        let store_path = args.get(3).map(String::as_str).unwrap_or(accounts::STORE_PATH);
+        let store_path = args
+            .get(3)
+            .map(String::as_str)
+            .unwrap_or(accounts::STORE_PATH);
         let env = match accounts::key_from_binary(&args[2]) {
             Ok(e) => e,
-            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {e}");
+                std::process::exit(1);
+            }
         };
         let blob = match std::fs::read(store_path) {
             Ok(b) => b,
-            Err(e) => { eprintln!("tuxweb: {store_path}: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {store_path}: {e}");
+                std::process::exit(1);
+            }
         };
         let store = match accounts::Store::decode(&env, &blob) {
             Ok(s) => s,
-            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {e}");
+                std::process::exit(1);
+            }
         };
-        println!("{store_path}: {} bytes, {} slots", blob.len(), store.users.len());
+        println!(
+            "{store_path}: {} bytes, {} slots",
+            blob.len(),
+            store.users.len()
+        );
         for u in &store.users {
             println!(
                 "  slot {} {:<16} status={} locked={} sealed={}",
@@ -533,7 +577,10 @@ fn main() {
         }
         match store.validate() {
             Ok(()) => println!("store is consistent"),
-            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {e}");
+                std::process::exit(1);
+            }
         }
         return;
     }
@@ -547,15 +594,24 @@ fn main() {
     if args.len() == 5 && args[1] == "--accounts-rewrite" {
         let env = match accounts::key_from_binary(&args[2]) {
             Ok(e) => e,
-            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {e}");
+                std::process::exit(1);
+            }
         };
         let blob = match std::fs::read(&args[3]) {
             Ok(b) => b,
-            Err(e) => { eprintln!("tuxweb: {}: {e}", args[3]); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {}: {e}", args[3]);
+                std::process::exit(1);
+            }
         };
         let store = match accounts::Store::decode(&env, &blob) {
             Ok(s) => s,
-            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {e}");
+                std::process::exit(1);
+            }
         };
         if let Err(e) = store.validate() {
             eprintln!("tuxweb: refusing to rewrite an inconsistent store: {e}");
@@ -570,7 +626,10 @@ fn main() {
             Ok(out.len())
         }) {
             Ok(n) => println!("wrote {} ({n} bytes, in was {} bytes)", args[4], blob.len()),
-            Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {e}");
+                std::process::exit(1);
+            }
         }
         return;
     }
@@ -581,7 +640,10 @@ fn main() {
     //   tuxweb --revoke-token <label> [store]
     //   tuxweb --list-tokens [store]
     let tok_cmd = args.get(1).map(String::as_str);
-    if matches!(tok_cmd, Some("--issue-token" | "--revoke-token" | "--list-tokens")) {
+    if matches!(
+        tok_cmd,
+        Some("--issue-token" | "--revoke-token" | "--list-tokens")
+    ) {
         let cmd = tok_cmd.unwrap();
         let is_list = cmd == "--list-tokens";
         let store_idx = if is_list { 2 } else { 3 };
@@ -656,7 +718,10 @@ fn main() {
             .unwrap_or(deadman::DEFAULT_WINDOW);
         cutover::run(cutover::Config {
             vendor: args[2].clone(),
-            log: args.get(4).cloned().unwrap_or_else(|| "/tmp/cutover.tsv".into()),
+            log: args
+                .get(4)
+                .cloned()
+                .unwrap_or_else(|| "/tmp/cutover.tsv".into()),
             window,
         });
     }
@@ -672,15 +737,23 @@ fn main() {
             session,
             window: std::time::Duration::from_secs(secs),
             out: args[4].clone(),
-            quickarm: args.get(5).cloned().unwrap_or_else(|| session::QUICKARM_STATE.to_string()),
+            quickarm: args
+                .get(5)
+                .cloned()
+                .unwrap_or_else(|| session::QUICKARM_STATE.to_string()),
         };
         match session::run_capture(&cfg) {
             Ok(o) => {
                 println!(
                     "push-capture: register={} received={} decoded={} emitted_parts={} \
                      undecoded={} saw504={} unregister={}",
-                    o.sent_register, o.received, o.decoded, o.emitted_parts,
-                    o.undecoded, o.saw_504, o.sent_unregister
+                    o.sent_register,
+                    o.received,
+                    o.decoded,
+                    o.emitted_parts,
+                    o.undecoded,
+                    o.saw_504,
+                    o.sent_unregister
                 );
                 std::process::exit(if o.sent_unregister { 0 } else { 1 });
             }
@@ -705,11 +778,16 @@ fn main() {
         let cfg = serve::Config {
             session,
             bind: args[3].clone(),
-            quickarm: args.get(5).cloned().unwrap_or_else(|| session::QUICKARM_STATE.to_string()),
+            quickarm: args
+                .get(5)
+                .cloned()
+                .unwrap_or_else(|| session::QUICKARM_STATE.to_string()),
             window,
             // On the panel this is 0.0.0.0:80; a bench uses a high port. Env so
             // the positional args stay stable. 6280/9443 are never bound (§1.5).
-            redirect_bind: std::env::var("TUXWEB_REDIRECT_BIND").ok().filter(|s| !s.is_empty()),
+            redirect_bind: std::env::var("TUXWEB_REDIRECT_BIND")
+                .ok()
+                .filter(|s| !s.is_empty()),
             token_store: std::env::var("TUXWEB_TOKEN_STORE")
                 .ok()
                 .filter(|s| !s.is_empty())
@@ -743,12 +821,18 @@ fn main() {
     if args.len() == 6 && args[1] == "--shim-login" {
         let pw = match std::fs::read_to_string(&args[4]) {
             Ok(p) => p.lines().next().unwrap_or("").to_string(),
-            Err(e) => { eprintln!("tuxweb: {}: {e}", args[4]); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: {}: {e}", args[4]);
+                std::process::exit(1);
+            }
         };
         let pw = pw.split_once(':').map(|(_, p)| p.to_string()).unwrap_or(pw);
         let cookie = match login::login(&args[2], &args[3], &pw) {
             Ok(c) => c,
-            Err(e) => { eprintln!("tuxweb: login: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("tuxweb: login: {e}");
+                std::process::exit(1);
+            }
         };
         println!("tuxweb: logged in, session acquired from this host");
         let s = shim::Shim {
@@ -757,7 +841,10 @@ fn main() {
             bind: args[5].clone(),
             token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
             // keep the credentials so the session can be renewed when it expires
-            creds: Some(shim::Creds { user: args[3].clone(), password: pw }),
+            creds: Some(shim::Creds {
+                user: args[3].clone(),
+                password: pw,
+            }),
             // TUXWEB_CHAIN + TUXWEB_KEY turn the listener into a TLS one. The
             // upstream hop stays plaintext on loopback: the vendor certificate
             // is expired and its key is public, so this end is where TLS is
@@ -796,19 +883,46 @@ fn main() {
         // from the binary that --cutover existed at all -- and that is the one
         // someone looks up during a booked window.
         eprintln!("usage: {0} <bind-addr> <chain.pem> <server.key>", args[0]);
-        eprintln!("       {0} --shim <host:port> <cookie> <bind-addr>", args[0]);
-        eprintln!("       {0} --shim-login <host:port> <user> <pwfile> <bind-addr>", args[0]);
-        eprintln!("       {0} --accounts <tuxedo-binary> [store-path]", args[0]);
-        eprintln!("       {0} --accounts-rewrite <tuxedo-binary> <in> <out>", args[0]);
-        eprintln!("       {0} --cutover <vendor-path> [window-secs] [log]", args[0]);
-        eprintln!("       {0} --push-capture <session> <secs> <out> [quickarm]", args[0]);
-        eprintln!("       {0} --serve <session> <bind> [window-secs] [quickarm]", args[0]);
+        eprintln!(
+            "       {0} --shim <host:port> <cookie> <bind-addr>",
+            args[0]
+        );
+        eprintln!(
+            "       {0} --shim-login <host:port> <user> <pwfile> <bind-addr>",
+            args[0]
+        );
+        eprintln!(
+            "       {0} --accounts <tuxedo-binary> [store-path]",
+            args[0]
+        );
+        eprintln!(
+            "       {0} --accounts-rewrite <tuxedo-binary> <in> <out>",
+            args[0]
+        );
+        eprintln!(
+            "       {0} --cutover <vendor-path> [window-secs] [log]",
+            args[0]
+        );
+        eprintln!(
+            "       {0} --push-capture <session> <secs> <out> [quickarm]",
+            args[0]
+        );
+        eprintln!(
+            "       {0} --serve <session> <bind> [window-secs] [quickarm]",
+            args[0]
+        );
         eprintln!("       {0} --issue-token <label> [store]", args[0]);
-        eprintln!("       {0} --revoke-token <label> [store] | --list-tokens [store]", args[0]);
+        eprintln!(
+            "       {0} --revoke-token <label> [store] | --list-tokens [store]",
+            args[0]
+        );
         eprintln!("       {0} --passthrough <args...>", args[0]);
         eprintln!();
         eprintln!("Installed as .../Barracuda it execs the vendor (passthrough),");
-        eprintln!("except for ONE relaunch after {} exists,", cutover::ARM_MARKER);
+        eprintln!(
+            "except for ONE relaunch after {} exists,",
+            cutover::ARM_MARKER
+        );
         eprintln!("which it consumes and runs the cutover instead.");
         std::process::exit(2);
     }
@@ -816,11 +930,17 @@ fn main() {
 
     let chain = match load_chain(chain_path) {
         Ok(c) => c,
-        Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("tuxweb: {e}");
+            std::process::exit(1);
+        }
     };
     let key = match load_key(key_path) {
         Ok(k) => k,
-        Err(e) => { eprintln!("tuxweb: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("tuxweb: {e}");
+            std::process::exit(1);
+        }
     };
     println!("tuxweb: {} certificate(s) from {}", chain.len(), chain_path);
 
@@ -829,12 +949,18 @@ fn main() {
         .with_single_cert(chain, key)
     {
         Ok(c) => Arc::new(c),
-        Err(e) => { eprintln!("tuxweb: bad certificate/key pair: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("tuxweb: bad certificate/key pair: {e}");
+            std::process::exit(1);
+        }
     };
 
     let listener = match TcpListener::bind(addr.as_str()) {
         Ok(l) => l,
-        Err(e) => { eprintln!("tuxweb: bind {addr}: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("tuxweb: bind {addr}: {e}");
+            std::process::exit(1);
+        }
     };
     println!("tuxweb: listening on {addr}");
     println!("tuxweb: ready");
@@ -842,7 +968,10 @@ fn main() {
     for stream in listener.incoming() {
         let sock = match stream {
             Ok(s) => s,
-            Err(e) => { eprintln!("tuxweb: accept: {e}"); continue; }
+            Err(e) => {
+                eprintln!("tuxweb: accept: {e}");
+                continue;
+            }
         };
         let peer = sock.peer_addr().map(|a| a.to_string()).unwrap_or_default();
         let _ = sock.set_read_timeout(Some(Duration::from_secs(10)));
@@ -850,7 +979,10 @@ fn main() {
 
         let conn = match ServerConnection::new(config.clone()) {
             Ok(c) => c,
-            Err(e) => { eprintln!("tuxweb: {peer}: session: {e}"); continue; }
+            Err(e) => {
+                eprintln!("tuxweb: {peer}: session: {e}");
+                continue;
+            }
         };
         let mut tls = StreamOwned::new(conn, sock);
 
@@ -858,23 +990,31 @@ fn main() {
         let mut buf = [0u8; 2048];
         let n = match tls.read(&mut buf) {
             Ok(n) => n,
-            Err(e) => { eprintln!("tuxweb: {peer}: handshake/read: {e}"); continue; }
+            Err(e) => {
+                eprintln!("tuxweb: {peer}: handshake/read: {e}");
+                continue;
+            }
         };
         let req = String::from_utf8_lossy(&buf[..n]);
         let line = req.lines().next().unwrap_or("");
-        let proto = tls.conn.protocol_version()
-            .map(|v| format!("{v:?}")).unwrap_or_else(|| "?".into());
-        let suite = tls.conn.negotiated_cipher_suite()
-            .map(|s| format!("{:?}", s.suite())).unwrap_or_else(|| "?".into());
+        let proto = tls
+            .conn
+            .protocol_version()
+            .map(|v| format!("{v:?}"))
+            .unwrap_or_else(|| "?".into());
+        let suite = tls
+            .conn
+            .negotiated_cipher_suite()
+            .map(|s| format!("{:?}", s.suite()))
+            .unwrap_or_else(|| "?".into());
         println!("tuxweb: {peer} {proto} {suite} -- {line}");
 
-        let body = format!(
-            "tuxweb stage 3\nprotocol {proto}\ncipher {suite}\npeer {peer}\n"
-        );
+        let body = format!("tuxweb stage 3\nprotocol {proto}\ncipher {suite}\npeer {peer}\n");
         let resp = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\
              Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(), body
+            body.len(),
+            body
         );
         if let Err(e) = tls.write_all(resp.as_bytes()) {
             eprintln!("tuxweb: {peer}: write: {e}");
