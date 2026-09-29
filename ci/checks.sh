@@ -394,12 +394,34 @@ check_hosts_wellformed() {
     [ -z "$bad" ] && pass "hosts file well formed" || fail "hosts file well formed" "$bad"
 }
 
+# 16. Author identifiers must not reach a tracked file. ci/pubscan.py --gate
+#     fails (exit 3) when a tracked file carries a literal from ci/pubscan.local.
+#     The panel's real address regressed into five files 2026-09-11..13 exactly
+#     this way, and pubscan's report exits 0 by design, so nothing here caught
+#     it -- checks.sh (the pre-push hook) never ran pubscan at all.
+#     Without ci/pubscan.local -- CI, a fresh clone -- there are no author
+#     literals to check, so the gate exits 2 and this reports skip, not fail.
+#     Judged on the exit STATUS, with the report shown only on a real finding;
+#     an unrecognised status is "did not run", never a silent pass.
+check_pubscan() {
+    local out rc
+    out=$(python3 ci/pubscan.py --gate --repo . 2>&1); rc=$?
+    case "$rc" in
+        0) pass "no author identifiers in tracked files" ;;
+        2) skip "author-identifier scan" "no ci/pubscan.local (CI or fresh clone)" ;;
+        3) fail "author identifiers in tracked files" "$(printf '%s' "$out" | tr '\n' ' ')" ;;
+        *) fail "author identifiers in tracked files" \
+                "pubscan --gate exited $rc; it did not run" ;;
+    esac
+}
+
 echo "regression checks"
 check_python
 check_shell
 check_crlf
 check_attribution
 check_secrets
+check_pubscan
 check_vendor_blobs
 check_patch_table
 check_redirect_gate

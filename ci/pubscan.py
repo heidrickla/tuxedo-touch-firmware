@@ -351,16 +351,75 @@ def tracked(repo: str) -> list[str]:
     return [f for f in r.stdout.splitlines() if f.strip()]
 
 
+# Gate exit codes, distinct from main()'s. main() is a REPORT: it exits 0 with
+# findings on purpose, because whether the panel's own address belongs in a
+# firmware write-up is a judgement a person makes. gate() is the pre-push GATE
+# ci/checks.sh runs, and it fails on the one class that is never a judgement
+# call: an author literal from ci/pubscan.local reaching a tracked file. The
+# panel's real address that regressed into five files 2026-09-11..13 is a
+# house-address literal, and main()'s exit 0 let it through -- this closes that.
+# 3 rather than 1 for findings so a Python error exit (1, or 127 for no
+# interpreter) reads as "did not run", never as "clean" or "found nothing".
+GATE_CLEAN = 0
+GATE_SKIP = 2          # no ci/pubscan.local, so no author literal to check
+GATE_FINDINGS = 3      # a tracked file carries an author identifier
+
+
+def gate(repo: str) -> int:
+    """Fail when a tracked file carries an author identifier from pubscan.local.
+
+    Author literals live in ci/pubscan.local (gitignored), read from beside this
+    file, so a fresh clone and CI have none. With none there is nothing
+    author-specific to check, so this SKIPS (GATE_SKIP) rather than failing -- it
+    is not the report's "could not look at structure", it is "there is no author
+    literal to look for". Never prints a value: labels and filenames only, so the
+    gate's own output is not the disclosure.
+    """
+    local = _local_identifiers()
+    if not local:
+        print("pubscan --gate: no ci/pubscan.local; author-identifier gate skipped")
+        return GATE_SKIP
+    files = tracked(repo)          # raises SystemExit(2) if not a git repo
+    hits: dict[str, list[str]] = {}
+    for f in files:
+        try:
+            with open(os.path.join(repo, f), "rb") as fh:
+                b = fh.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        matched = sorted({label for label, rx in local if rx.findall(b)})
+        if matched:
+            hits[f] = matched
+    if hits:
+        print("pubscan --gate: %d tracked file(s) carry an author identifier:"
+              % len(hits))
+        for f in sorted(hits):
+            print("  %-50s %s" % (f, ", ".join(hits[f])))
+        print("Genericise before pushing. The labels name the class; the value")
+        print("is deliberately not printed.")
+        return GATE_FINDINGS
+    print("pubscan --gate: %d author pattern(s) loaded, no tracked file carries one"
+          % len(local))
+    return GATE_CLEAN
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))))
     ap.add_argument("--selftest", action="store_true",
                     help="check the private-address pattern against MASK_CASES")
+    ap.add_argument("--gate", action="store_true",
+                    help="pre-push gate: exit 3 if a tracked file carries an "
+                         "author literal from ci/pubscan.local, 2 if that file "
+                         "is absent (skip), 0 if clean. See gate().")
     args = ap.parse_args()
 
     if args.selftest:
         return selftest()
+
+    if args.gate:
+        return gate(args.repo)
 
     files = tracked(args.repo)
     blobs = {}
