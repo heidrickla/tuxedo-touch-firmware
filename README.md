@@ -184,12 +184,10 @@ on it. This repo is the firmware and protocol record underneath it.
 
 ## Handling
 
-This repository is **private on the personal forge**. It documents unpatched
-vulnerabilities in a commercial alarm product, including a heap overflow and a
-lockout bypass, and it carries the panel's real address, MAC and account name
-in usage examples.
-
-None of that is a reason not to keep the work. It is a reason not to publish it
-casually. Before any of this becomes public, two separate decisions are owed:
-genericising the network detail, and whether the vendor should be contacted
-first. Neither has been made.
+| | |
+|---|---|
+| Published | public on GitHub, mirrored from the personal forge |
+| Addresses in examples | RFC 5737 documentation addresses; the panel is `203.0.113.5` |
+| MAC in examples | `00:d0:2d:00:00:01`: the Resideo OUI, which DHCP discovery matches, with zeroed device bytes |
+| Credentials | none stored; the tools take `--password`, read `TUXEDO_PASSWORD`, or prompt |
+| Vendor | Resideo no longer develops this product |
