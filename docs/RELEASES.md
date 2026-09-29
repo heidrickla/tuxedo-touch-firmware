@@ -6,7 +6,7 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
-## v17 — 2026-09-29 — BUILT AND STAGED, NOT FLASHED
+## v17 — 2026-09-29 — FLASHED 2026-09-29 AND VERIFIED
 
 **What it is: v16 with one file changed — tuxweb rebuilt from current `main`,
 carrying the live token store and rustls 0.23.45.** Nothing else in the rootfs
@@ -46,17 +46,21 @@ differs: same patches, same vendor, same `/tuxedo`, same supervis.
 | tuxweb bench | `emu/push-serve-test.sh` plaintext, `TLS=1`, `VIA_CONF=1 TLS=1` all pass |
 | cross-build | `arm-unknown-linux-musleabi` release binary is static ARM, stripped |
 
-### Not flashed
+### Flashed 2026-09-29
 
-Built and staged only; the card was not written and the live panel was not
-touched. Flashing needs someone at the touchscreen and is the owner's call. To
-flash: `push-image.sh build/v17/app2.hdr` to the card, reboot, confirm on the
-touchscreen; then `verify-panel.sh` should read `BUILD=v17`, `TUXWEB_MD5
-6727bfeb` matching the running binary, 285 sites, and a token issued at runtime
-should now be honoured without a relaunch.
+`HOST=<panel> ./push-image.sh build/v17/app2.hdr --reboot`, confirmed on the
+touchscreen. `push-image.sh` and `verify-panel.sh` default to the documentation
+address, so `HOST` or the argument names the real panel.
 
-Rollback after a flash: `push-image.sh build/v16/app2.hdr` (tuxweb `d1db8988`)
-and confirm on the touchscreen.
+| check | result |
+|---|---|
+| card copy | md5 `f976212e` on the panel before the reboot |
+| `verify-panel.sh <panel>` | `BUILD=v17`, `TUXWEB_MD5 6727bfeb` = the running binary, patch sites ok, "panel matches expectations" |
+| live token store | a token issued while tuxweb ran: `GetSecurityStatus` 200 with no relaunch; revoked: 401; one server process throughout |
+| TLS | verified against the owner CA; Windows curl (Schannel) needs `--ssl-no-revoke` for a private CA |
+
+Rollback: `HOST=<panel> ./push-image.sh build/v16/app2.hdr --reboot` (tuxweb
+`d1db8988`) and confirm on the touchscreen.
 
 ## v16 — 2026-09-12 — FLASHED 2026-09-13 AND VERIFIED
 
