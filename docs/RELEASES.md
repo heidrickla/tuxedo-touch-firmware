@@ -6,6 +6,58 @@ rebuild it. The build recipe is in `TUXEDO-BUILD.md`; the patch set is
 
 ---
 
+## v17 — 2026-09-29 — BUILT AND STAGED, NOT FLASHED
+
+**What it is: v16 with one file changed — tuxweb rebuilt from current `main`,
+carrying the live token store and rustls 0.23.45.** Nothing else in the rootfs
+differs: same patches, same vendor, same `/tuxedo`, same supervis.
+
+### Artefacts
+
+| | |
+|---|---|
+| `app2.hdr` | 126,451,920 bytes, md5 `f976212e456628a33c9f6e38271fc259` |
+| payload | `v17.jffs2` 126,451,792 bytes |
+| header | size field `126451792`, checksum `0x3d97` computed and matching, verified as ProgCV does |
+| `/opt/webserver/Barracuda` | **tuxweb**, md5 `6727bfeb9e28269744f0208bc992670e`, 1,098,896 bytes — ARM `arm-unknown-linux-musleabi`, static, stripped, built from `main` (`auth::LiveTokenStore` + rustls 0.23.45) |
+| `/opt/webserver/vendor/Barracuda` | the v14 vendor, md5 `0066ad95…`, unchanged |
+| `/tuxedo` | md5 `c744e3f1…`, unchanged from v16 |
+| built at | `/work/v17` on the build VM, by `build-image.sh vm:/work/v16/v16.jffs2 v17` with `TUXWEB=` and `MARKER_SET=`; `build/v17/app2.hdr` collected locally |
+
+### New in v17
+
+- **`auth::LiveTokenStore`** re-reads the token store on every check, so a token
+  issued or revoked while tuxweb runs takes effect without a relaunch. v16 loaded
+  the store once at launch, so a runtime-issued token was not honoured until the
+  next launch, at the cost of a stream outage and one of the six per-boot launches.
+- **rustls 0.23.45** for RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted
+  across encryption levels).
+
+### Verified before staging
+
+| gate | v17 |
+|---|---|
+| base | `/work/v16/v16.jffs2` |
+| all paths `root:root` | yes |
+| patches | **285 sites: 285 already patched, 0 applied**; 285/285 in the re-extracted tree |
+| round trip | zero real differences |
+| header | `0x3d97` computed = stored, PASS both ways |
+| Rust gates | `cargo fmt --check`, `clippy --all-targets -D warnings`, `cargo test --all-targets` (**117 passed**), `cargo deny check` (advisories, bans, licenses, sources ok) all pass |
+| tuxweb bench | `emu/push-serve-test.sh` plaintext, `TLS=1`, `VIA_CONF=1 TLS=1` all pass |
+| cross-build | `arm-unknown-linux-musleabi` release binary is static ARM, stripped |
+
+### Not flashed
+
+Built and staged only; the card was not written and the live panel was not
+touched. Flashing needs someone at the touchscreen and is the owner's call. To
+flash: `push-image.sh build/v17/app2.hdr` to the card, reboot, confirm on the
+touchscreen; then `verify-panel.sh` should read `BUILD=v17`, `TUXWEB_MD5
+6727bfeb` matching the running binary, 285 sites, and a token issued at runtime
+should now be honoured without a relaunch.
+
+Rollback after a flash: `push-image.sh build/v16/app2.hdr` (tuxweb `d1db8988`)
+and confirm on the touchscreen.
+
 ## v16 — 2026-09-12 — FLASHED 2026-09-13 AND VERIFIED
 
 **What it is: v15 with one file changed — tuxweb's offline path
