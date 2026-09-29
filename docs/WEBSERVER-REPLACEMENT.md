@@ -2838,6 +2838,20 @@ tuxweb reached `main`) for 900 s, and on timeout REMOVES the marker so no later
 relaunch can take an unattended window. Re-run with that fix, 7c consumed the marker
 after ~100 s and passed.
 
+**Running a stage-7 window.** Stage the binary and `stage6-panel.sh` into `/tmp`
+first (tmpfs: re-stage after any reboot). Read the relaunch budget before the
+first restart (`CLAUDE.md`, `PUSH-STREAM-AUTH.md` R4) and budget a full
+`phase1 + window + revert` as **5** relaunches, not 3; reboot to reset the
+counter if fewer than about 8 remain.
+
+```sh
+sh /tmp/stage6-panel.sh phase0                     # read-only pre-flight
+sh /tmp/stage6-panel.sh phase1                     # install the passthrough
+setsid sh /tmp/stage6-panel.sh stage7 "7c s45" > /tmp/s7.log 2>&1 &
+# 7d needs the code first: printf '%s\n' <code> > /tmp/tuxweb-usercode
+sh /tmp/stage6-panel.sh revert                     # always available
+```
+
 ### Stage 7 — The write path, in increasing order of consequence
 
 Four sub-stages, each its own window, each with the deadman armed.

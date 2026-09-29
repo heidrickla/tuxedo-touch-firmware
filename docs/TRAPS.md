@@ -340,6 +340,11 @@ and left sitting there saying the opposite of the truth.
 - Line endings are per file. Check with python (`data.count(b"\r\n")`), not
   `grep -c $'\r'` - if the shell does not expand `$'\r'` the pattern is empty and
   matches every line, which reads as "the whole file is CRLF".
+- **`ci/checks.sh`'s `sh -n` passes a bashism on this host, because `sh` here is
+  Git Bash, not `dash`.** A process-substitution script parsed clean locally and
+  failed CI twice. `/bin/sh` on the panel and the build VM is a real POSIX shell,
+  so check panel scripts with `sh -n` on the build VM (`dash`), and always watch
+  CI after a push (`gh run watch <id> --exit-status`).
 - **`LIVE-RESULTS.md` is not valid UTF-8 and has bitten twice, from opposite
   directions.** It carries raw latin-1 bytes from the push stream, one of them a
   NUL. Both consequences are silent:
