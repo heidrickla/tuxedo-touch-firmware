@@ -38,6 +38,7 @@ jobs:
         working-directory: tuxweb
     env:
       CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v5
         timeout-minutes: 15
@@ -49,12 +50,17 @@ jobs:
             | sh -s -- -y --profile minimal --default-toolchain 1.98.1 --component clippy,rustfmt
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      # the crate registry and dependency builds, kept between runs keyed on the toolchain and Cargo.lock
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # the crate registry and target, kept between runs keyed on the toolchain and Cargo.lock. rust-cache
+      # never hits on this runner: its cache version hashes the absolute target path, and the workspace
+      # path changes every run.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         timeout-minutes: 10
         with:
-          workspaces: tuxweb -> target
-          cache-bin: "false"
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            tuxweb/target
+          key: ${{ runner.os }}-tuxweb-1.98.1-${{ hashFiles('tuxweb/Cargo.lock') }}
 
       # A release binary checked against its published digest, not a build on every push.
       - name: cargo-deny (pinned)

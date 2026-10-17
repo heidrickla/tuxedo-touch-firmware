@@ -7,16 +7,9 @@ that happened in this project.
     ci/checks.sh --list     names only
     ci/install-hooks.sh     install as a pre-push hook
 
-`.gitea/workflows/ci.yml` runs the same script on push. **No Actions runner is
-currently registered** (Gitea 1.24.7 supports them; none found on this host), so
-on that remote the pre-push hook is the working path until one is added.
+`.gitea/workflows/ci.yml` (the forge's runner) and `.github/workflows/ci.yml` (GitHub's runners) run it on push as the `regression` job. Their `tuxweb` job runs `cargo fmt --check`, clippy, `cargo nextest run`, `cargo deny check`, a cross-build for `arm-unknown-linux-musleabi`, and an assertion that the result is a static ARM binary; GitHub's adds a host release build. The cross-build is in CI rather than only in `BUILD.md` because it has its own failure mode: `ring` needs a C cross-compiler and `cc-rs` looks for one Ubuntu does not ship.
 
-`.github/workflows/ci.yml` does run, on GitHub's own runners, and is green. It
-adds a second job for `tuxweb`: `cargo test`, a release build, a cross-build for
-`arm-unknown-linux-musleabi`, and an assertion that the result really is a
-static ARM binary. The cross-build is in CI rather than only in `BUILD.md`
-because it has its own failure mode — `ring` needs a C cross-compiler and
-`cc-rs` looks for one Ubuntu does not ship — and an unrun recipe is a guess.
+The forge's `tuxweb` job caches the crate registry and `tuxweb/target` with `actions/cache`, keyed on the toolchain and `tuxweb/Cargo.lock`. GitHub's uses `Swatinem/rust-cache`, which cannot hit on the forge: its cache version hashes the absolute target path, and the forge runner's workspace path changes every run.
 
 ## `ci/dryrun.sh` — run CI without pushing
 
