@@ -13,7 +13,7 @@ jobs:
   # it corresponds to a failure that actually happened here, several of them
   # costing a flash, so this is the job that matters.
   regression:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -30,7 +30,7 @@ jobs:
   # tuxweb is the Barracuda replacement; its tests pin the wire format the
   # panel's own consumers depend on, including the vendor's RFC 2046 violation.
   tuxweb:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: tuxweb
