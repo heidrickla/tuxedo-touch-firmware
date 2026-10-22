@@ -12,7 +12,7 @@
 #   /etc/inetd.conf              add the line in inetd.conf.example
 #
 # USE
-#   curl -u tuxedo:<secret> -T app2.hdr http://<panel>:8081/app2.hdr
+#   curl -H "X-Upload-Key: <secret>" -T app2.hdr http://<panel>:8081/app2.hdr
 #
 # THIS PUTS A WRITABLE NETWORK SERVICE ON AN ALARM PANEL. Read the security
 # notes at the bottom before installing it. The panel's existing web stack
@@ -22,10 +22,12 @@
 SD=/mnt/sd
 LOG=/opt/tuxedo/configuration/upload.log
 
-# Shared secret. REPLACE THIS. It is compared in full, not hashed, because
+# Shared secret. REPLACE THIS: the handler refuses every request while it is
+# empty or still the shipped value. It is compared in full, not hashed, because
 # there is no hashing tool in this userland; it is only as private as the
 # filesystem it sits in and the network it travels over.
 SECRET="CHANGE-ME"
+PLACEHOLDER="CHANGE-ME"
 
 # Only these names are accepted. A firmware upload has a fixed vocabulary, so
 # an allowlist removes path traversal as a category rather than filtering it.
@@ -63,6 +65,9 @@ done
 
 # ---- checks, cheapest and least revealing first ------------------------------
 
+case "$SECRET" in
+    ''|"$PLACEHOLDER") reply "503 Service Unavailable" "upload key not set" ;;
+esac
 [ "$AUTH" = "$SECRET" ] || reply "403 Forbidden" "no"
 
 case "$METHOD" in
