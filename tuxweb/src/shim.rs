@@ -60,9 +60,35 @@ Credentials refused on an unencrypted connection: use https, or reach the panel 
 /// Without it the shim works until the first expiry and then serves nothing,
 /// forever, with no error a client can see -- the silent failure this project
 /// keeps getting bitten by.
+///
+/// One re-login per proven session: three failed web logins lock every web
+/// account on the panel, so a credential that did not restore the stream is
+/// dropped and never sent again.
 pub struct Creds {
-    pub user: String,
-    pub password: String,
+    user: String,
+    password: String,
+    /// The last login with these was accepted (the startup login) or opened a
+    /// stream. A re-login spends it; an open stream earns it back.
+    armed: bool,
+}
+
+impl Creds {
+    /// Credentials that have just logged in successfully.
+    pub fn new(user: String, password: String) -> Creds {
+        Creds {
+            user,
+            password,
+            armed: true,
+        }
+    }
+}
+
+/// Why the upstream stream did not open.
+enum Open {
+    /// Worth another try after a pause; no credential is involved.
+    Retry(String),
+    /// The session is gone and cannot be renewed; the shim stops.
+    Fatal(String),
 }
 
 pub struct Shim {
@@ -71,8 +97,9 @@ pub struct Shim {
     pub cookie: std::cell::RefCell<String>,
     pub bind: String,
     /// `None` means a bare cookie was supplied and cannot be renewed; the shim
-    /// then fails honestly on expiry rather than pretending.
-    pub creds: Option<Creds>,
+    /// then fails honestly on expiry rather than pretending. Emptied when a
+    /// re-login does not restore the stream.
+    pub creds: std::cell::RefCell<Option<Creds>>,
     /// Serve subscribers over TLS. The UPSTREAM hop is unaffected and stays
     /// plaintext on loopback: the vendor's own certificate is expired and its
     /// key is compiled into the binary, so terminating TLS here is what makes
@@ -220,26 +247,62 @@ pub fn carries_credentials(head: &str, body_seen: &[u8]) -> bool {
 impl Shim {
     /// Open the upstream stream, logging in again if the session has expired.
     ///
-    /// Re-login is attempted at most once per call. Every successful open
-    /// re-registers, and registering makes `/tuxedo` FLUSH the reply queue, so
-    /// this must never become a retry loop.
-    fn open_upstream(&self) -> Result<TcpStream, String> {
-        match self.open_upstream_once() {
-            Ok(s) => Ok(s),
-            Err(e) if e.contains("401") => {
-                let Some(c) = self.creds.as_ref() else {
-                    return Err(format!(
-                        "{e} (session expired and no credentials to renew it)"
-                    ));
-                };
-                eprintln!("shim: upstream 401 -- session expired, logging in again");
-                let fresh = crate::login::login(&self.upstream, &c.user, &c.password)
-                    .map_err(|le| format!("re-login failed: {le}"))?;
-                *self.cookie.borrow_mut() = fresh;
-                self.open_upstream_once()
-            }
-            Err(e) => Err(e),
+    /// Re-login is attempted at most once per call, and at most once between
+    /// two streams that opened. Every successful open re-registers, and
+    /// registering makes `/tuxedo` FLUSH the reply queue, so this must never
+    /// become a retry loop. A re-login that fails, or whose session is refused
+    /// too, drops the credentials: `login` cannot tell a rejected password from
+    /// a transport error, and a second try with a rejected one counts towards
+    /// the panel's three-failure lockout.
+    fn open_upstream(&self) -> Result<TcpStream, Open> {
+        let e = match self.open_upstream_once() {
+            Ok(s) => return Ok(self.opened(s)),
+            Err(e) if e.contains("401") => e,
+            Err(e) => return Err(Open::Retry(e)),
+        };
+        let mut held = self.creds.borrow_mut();
+        let Some(c) = held.as_mut() else {
+            return Err(Open::Fatal(format!(
+                "{e} (session expired and no credentials to renew it)"
+            )));
+        };
+        if !c.armed {
+            *held = None;
+            return Err(Open::Fatal(format!(
+                "{e} (refused again since the last re-login; credentials dropped)"
+            )));
         }
+        c.armed = false;
+        eprintln!("shim: upstream 401 -- session expired, logging in again");
+        let fresh = match crate::login::login(&self.upstream, &c.user, &c.password) {
+            Ok(f) => f,
+            Err(le) => {
+                *held = None;
+                return Err(Open::Fatal(format!(
+                    "re-login failed: {le} (credentials dropped, no further login)"
+                )));
+            }
+        };
+        drop(held);
+        *self.cookie.borrow_mut() = fresh;
+        match self.open_upstream_once() {
+            Ok(s) => Ok(self.opened(s)),
+            Err(e) if e.contains("401") => {
+                *self.creds.borrow_mut() = None;
+                Err(Open::Fatal(format!(
+                    "{e} (the fresh session was refused; credentials dropped)"
+                )))
+            }
+            Err(e) => Err(Open::Retry(e)),
+        }
+    }
+
+    /// A stream opened, so the credentials (if any) have proven themselves.
+    fn opened(&self, s: TcpStream) -> TcpStream {
+        if let Some(c) = self.creds.borrow_mut().as_mut() {
+            c.armed = true;
+        }
+        s
     }
 
     fn open_upstream_once(&self) -> Result<TcpStream, String> {
@@ -422,7 +485,8 @@ impl Shim {
                     drops = 0;
                     u
                 }
-                Err(e) => {
+                Err(Open::Fatal(e)) => return Err(format!("upstream unavailable: {e}")),
+                Err(Open::Retry(e)) => {
                     if drops as usize >= BACKOFF.len() {
                         return Err(format!("upstream unavailable: {e}"));
                     }
@@ -630,5 +694,191 @@ Location: /x\r\n\r\n";
             p.encode(&mut out);
         }
         assert_eq!(&out[..], &body[..body.len() - rest]);
+    }
+
+    /// A loopback stand-in for Barracuda's login and push paths. The push GET
+    /// answers 200 only to the cookie the last accepted login issued; the
+    /// login POST is counted, and accepted when `accept_login` is set. With
+    /// `honour_session` unset an accepted login issues a cookie the push path
+    /// still refuses.
+    struct FakePanel {
+        addr: String,
+        posts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        valid: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+        /// Push requests with a fresh login's cookie to drop without an
+        /// answer, as a transport failure.
+        hangups: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    fn fake_panel(accept_login: bool, honour_session: bool) -> FakePanel {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let posts = Arc::new(AtomicUsize::new(0));
+        let valid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let hangups = Arc::new(AtomicUsize::new(0));
+        let (p, v, h) = (Arc::clone(&posts), Arc::clone(&valid), Arc::clone(&hangups));
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                let Ok(mut s) = s else { continue };
+                let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+                let Ok((head, mut body)) = crate::proxy::read_head(&mut s, 16 * 1024) else {
+                    continue;
+                };
+                let want = crate::proxy::header(&head, "content-length")
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .unwrap_or(0);
+                let mut b = [0u8; 1024];
+                while body.len() < want {
+                    match s.read(&mut b) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => body.extend_from_slice(&b[..n]),
+                    }
+                }
+                let path = crate::proxy::path(&head).to_string();
+                let push = path.starts_with("/SimpleDebugger.interface/");
+                let ck = crate::proxy::header(&head, "cookie").unwrap_or("");
+                if push
+                    && ck != "sess=stale"
+                    && h.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                        .is_ok()
+                {
+                    continue;
+                }
+                let resp = if push {
+                    if v.lock().unwrap().as_deref() == Some(ck) {
+                        "HTTP/1.1 200 OK\r\n\r\n".to_string()
+                    } else {
+                        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".to_string()
+                    }
+                } else if head.starts_with("GET /authenticated/") {
+                    "HTTP/1.1 200 OK\r\nRandom: abc123\r\nRandomID: 42\r\n\
+                     Set-Cookie: _zFL=z; path=/\r\nContent-Length: 0\r\n\r\n"
+                        .to_string()
+                } else if head.starts_with("POST /authenticated/") {
+                    let n = p.fetch_add(1, Ordering::SeqCst) + 1;
+                    if accept_login {
+                        let ck = format!("sess={n}");
+                        if honour_session {
+                            *v.lock().unwrap() = Some(ck.clone());
+                        }
+                        format!(
+                            "HTTP/1.1 302 Found\r\nSet-Cookie: {ck}; path=/\r\n\
+                             Content-Length: 0\r\n\r\n"
+                        )
+                    } else {
+                        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_string()
+                    }
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string()
+                };
+                let _ = s.write_all(resp.as_bytes());
+            }
+        });
+        FakePanel {
+            addr,
+            posts,
+            valid,
+            hangups,
+        }
+    }
+
+    fn shim_with_creds(upstream: &str) -> Shim {
+        Shim {
+            upstream: upstream.to_string(),
+            cookie: std::cell::RefCell::new("sess=stale".into()),
+            bind: "127.0.0.1:0".into(),
+            creds: std::cell::RefCell::new(Some(Creds::new("u".into(), "p".into()))),
+            tls: None,
+            token: None,
+            allow_plaintext_login: false,
+        }
+    }
+
+    fn logins(p: &FakePanel) -> usize {
+        p.posts.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The run loop calls `open_upstream` once per retry; eight calls cover its
+    /// six backoff steps and then some.
+    fn open_repeatedly(s: &Shim) -> Vec<bool> {
+        (0..8)
+            .map(|_| matches!(s.open_upstream(), Err(Open::Fatal(_))))
+            .collect()
+    }
+
+    #[test]
+    fn a_rejected_relogin_is_never_retried() {
+        let panel = fake_panel(false, true);
+        let s = shim_with_creds(&panel.addr);
+        let fatal = open_repeatedly(&s);
+        assert_eq!(
+            logins(&panel),
+            1,
+            "one login with a refused credential, never two"
+        );
+        assert!(
+            fatal.iter().all(|f| *f),
+            "every call after the rejection is fatal"
+        );
+        assert!(
+            s.creds.borrow().is_none(),
+            "the refused credential is dropped"
+        );
+    }
+
+    #[test]
+    fn a_session_refused_after_relogin_stops_logging_in() {
+        let panel = fake_panel(true, false);
+        let s = shim_with_creds(&panel.addr);
+        let fatal = open_repeatedly(&s);
+        assert_eq!(logins(&panel), 1);
+        assert!(fatal[0], "the fresh session was refused: stop");
+        assert!(s.creds.borrow().is_none());
+    }
+
+    #[test]
+    fn a_relogin_that_never_opened_a_stream_is_not_repeated() {
+        let panel = fake_panel(true, false);
+        let s = shim_with_creds(&panel.addr);
+        // The re-login is accepted, then the stream request is dropped: a
+        // retry, with no stream to prove the fresh session.
+        panel.hangups.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(s.open_upstream(), Err(Open::Retry(_))));
+        assert_eq!(logins(&panel), 1);
+        // Refused again: no second login.
+        assert!(matches!(s.open_upstream(), Err(Open::Fatal(_))));
+        assert_eq!(logins(&panel), 1);
+        assert!(s.creds.borrow().is_none());
+    }
+
+    #[test]
+    fn an_expired_session_is_renewed_once_per_open_stream() {
+        let panel = fake_panel(true, true);
+        let s = shim_with_creds(&panel.addr);
+        assert!(
+            s.open_upstream().is_ok(),
+            "stale cookie: one login renews it"
+        );
+        assert_eq!(logins(&panel), 1);
+        assert!(s.open_upstream().is_ok(), "a live session needs no login");
+        assert_eq!(logins(&panel), 1);
+        *panel.valid.lock().unwrap() = None; // the panel expires the session
+        assert!(
+            s.open_upstream().is_ok(),
+            "a stream opened since, so renew again"
+        );
+        assert_eq!(logins(&panel), 2);
+        assert!(s.creds.borrow().is_some());
+    }
+
+    #[test]
+    fn a_bare_cookie_expiry_is_fatal_without_a_login() {
+        let panel = fake_panel(true, true);
+        let s = shim_with_creds(&panel.addr);
+        *s.creds.borrow_mut() = None;
+        assert!(matches!(s.open_upstream(), Err(Open::Fatal(_))));
+        assert_eq!(logins(&panel), 0);
     }
 }

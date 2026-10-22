@@ -841,10 +841,7 @@ fn main() {
             bind: args[5].clone(),
             token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
             // keep the credentials so the session can be renewed when it expires
-            creds: Some(shim::Creds {
-                user: args[3].clone(),
-                password: pw,
-            }),
+            creds: std::cell::RefCell::new(Some(shim::Creds::new(args[3].clone(), pw))),
             // TUXWEB_CHAIN + TUXWEB_KEY turn the listener into a TLS one. The
             // upstream hop stays plaintext on loopback: the vendor certificate
             // is expired and its key is public, so this end is where TLS is
@@ -866,7 +863,7 @@ fn main() {
             bind: args[4].clone(),
             token: std::env::var("TUXWEB_TOKEN").ok().filter(|t| !t.is_empty()),
             // a bare cookie cannot be renewed; expiry is fatal and says so
-            creds: None,
+            creds: std::cell::RefCell::new(None),
             tls: tls_from_env(),
             allow_plaintext_login: plaintext_login_allowed(),
         };
