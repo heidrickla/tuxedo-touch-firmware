@@ -17,6 +17,7 @@ mod accounts;
 mod api;
 mod auth;
 mod conf;
+mod conn;
 mod cutover;
 mod deadman;
 mod frame;

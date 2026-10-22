@@ -19,6 +19,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
+use crate::conn::Conn;
 use crate::frame;
 
 /// The exact response head Barracuda sends. Reproduced rather than invented:
@@ -55,6 +56,9 @@ Connection: close\r\n\
 Content-Type: text/plain\r\n\
 Content-Length: 90\r\n\r\n\
 Credentials refused on an unencrypted connection: use https, or reach the panel directly.\n";
+
+/// Concurrent client connections the shim serves; one more is closed at once.
+const MAX_CONNECTIONS: usize = 8;
 
 /// Kept so the shim can log in again when the panel expires its session.
 /// Without it the shim works until the first expiry and then serves nothing,
@@ -162,8 +166,8 @@ fn presents_token(req_head: &str, want: &str) -> bool {
 /// than a socket, and an unboxed variant would make every plaintext subscriber
 /// pay for it.
 pub enum Sink {
-    Plain(TcpStream),
-    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>),
+    Plain(Conn),
+    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, Conn>>),
 }
 
 impl std::io::Read for Sink {
@@ -192,14 +196,15 @@ impl Write for Sink {
 
 impl Sink {
     /// Wrap an accepted socket, doing the TLS handshake lazily on first use as
-    /// rustls does. The read timeout is set on the socket underneath either
-    /// way, so a client that connects and says nothing cannot hold a slot.
-    /// `pub` because the stage-8 serve mode wraps its listener the same way.
+    /// rustls does. The handshake, head and body share one deadline
+    /// (`conn::REQUEST_DEADLINE`); a subscriber calls [`Sink::clear_deadline`]
+    /// once enrolled. `pub` because the stage-8 serve mode wraps its listener
+    /// the same way.
     pub fn accept(
         c: TcpStream,
         tls: Option<&std::sync::Arc<rustls::ServerConfig>>,
     ) -> Result<Sink, String> {
-        let _ = c.set_read_timeout(Some(Duration::from_secs(10)));
+        let c = Conn::for_request(c);
         match tls {
             None => Ok(Sink::Plain(c)),
             Some(cfg) => {
@@ -210,12 +215,20 @@ impl Sink {
         }
     }
 
-    fn set_write_timeout(&self, d: Duration) {
-        let s = match self {
+    fn conn(&mut self) -> &mut Conn {
+        match self {
             Sink::Plain(s) => s,
-            Sink::Tls(t) => t.get_ref(),
-        };
-        let _ = s.set_write_timeout(Some(d));
+            Sink::Tls(t) => t.get_mut(),
+        }
+    }
+
+    fn set_write_timeout(&mut self, d: Duration) {
+        let _ = self.conn().get_ref().set_write_timeout(Some(d));
+    }
+
+    /// The request is read; from here reads only have the per-read timeout.
+    pub fn clear_deadline(&mut self) {
+        self.conn().clear_deadline();
     }
 
     /// Whether anything written here is protected on the wire. The decision to
@@ -385,35 +398,28 @@ impl Shim {
 
         let clients: Arc<Mutex<Vec<Sink>>> = Arc::new(Mutex::new(Vec::new()));
 
-        // Accept, authenticate, and enrol. Done off the relay thread so a
-        // client that connects and says nothing cannot stall the stream.
+        // Accept, authenticate, and enrol, a thread per connection
+        // (`conn::serve`), off the relay thread, so a client that connects and
+        // says nothing stalls neither the stream nor the next client.
         let accept_clients = Arc::clone(&clients);
         let token = self.token.clone();
         let tls = self.tls.clone();
         let upstream = self.upstream.clone();
         let allow_plaintext_login = self.allow_plaintext_login;
         std::thread::spawn(move || {
-            for s in l.incoming() {
-                let raw = match s {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("accept: {e}");
-                        continue;
-                    }
-                };
-                let peer = raw.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+            crate::conn::serve(l, MAX_CONNECTIONS, "shim", move |raw, peer| {
                 let mut c = match Sink::accept(raw, tls.as_ref()) {
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("shim: {peer}: {e}");
-                        continue;
+                        return;
                     }
                 };
                 let (head, body) = match crate::proxy::read_head(&mut c, 16 * 1024) {
                     Ok(h) => h,
                     Err(e) => {
                         eprintln!("shim: {peer}: {e}");
-                        continue;
+                        return;
                     }
                 };
 
@@ -429,7 +435,7 @@ impl Shim {
                         let _ = c.write_all(NO_PLAINTEXT_LOGIN);
                         let _ = c.flush();
                         eprintln!("shim: {peer}: login refused, connection is not encrypted");
-                        continue;
+                        return;
                     }
                     // The panel omits `Secure` from the session cookie when the
                     // login that produced it was plaintext, and through the shim
@@ -440,7 +446,7 @@ impl Shim {
                     if let Err(e) = crate::proxy::forward(&upstream, &head, &body, &mut c, secure) {
                         eprintln!("shim: {peer}: proxy: {e}");
                     }
-                    continue;
+                    return;
                 }
 
                 // The push path is served from the shared subscription, so it
@@ -454,10 +460,10 @@ impl Shim {
                     let _ = c.write_all(DENY);
                     let _ = c.flush();
                     eprintln!("shim: {peer}: denied, no token and no valid session");
-                    continue;
+                    return;
                 }
                 if c.write_all(HEAD).is_err() {
-                    continue;
+                    return;
                 }
                 let _ = c.flush();
                 println!(
@@ -465,8 +471,9 @@ impl Shim {
                     if by_token { "token" } else { "session" }
                 );
                 c.set_write_timeout(Duration::from_secs(5));
+                c.clear_deadline();
                 accept_clients.lock().unwrap().push(c);
-            }
+            })
         });
 
         // One upstream, relayed to everyone.

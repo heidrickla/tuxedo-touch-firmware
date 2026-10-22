@@ -94,6 +94,13 @@ pub const DEFAULT_SILENCE: Duration = Duration::from_secs(120);
 /// ceiling (`ha-tuxedo-touch/api.py`); match the ceiling.
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Concurrent push + API connections being read or answered. Subscribers
+/// leave the count once enrolled; one connection more is closed at once.
+const MAX_CONNECTIONS: usize = 8;
+
+/// Concurrent connections on the `80 -> 301` leg.
+const MAX_REDIRECT_CONNECTIONS: usize = 4;
+
 /// The plaintext `301` leg. Every connection is read once and answered with a
 /// redirect to https (or a 400); no keep-alive, no state -- port 80 does exactly
 /// one thing (§2.6). Failures are logged and dropped; a bad client here must not
@@ -107,24 +114,22 @@ fn run_redirect_listener(bind: String) {
         }
     };
     println!("serve: 80->301 redirect on {bind}");
-    for s in l.incoming() {
-        let mut sock = match s {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("serve redirect: accept: {e}");
-                continue;
+    crate::conn::serve(
+        l,
+        MAX_REDIRECT_CONNECTIONS,
+        "serve redirect",
+        |sock, peer| {
+            let _ = sock.set_write_timeout(Some(Duration::from_secs(10)));
+            let mut sock = crate::conn::Conn::for_request(sock);
+            match crate::proxy::read_head(&mut sock, 8 * 1024) {
+                Ok((head, _)) => {
+                    let _ = sock.write_all(&crate::redirect::respond(&head));
+                    let _ = sock.flush();
+                }
+                Err(e) => eprintln!("serve redirect: {peer}: {e}"),
             }
-        };
-        let _ = sock.set_read_timeout(Some(Duration::from_secs(10)));
-        let _ = sock.set_write_timeout(Some(Duration::from_secs(10)));
-        match crate::proxy::read_head(&mut sock, 8 * 1024) {
-            Ok((head, _)) => {
-                let _ = sock.write_all(&crate::redirect::respond(&head));
-                let _ = sock.flush();
-            }
-            Err(e) => eprintln!("serve redirect: {e}"),
-        }
-    }
+        },
+    );
 }
 
 fn command(session: u32, code: u32) -> Vec<u8> {
@@ -406,34 +411,29 @@ pub fn run(cfg: Config) -> Result<(), String> {
         Some(_) => println!("serve: listener is TLS (rustls)"),
         None => println!("serve: *** listener is PLAINTEXT -- bench only ***"),
     }
+    let acc_security = Arc::new(Mutex::new(()));
+    // A thread per connection (`conn::serve`): a client that stalls in the
+    // handshake or the head holds its own thread until the request deadline,
+    // never the listener.
     let accept = std::thread::spawn(move || {
-        for s in listener.incoming() {
-            let raw = match s {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("serve accept: {e}");
-                    continue;
-                }
-            };
-            let peer = raw.peer_addr().map(|a| a.to_string()).unwrap_or_default();
-            // Set both timeouts on the socket before wrapping so a client that
-            // connects and says nothing cannot hold a slot, and a stuck write
-            // cannot wedge the fan-out. TLS (if configured) wraps the same socket;
-            // the handshake happens lazily on the first read.
-            let _ = raw.set_read_timeout(Some(Duration::from_secs(10)));
+        crate::conn::serve(listener, MAX_CONNECTIONS, "serve", move |raw, peer| {
+            // A stuck write must not wedge the fan-out. Reads are bounded by
+            // the request deadline `Sink::accept` sets. TLS (if configured)
+            // wraps the same socket; the handshake happens lazily on the first
+            // read.
             let _ = raw.set_write_timeout(Some(Duration::from_secs(5)));
             let mut sink = match Sink::accept(raw, acc_tls.as_ref()) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("serve: {peer}: {e}");
-                    continue;
+                    return;
                 }
             };
             let (head, body0) = match crate::proxy::read_head(&mut sink, 16 * 1024) {
                 Ok(h) => h,
                 Err(e) => {
                     eprintln!("serve: {peer}: {e}");
-                    continue;
+                    return;
                 }
             };
             let target = crate::proxy::path(&head);
@@ -450,21 +450,22 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     let _ = sink.write_all(&unauthorized());
                     let _ = sink.flush();
                     eprintln!("serve: {peer}: push denied, no valid token");
-                    continue;
+                    return;
                 }
                 if sink.write_all(HEAD).is_err() || sink.flush().is_err() {
-                    continue;
+                    return;
                 }
                 // Current state before enrolling, so the client is never behind.
                 let my_cid = acc_cid.fetch_add(1, Ordering::Relaxed);
                 let n = acc_clients.lock().unwrap().len() as u32 + 1;
                 let snapshot = acc_state.lock().unwrap().snapshot(my_cid, n, &acc_quickarm);
                 if !write_parts(&mut sink, &snapshot) {
-                    continue;
+                    return;
                 }
                 println!("serve: {peer} subscribed (cid {my_cid}, {n} client(s))");
+                sink.clear_deadline();
                 acc_clients.lock().unwrap().push(sink);
-                continue;
+                return;
             }
 
             // The typed API.
@@ -483,6 +484,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     action @ (crate::api::Action::Arm { .. } | crate::api::Action::Disarm) => {
                         let body = read_body(&mut sink, &body0, content_length(&head));
                         let form = String::from_utf8_lossy(&body);
+                        // One command in flight at a time, as when the accept
+                        // loop served connections in turn: the confirm wait
+                        // reads a state byte any other command would move.
+                        let _one = acc_security.lock().unwrap_or_else(|p| p.into_inner());
                         handle_security(&action, &form, acc_session, &acc_commands, &acc_state)
                     }
                 }
@@ -491,7 +496,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
             };
             let _ = sink.write_all(&resp);
             let _ = sink.flush();
-        }
+        })
     });
 
     // The 80->301 leg, if configured. Detached: it ends with the process.
