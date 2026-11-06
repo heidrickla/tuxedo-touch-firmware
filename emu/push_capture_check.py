@@ -15,6 +15,13 @@ not change the IPC namespace -- see emu/pushdriver.py). Subcommands:
     client <host:port> <secs> <out> [token]   subscribe (Cookie form) and record
     pushdeny <host:port>            subscribe WITHOUT a token: expect 401
     apicall <method> <host:port> <path> <body|-> <token|-> <status> <needle|->
+    certinstall <host:port> <path> <chain.pem> <key.pem> <token|-> <status> <needle|->
+                                    POST the pair as JSON; on 200 the reported
+                                    sha256 must be the chain's first certificate
+    servedleaf <host:port> <leaf.pem>   a new TLS connection (TLS_CA verifies it)
+                                    is served exactly this leaf
+    tlsrefused <host:port>          a new TLS connection fails verification
+                                    against TLS_CA
     verify <file>                   capture-test oracle
     verify_serve <file>             serve-test oracle (snapshot + live arm/disarm)
     verify_cmds <cmdlog>            the fake tuxedo saw the right commands
@@ -324,6 +331,68 @@ def apicall(method, hostport, path, body, token, expect, needle):
     print("  PASS")
 
 
+def certinstall(hostport, path, chainfile, keyfile, token, expect, needle):
+    import hashlib
+    import json
+    import ssl
+    with open(chainfile) as f:
+        chain = f.read()
+    with open(keyfile) as f:
+        key = f.read()
+    body = json.dumps({"chain": chain, "key": key}).encode()
+    hdr = ("POST %s HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"
+           "Content-Type: application/json\r\nContent-Length: %d\r\n" % (path, len(body)))
+    if token != "-":
+        hdr += "Authorization: Bearer %s\r\n" % token
+    got = _http(hostport, hdr.encode() + b"\r\n" + body, 10)
+    head, _, rbody = got.partition(b"\r\n\r\n")
+    status = head.split(b"\r\n")[0].decode("latin-1", "replace") if head else "(no response)"
+    print("  POST %s -> %s" % (path, status))
+    print("  body: %s" % rbody.decode("latin-1", "replace")[:200])
+    if not (status.startswith("HTTP/1.1 " + expect) and (needle == "-" or needle.encode() in rbody)):
+        die("FAIL: expected %s with %r" % (expect, needle))
+    if expect == "200":
+        leaf_pem = chain[:chain.index("-----END CERTIFICATE-----") + 25]
+        want = hashlib.sha256(ssl.PEM_cert_to_DER_cert(leaf_pem)).hexdigest()
+        got_sha = json.loads(rbody)["sha256"]
+        if got_sha != want:
+            die("FAIL: reported sha256 %s, the leaf's is %s" % (got_sha, want))
+        print("  reported sha256 is the leaf's")
+    print("  PASS")
+
+
+def _served_leaf(hostport):
+    import ssl
+    import socket
+    host, port = hostport.rsplit(":", 1)
+    ctx = ssl.create_default_context(cafile=os.environ["TLS_CA"])
+    with socket.create_connection((host, int(port)), timeout=5) as sk:
+        with ctx.wrap_socket(sk, server_hostname=host) as t:
+            return t.getpeercert(binary_form=True)
+
+
+def servedleaf(hostport, leaffile):
+    import hashlib
+    import ssl
+    with open(leaffile) as f:
+        want = ssl.PEM_cert_to_DER_cert(f.read())
+    got = _served_leaf(hostport)
+    print("  served leaf sha256 %s" % hashlib.sha256(got).hexdigest())
+    if got != want:
+        die("FAIL: a new connection was not served %s" % leaffile)
+    print("  PASS: a new connection is served the installed leaf")
+
+
+def tlsrefused(hostport):
+    import ssl
+    try:
+        _served_leaf(hostport)
+    except ssl.SSLCertVerificationError as e:
+        print("  PASS: verification against the old CA fails (%s)" % e.verify_message)
+        return
+    die("FAIL: the old CA still verifies a new connection")
+
+
 def redirectget(hostport, path):
     # the 80 leg is plaintext by definition, whatever the main listener does
     got = _http(hostport, ("GET %s HTTP/1.1\r\nHost: panel.test\r\nConnection: close\r\n\r\n"
@@ -521,6 +590,12 @@ if __name__ == "__main__":
         pushdeny(a[0])
     elif cmd == "apicall":
         apicall(*a[:7])
+    elif cmd == "certinstall":
+        certinstall(*a[:7])
+    elif cmd == "servedleaf":
+        servedleaf(a[0], a[1])
+    elif cmd == "tlsrefused":
+        tlsrefused(a[0])
     elif cmd == "redirectget":
         redirectget(a[0], a[1])
     elif cmd == "verify":

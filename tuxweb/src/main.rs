@@ -16,6 +16,7 @@
 mod accounts;
 mod api;
 mod auth;
+mod certinstall;
 mod conf;
 mod conn;
 mod cutover;
@@ -31,6 +32,9 @@ mod register;
 mod serve;
 mod session;
 mod shim;
+#[cfg(test)]
+mod testcert;
+mod x509;
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -78,25 +82,50 @@ fn plaintext_login_allowed() -> bool {
 fn tls_from_paths(chain_p: &str, key_p: &str) -> Result<Arc<ServerConfig>, String> {
     let chain = load_chain(chain_p)?;
     let key = load_key(key_p)?;
-    ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(chain, key)
+    certinstall::server_config(chain, key)
         .map(Arc::new)
         .map_err(|e| format!("bad certificate/key pair: {e}"))
+}
+
+/// The serve mode's TLS: the config from a chain and key on disk, swappable by
+/// `InstallCertificate`, which writes back to the same two paths.
+fn live_tls(chain_p: &str, key_p: &str) -> Result<Arc<certinstall::LiveTls>, String> {
+    let cfg = tls_from_paths(chain_p, key_p)?;
+    Ok(Arc::new(certinstall::LiveTls::new(cfg, chain_p, key_p)))
+}
+
+/// TUXWEB_CHAIN and TUXWEB_KEY, when both are set.
+fn tls_paths_from_env() -> Option<(String, String)> {
+    Some((
+        std::env::var("TUXWEB_CHAIN").ok()?,
+        std::env::var("TUXWEB_KEY").ok()?,
+    ))
 }
 
 /// Build a TLS config from TUXWEB_CHAIN and TUXWEB_KEY, or None for plaintext.
 /// Exits rather than silently serving in the clear if one is set and unusable:
 /// a listener that was meant to be encrypted and is not should not start.
 fn tls_from_env() -> Option<Arc<ServerConfig>> {
-    let (chain_p, key_p) = (
-        std::env::var("TUXWEB_CHAIN").ok()?,
-        std::env::var("TUXWEB_KEY").ok()?,
-    );
+    let (chain_p, key_p) = tls_paths_from_env()?;
     match tls_from_paths(&chain_p, &key_p) {
         Ok(c) => {
             println!("tuxweb: serving TLS from {chain_p}");
             Some(c)
+        }
+        Err(e) => {
+            eprintln!("tuxweb: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// [`tls_from_env`] for the serve mode: the same rules, swappable.
+fn live_tls_from_env() -> Option<Arc<certinstall::LiveTls>> {
+    let (chain_p, key_p) = tls_paths_from_env()?;
+    match live_tls(&chain_p, &key_p) {
+        Ok(t) => {
+            println!("tuxweb: serving TLS from {chain_p}");
+            Some(t)
         }
         Err(e) => {
             eprintln!("tuxweb: {e}");
@@ -415,7 +444,7 @@ fn main() {
                     // A configured-but-unusable cert pair must NOT become a
                     // plaintext server: refuse serve mode and pass through.
                     let tls = match (&sc.chain, &sc.key) {
-                        (Some(c), Some(k)) => tls_from_paths(c, k).map(Some),
+                        (Some(c), Some(k)) => live_tls(c, k).map(Some),
                         (None, None) => Ok(None),
                         _ => Err("chain and key must be set together".to_string()),
                     };
@@ -794,7 +823,7 @@ fn main() {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| auth::TOKEN_STORE.to_string()),
             // TUXWEB_CHAIN + TUXWEB_KEY -> TLS; exits if set but unusable.
-            tls: tls_from_env(),
+            tls: live_tls_from_env(),
             // Bench knob; the panel uses the default (or the serve conf's).
             silence: std::env::var("TUXWEB_SILENCE_SECS")
                 .ok()

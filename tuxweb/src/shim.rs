@@ -234,7 +234,7 @@ impl Sink {
     /// Whether anything written here is protected on the wire. The decision to
     /// carry credentials hangs on this, so it reads the connection rather than
     /// a flag someone could set and be wrong about.
-    fn is_encrypted(&self) -> bool {
+    pub fn is_encrypted(&self) -> bool {
         matches!(self, Sink::Tls(_))
     }
 }

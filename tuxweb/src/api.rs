@@ -26,9 +26,11 @@ pub const CONTRACT: u32 = 1;
 /// Reported in the capability body; the panel's own four-letter model.
 pub const PANEL_MODEL: &str = "TUXW";
 
-/// The capabilities this build serves. Unordered; unknown strings are ignored
-/// by clients, and adding one is backward compatible. These three are the free
-/// wins reading the queue directly gives us (§4.10.3).
+/// The capabilities this build always serves. Unordered; unknown strings are
+/// ignored by clients, and adding one is backward compatible. These three are
+/// the free wins reading the queue directly gives us (§4.10.3).
+/// `certificate_install` is added per server, only when it serves TLS from a
+/// configured chain/key pair ([`capabilities_response`]).
 pub const CAPABILITIES: &[&str] = &["panel_link_state", "command_result", "status_refresh"];
 
 /// The vendor namespace every real endpoint lives under. An unknown endpoint
@@ -48,6 +50,9 @@ pub enum Action {
     Disarm,
     /// `GET|POST /…/GetSecurityStatus` — read-only, served from the state model.
     Status,
+    /// `POST /…/InstallCertificate` — replace the serving certificate and key
+    /// (`certinstall.rs`).
+    InstallCertificate,
     /// A known endpoint reached with the wrong method → 405.
     MethodNotAllowed,
     /// Anything else inside the API namespace → 404, the permanent absence
@@ -102,11 +107,18 @@ pub fn classify(method: &str, target: &str, arm_code: u32) -> Action {
                 Action::MethodNotAllowed
             }
         }
+        "/InstallCertificate" => {
+            if method.eq_ignore_ascii_case("POST") {
+                Action::InstallCertificate
+            } else {
+                Action::MethodNotAllowed
+            }
+        }
         _ => Action::NotFound,
     }
 }
 
-fn http(status: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
+pub(crate) fn http(status: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
     let mut v = format!(
         "HTTP/1.1 {status}\r\n\
          Content-Type: {content_type}\r\n\
@@ -122,9 +134,13 @@ fn http(status: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
 /// `200` capability body. Built by hand rather than via serde so the exact
 /// fields are visible here and cannot drift with a serializer's key ordering;
 /// clients parse it as JSON and branch only on `capabilities`.
-pub fn capabilities_response() -> Vec<u8> {
+/// `certificate_install` says whether this server can take a new certificate:
+/// true only when it serves TLS from a configured chain/key pair.
+pub fn capabilities_response(certificate_install: bool) -> Vec<u8> {
     let caps = CAPABILITIES
         .iter()
+        .copied()
+        .chain(certificate_install.then_some(crate::certinstall::CAPABILITY))
         .map(|c| format!("\"{c}\""))
         .collect::<Vec<_>>()
         .join(",");
@@ -292,8 +308,58 @@ mod tests {
     }
 
     #[test]
+    fn install_certificate_is_post_only() {
+        let p = "/system_http_api/API_REV01/InstallCertificate";
+        assert_eq!(classify("POST", p, 0), Action::InstallCertificate);
+        assert_eq!(classify("post", p, 0), Action::InstallCertificate);
+        assert_eq!(
+            classify("POST", &format!("{p}?x=1"), 0),
+            Action::InstallCertificate
+        );
+        for m in ["GET", "PUT", "DELETE", "PATCH"] {
+            assert_eq!(classify(m, p, 0), Action::MethodNotAllowed, "{m}");
+        }
+        assert_eq!(
+            classify("POST", "/system_http_api/API_REV01/InstallCertificates", 0),
+            Action::NotFound
+        );
+    }
+
+    fn caps_of(r: &[u8]) -> serde_json::Value {
+        let r = s(r);
+        let body = r.split("\r\n\r\n").nth(1).unwrap().to_string();
+        serde_json::from_str(&body).expect("capabilities body is JSON")
+    }
+
+    #[test]
+    fn certificate_install_is_declared_only_with_configured_tls() {
+        let with = caps_of(&capabilities_response(true));
+        let without = caps_of(&capabilities_response(false));
+        let has = |v: &serde_json::Value| {
+            v["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "certificate_install")
+        };
+        assert!(has(&with), "{with}");
+        assert!(!has(&without), "{without}");
+        // the other fields and the three standing capabilities are unchanged
+        for v in [&with, &without] {
+            assert_eq!(v["contract"], 1);
+            assert_eq!(v["firmware"], "tuxweb/0.1.0");
+            assert_eq!(v["panel_model"], "TUXW");
+            for c in CAPABILITIES {
+                assert!(v["capabilities"].as_array().unwrap().iter().any(|x| x == c));
+            }
+        }
+        assert_eq!(with["capabilities"].as_array().unwrap().len(), 4);
+        assert_eq!(without["capabilities"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
     fn capability_body_has_the_settled_fields() {
-        let r = s(&capabilities_response());
+        let r = s(&capabilities_response(false));
         assert!(r.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(r.contains("Content-Type: application/json\r\n"));
         let body = r.split("\r\n\r\n").nth(1).unwrap();

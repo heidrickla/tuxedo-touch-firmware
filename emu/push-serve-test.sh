@@ -8,7 +8,11 @@
 #     ArmWithCode / DisarmWithCode (token, plaintext form body, user code at
 #     +0x0C) which return Sucess only once the panel CONFIRMS by a state flip;
 #   * the negatives: arm without a token is 401, arm without a code is 400;
-#   * the 80->301 leg preserves the path.
+#   * the 80->301 leg preserves the path;
+#   * TLS=1: InstallCertificate replaces the served pair without a restart --
+#     the next connection is served the new leaf, the old CA no longer
+#     verifies, the subscriber connected before the install keeps receiving,
+#     and every later step runs against the new certificate.
 #
 # A reactive fake /tuxedo answers the 500 with a registration + Ready, turns an
 # arm command into an Armed status and a disarm into Ready, and logs every
@@ -59,6 +63,19 @@ if [ "${TLS:-0}" = 1 ]; then
     export TUXWEB_CHAIN="$TLSDIR/chain.pem" TUXWEB_KEY="$TLSDIR/server.key"
     export TLS_CA="$TLSDIR/chain.pem"
     echo "  $(openssl x509 -in "$TLSDIR/chain.pem" -noout -subject -ext subjectAltName | tr '\n' ' ')"
+    # The pair step 5b installs: a second CA and a leaf it issued, PKCS#8 key.
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+        -keyout "$TLSDIR/ca2.key" -out "$TLSDIR/ca2.pem" -days 2 -subj "/CN=tuxweb-bench-ca2" \
+        -addext "basicConstraints=critical,CA:TRUE" \
+        -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null \
+        && openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$TLSDIR/new.key" 2>/dev/null \
+        && openssl req -new -key "$TLSDIR/new.key" -subj "/CN=tuxweb-bench-2" -out "$TLSDIR/new.csr" 2>/dev/null \
+        && printf 'subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' > "$TLSDIR/new.ext" \
+        && openssl x509 -req -in "$TLSDIR/new.csr" -CA "$TLSDIR/ca2.pem" -CAkey "$TLSDIR/ca2.key" \
+            -set_serial 2 -days 2 -extfile "$TLSDIR/new.ext" -out "$TLSDIR/new-leaf.pem" 2>/dev/null \
+        && cat "$TLSDIR/new-leaf.pem" "$TLSDIR/ca2.pem" > "$TLSDIR/new-chain.pem" \
+        || { echo "ABORT: openssl could not make the pair to install"; exit 1; }
+    cp "$TLSDIR/chain.pem" "$TLSDIR/old-chain.pem"
 fi
 
 say "2. reactive fake /tuxedo, then tuxweb"
@@ -121,6 +138,35 @@ step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/GetCapabilities" - - 200
 
 say "5. GetSecurityStatus (token): disarmed"
 step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/GetSecurityStatus" - "$TOKEN" 200 '"armed":false'
+
+if [ "${TLS:-0}" = 1 ]; then
+    say "5b. InstallCertificate: a new pair, served from the next connection, no restart"
+    step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/GetCapabilities" - - 200 '"certificate_install"'
+    step python3 "$CHK" certinstall "127.0.0.1:$PORT" "$API/InstallCertificate" \
+      "$TLSDIR/new-chain.pem" "$TLSDIR/new.key" - 401 -
+    step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/InstallCertificate" - "$TOKEN" 405 -
+    step python3 "$CHK" certinstall "127.0.0.1:$PORT" "$API/InstallCertificate" \
+      "$TLSDIR/chain.pem" "$TLSDIR/new.key" "$TOKEN" 400 '"key_mismatch"'
+    step python3 "$CHK" certinstall "127.0.0.1:$PORT" "$API/InstallCertificate" \
+      "$TLSDIR/new-chain.pem" "$TLSDIR/new.key" "$TOKEN" 200 '"installed":true'
+    # every later step verifies against the new CA
+    export TLS_CA="$TLSDIR/ca2.pem"
+    step python3 "$CHK" servedleaf "127.0.0.1:$PORT" "$TLSDIR/new-leaf.pem"
+    TLS_CA="$TLSDIR/old-chain.pem" step python3 "$CHK" tlsrefused "127.0.0.1:$PORT"
+    if kill -0 "$SRV" 2>/dev/null && cmp -s "$TLSDIR/chain.pem.prev" "$TLSDIR/old-chain.pem" \
+        && [ "$(stat -c %a "$TLSDIR/server.key")" = 600 ] \
+        && [ "$(openssl x509 -in "$TLSDIR/chain.pem" -noout -fingerprint -sha256)" \
+            = "$(openssl x509 -in "$TLSDIR/new-leaf.pem" -noout -fingerprint -sha256)" ]; then
+        echo "  PASS: same server process; chain.pem leads with the new leaf, the old chain"
+        echo "        is chain.pem.prev, the key is 0600"
+    else
+        echo "  FAIL: server restarted, or the files on disk are not the rotated pair"; fail=1
+    fi
+else
+    say "5b. InstallCertificate on a plaintext bench: 409, nothing to replace"
+    step python3 "$CHK" certinstall "127.0.0.1:$PORT" "$API/InstallCertificate" \
+      /dev/null /dev/null "$TOKEN" 409 '"tls_not_configured"'
+fi
 
 say "6. ArmWithCode (token, plaintext form): Sucess only once the panel confirms"
 step python3 "$CHK" apicall POST "127.0.0.1:$PORT" "$API/AdvancedSecurity/ArmWithCode" \

@@ -3369,6 +3369,62 @@ issues a token against the running server (200), revokes it (401), and the
 original still works. `cargo test` 117. ARM build `0b1c357c`, not on the panel:
 it goes into the next image whenever one is worth a flash.
 
+#### 8d.4 — `InstallCertificate`: a new certificate without a restart (in the tree, not flashed)
+
+Home Assistant issues the panel's TLS certificate and installs it with one
+button. A restart to pick up new files would spend `supervis`'s relaunch budget
+(24 per boot, then a hardware reset), so tuxweb takes the pair over its API and
+swaps the live `ServerConfig` in memory (`certinstall.rs`).
+
+    POST /system_http_api/API_REV01/InstallCertificate
+    Authorization: Bearer <token>
+    Content-Type: application/json
+
+    {"chain": "<PEM: leaf first, then the issuing CA>", "key": "<PEM PKCS#8 private key>"}
+
+    200  {"installed":true,"not_after":"2027-11-06T12:00:00Z","sha256":"<leaf DER SHA-256, lowercase hex>"}
+
+| Answer | When |
+|---|---|
+| `405` | any method but `POST`, the same body the other endpoints give |
+| `401` | no valid token, the same empty `401` as arm/disarm |
+| `409 {"error":"tls_not_configured"}` | the serve conf names no `chain=`/`key=` (the plaintext bench) |
+| `403 {"error":"tls_required"}` | the request arrived over plaintext |
+| `413 {"error":"too_large"}` | `Content-Length` over 16384, judged before the body is read |
+| `400 {"error":"bad_json"}` | not `application/json`, not that object, or shorter than its `Content-Length` |
+| `400 {"error":"bad_chain"}` | not 1 to 4 certificates, or one of them is not an X.509 certificate |
+| `400 {"error":"bad_key"}` | the key does not parse or is not a type rustls signs with |
+| `400 {"error":"key_mismatch"}` | the key's public half is not the leaf's SubjectPublicKeyInfo, compared byte for byte |
+| `400 {"error":"not_yet_valid"}` / `{"error":"expired"}` | the leaf's validity window does not cover the panel's clock |
+| `400 {"error":"no_san"}` | the leaf carries no subjectAltName |
+| `500 {"error":"write_failed"}` | a file write failed; anything already replaced is put back and the old pair stays served |
+
+On success the files the serve conf names are replaced, key first and mode
+0600, each written as `<path>.new`, fsynced and renamed over, with the
+directory fsynced after. The pair being replaced is kept as `<path>.prev`
+first (a rotation of one). What is written is re-encoded from the parsed DER,
+so the files hold exactly the certificates and key that were checked. Only
+then does the live config change. Each accepted connection reads the current
+config once and keeps it, so new connections get the new pair and a push
+subscriber connected before the install keeps its session. One install runs at
+a time, and the log line names the outcome and the leaf's sha256.
+
+`GetCapabilities` declares `certificate_install` only when the server serves TLS
+from a configured chain/key pair (§4.10.6), so a client offers the button only
+where it works.
+
+Unit tests cover the routing, every refusal above, the success path through
+temporary files (contents, `.prev`, mode 0600, the relaunch-shaped reload), the
+rollback when the chain write fails after the key was replaced, the capability
+list with and without TLS, and a real rustls client: a connection opened before
+the install keeps echoing on the old pair while a new one is served the new
+leaf and the old CA no longer verifies. Harness step 5b (`TLS=1`) installs a
+second CA's leaf on the running server: `401` without a token, `405` on `GET`,
+`400 key_mismatch`, then `200` with the leaf's sha256; the next connection is
+served that leaf, the old CA fails, the process is the same one, and every later
+step, plus the subscriber that connected at step 3, runs on across the install.
+Without TLS, step 5b gets `409`. `cargo test` 148.
+
 ### Stage 9 — Decommission
 
 **Change:** remove the vendor binary from the built image; remove proxy mode and
@@ -3532,6 +3588,10 @@ the integration has already shipped and fixed once.
       "panel_model": "TUXW",
       "capabilities": ["panel_link_state", "command_result", "status_refresh"]
     }
+
+`"certificate_install"` is added to the list when the server serves TLS from a
+configured chain/key pair, and only then: it says `InstallCertificate` (§8d.4)
+will work on this panel.
 
 **Inside `API_REV01`, not outside.** MEASURED on the live panel while it was
 still running stock: an unknown endpoint there returns a 20-byte

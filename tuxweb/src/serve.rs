@@ -66,12 +66,13 @@ pub struct Config {
     /// The token store path (`auth.rs`). The push stream and the write API are
     /// gated on a token from it (§4.10.1); an empty store authenticates nobody.
     pub token_store: String,
-    /// TLS for the push + API listener (this is the `:443` leg on the panel).
-    /// `None` serves plaintext -- only for the bench. rustls on this hardware
-    /// has been proven since stage 3; `main::tls_from_env` builds this from
-    /// `TUXWEB_CHAIN`/`TUXWEB_KEY` and exits rather than silently serving in the
-    /// clear if they are set but unusable.
-    pub tls: Option<Arc<rustls::ServerConfig>>,
+    /// TLS for the push + API listener (this is the `:443` leg on the panel),
+    /// with the chain and key paths it was loaded from so `InstallCertificate`
+    /// can replace them. `None` serves plaintext -- only for the bench. rustls
+    /// on this hardware has been proven since stage 3; `main` builds this from
+    /// the serve conf's `chain=`/`key=` or from `TUXWEB_CHAIN`/`TUXWEB_KEY`, and
+    /// refuses to serve in the clear if they are set but unusable.
+    pub tls: Option<Arc<crate::certinstall::LiveTls>>,
     /// How long the reply queue may stay silent before tuxweb assumes the
     /// broadcast has been switched off underneath it and registers again.
     ///
@@ -151,6 +152,34 @@ fn write_parts(sink: &mut Sink, parts: &[crate::frame::Part]) -> bool {
         p.encode(&mut out);
     }
     sink.write_all(&out).is_ok() && sink.flush().is_ok()
+}
+
+/// What a typed-API request needs next, decided from its route and token alone.
+#[derive(Debug, PartialEq, Eq)]
+enum ApiNext {
+    /// Answer with these bytes.
+    Reply(Vec<u8>),
+    Status,
+    Security(crate::api::Action),
+    InstallCertificate,
+}
+
+/// Route a typed-API request. The capability answer and the 404/405 need no
+/// token; everything else answers [`unauthorized`] without a valid one.
+fn api_next(action: crate::api::Action, authed: bool, can_install: bool) -> ApiNext {
+    use crate::api::Action;
+    match action {
+        // Session-optional: 200 on custom is how a client tells us apart from
+        // stock (§4.10.6), so it must not require a token.
+        Action::Capabilities => ApiNext::Reply(crate::api::capabilities_response(can_install)),
+        Action::MethodNotAllowed => ApiNext::Reply(crate::api::method_not_allowed()),
+        Action::NotFound => ApiNext::Reply(crate::api::not_found()),
+        // The rest require a token.
+        _ if !authed => ApiNext::Reply(unauthorized()),
+        Action::Status => ApiNext::Status,
+        a @ (Action::Arm { .. } | Action::Disarm) => ApiNext::Security(a),
+        Action::InstallCertificate => ApiNext::InstallCertificate,
+    }
 }
 
 /// `401`, a real status with an empty body -- shaped so a stream client sees the
@@ -422,7 +451,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
             // wraps the same socket; the handshake happens lazily on the first
             // read.
             let _ = raw.set_write_timeout(Some(Duration::from_secs(5)));
-            let mut sink = match Sink::accept(raw, acc_tls.as_ref()) {
+            // The config is read once here and the connection keeps it for its
+            // life, so an InstallCertificate changes new connections only.
+            let tls_now = acc_tls.as_ref().map(|t| t.current());
+            let mut sink = match Sink::accept(raw, tls_now.as_ref()) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("serve: {peer}: {e}");
@@ -470,18 +502,24 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
             // The typed API.
             let resp = if target.starts_with("/system_http_api/") {
-                match crate::api::classify(method, target, 0) {
-                    // Session-optional: 200 on custom is how a client tells us
-                    // apart from stock (§4.10.6), so it must not require a token.
-                    crate::api::Action::Capabilities => crate::api::capabilities_response(),
-                    crate::api::Action::MethodNotAllowed => crate::api::method_not_allowed(),
-                    crate::api::Action::NotFound => crate::api::not_found(),
-                    // The rest require a token.
-                    _ if !authed => unauthorized(),
-                    crate::api::Action::Status => {
+                let action = crate::api::classify(method, target, 0);
+                match api_next(action, authed, acc_tls.is_some()) {
+                    ApiNext::Reply(r) => r,
+                    ApiNext::Status => {
                         json_response("200 OK", acc_state.lock().unwrap().status_json().as_bytes())
                     }
-                    action @ (crate::api::Action::Arm { .. } | crate::api::Action::Disarm) => {
+                    ApiNext::InstallCertificate => {
+                        let (resp, log) = crate::certinstall::respond(
+                            acc_tls.as_deref(),
+                            sink.is_encrypted(),
+                            &head,
+                            |n| read_body(&mut sink, &body0, n),
+                            crate::certinstall::now_unix(),
+                        );
+                        println!("serve: {peer}: {log}");
+                        resp
+                    }
+                    ApiNext::Security(action) => {
                         let body = read_body(&mut sink, &body0, content_length(&head));
                         let form = String::from_utf8_lossy(&body);
                         // One command in flight at a time, as when the accept
@@ -585,6 +623,56 @@ pub fn run(cfg: Config) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const INSTALL: &str = "/system_http_api/API_REV01/InstallCertificate";
+
+    #[test]
+    fn install_certificate_needs_the_token_and_post() {
+        use crate::api::{classify, Action};
+        let route = |m: &str, authed: bool| api_next(classify(m, INSTALL, 0), authed, true);
+        // without a token: the same 401 the arm/disarm endpoints give
+        assert_eq!(route("POST", false), ApiNext::Reply(unauthorized()));
+        assert_eq!(
+            api_next(
+                classify(
+                    "POST",
+                    "/system_http_api/API_REV01/AdvancedSecurity/ArmWithCode",
+                    0
+                ),
+                false,
+                true
+            ),
+            ApiNext::Reply(unauthorized())
+        );
+        assert_eq!(route("POST", true), ApiNext::InstallCertificate);
+        // any other method is the 405 the other endpoints give
+        assert_eq!(
+            route("GET", true),
+            ApiNext::Reply(crate::api::method_not_allowed())
+        );
+        assert_eq!(
+            route("PUT", false),
+            ApiNext::Reply(crate::api::method_not_allowed())
+        );
+        // a plaintext bench routes it too; certinstall answers 409 there
+        assert_eq!(
+            api_next(Action::InstallCertificate, true, false),
+            ApiNext::InstallCertificate
+        );
+    }
+
+    #[test]
+    fn the_capability_answer_follows_the_tls_setup_and_needs_no_token() {
+        use crate::api::Action;
+        assert_eq!(
+            api_next(Action::Capabilities, false, true),
+            ApiNext::Reply(crate::api::capabilities_response(true))
+        );
+        assert_eq!(
+            api_next(Action::Capabilities, false, false),
+            ApiNext::Reply(crate::api::capabilities_response(false))
+        );
+    }
 
     #[test]
     fn a_zero_session_is_refused() {
