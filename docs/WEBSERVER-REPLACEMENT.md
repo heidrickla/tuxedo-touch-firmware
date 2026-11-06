@@ -3442,7 +3442,7 @@ Without TLS, step 5b gets `409`. `cargo test` 148.
 | `GET /login`, `POST /login` | the sign-in form; a success is `303 /` with the session cookie |
 | `POST /logout` | ends the session and clears the cookie |
 | `GET /ui/events` | Server-Sent Events: a `state` event whenever the view changes, a keep-alive comment every 15 s |
-| `POST /ui/arm` | `mode=stay|away|night`, no code: `p2 = 0xFFFF` |
+| `POST /ui/arm` | `mode=stay|away|instant`, no code: `p2 = 0xFFFF`; `instant` sends command 4, which the VISTA-21iP arms as INSTANT (`ARMED *INSTANT* May Exit Now 60`, measured 2026-11-06) |
 | `POST /ui/disarm` | `code=NNNN`, four digits; `0000`, empty or malformed is `400` and nothing is sent |
 | `GET /ui/assets/{app.css,app.js,icon.svg}` | the embedded assets |
 | anything else outside the API and the push path | `404`; port 80 stays `301` only |

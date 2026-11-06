@@ -503,7 +503,7 @@ pub struct View {
     pub armed: Option<bool>,
     /// Seconds left in the exit delay, as the panel counts them.
     pub countdown: Option<u32>,
-    /// `stay`, `away` or `night`, when the panel's display names one.
+    /// `stay`, `away` or `instant`, when the panel's display names one.
     pub mode: Option<&'static str>,
     /// The keypad LCD, one entry per line.
     pub lcd: Vec<String>,
@@ -530,7 +530,7 @@ pub fn countdown(status: &str) -> Option<u32> {
 fn mode_of(lcd: &str, status: &str) -> Option<&'static str> {
     let l = lcd.to_ascii_uppercase();
     let s = status.to_ascii_uppercase();
-    for (word, mode) in [("NIGHT", "night"), ("AWAY", "away"), ("STAY", "stay")] {
+    for (word, mode) in [("INSTANT", "instant"), ("AWAY", "away"), ("STAY", "stay")] {
         if l.contains(word) || s.contains(word) {
             return Some(mode);
         }
@@ -977,7 +977,9 @@ fn arm(req: &Request<'_>, user: &str, body: &[u8], panel: &dyn Panel) -> Vec<u8>
     let code = match form_field(body, "mode").as_deref() {
         Some("stay") => cmd::ARM_STAY,
         Some("away") => cmd::ARM_AWAY,
-        Some("night") => cmd::ARM_NIGHT,
+        // Command 4 is the VISTA-21iP's Instant: Stay with no entry delay,
+        // after the same exit delay (measured on the panel 2026-11-06).
+        Some("instant") => cmd::ARM_NIGHT,
         _ => return json("400 Bad Request", &[], false, "Unknown arming mode."),
     };
     if panel.view().armed == Some(true) {
@@ -1494,7 +1496,7 @@ mod tests {
         let now = Instant::now();
         let (cookie, csrf) = sign_in(&ui, &panel, now);
         let tok = format!("X-CSRF-Token: {csrf}");
-        for (mode, code) in [("stay", 2), ("away", 1), ("night", 4)] {
+        for (mode, code) in [("stay", 2), ("away", 1), ("instant", 4)] {
             let body = format!("mode={mode}");
             let r = bytes(call(
                 &ui,
@@ -1856,6 +1858,13 @@ mod tests {
         assert_eq!(View::from_state(&st).phase, "alarm");
         st.observe(&status_raw(21, 1, b"\xff2Entry Delay Active"), 0);
         assert_eq!(View::from_state(&st).phase, "other");
+
+        // Instant, as the panel displayed it on 2026-11-06: it counts down too
+        st.observe(&status_raw(20, 0, b"ARMED *INSTANT*|May Exit Now  50"), 0);
+        st.observe(&status_raw(21, 1, b"\xff250  Secs Remaining"), 0);
+        let v = View::from_state(&st);
+        assert_eq!(v.mode, Some("instant"));
+        assert_eq!(v.headline, "Arming instant, 50 s to leave");
 
         // no mode on the display: the countdown alone
         st.observe(&status_raw(20, 0, b"PLEASE WAIT|"), 0);
