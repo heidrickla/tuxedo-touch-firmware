@@ -459,6 +459,14 @@ and left sitting there saying the opposite of the truth.
 - **REST `GetSecurityStatus` lags badly.** During a measured exit delay it
   reported `34  Secs Remaining` six polls running across 30 s while the push
   stream counted down correctly. Use the stream for state.
+- **A killed tuxweb comes back in up to ten minutes, not five seconds.**
+  Measured 2026-11-06 on the live panel: plain `kill` (SIGTERM) of tuxweb at
+  08:50 UTC, relaunch logged `E_SUPVTRD_BARRACUDA_RESTART-1` at 08:56:05. The
+  5 s path in `PUSH-STREAM-AUTH.md` R1 is the vendor's `sigHandler` posting
+  message 7; tuxweb posts nothing, so only `SupervisTimeout`'s 600 s pass
+  (`getProcessPid("Barracuda") == 0`) relaunches it. Plan for the web API and
+  push stream to be down until that pass, and wait for it: it still spends
+  one unit.
 - `supervis` allows **24 relaunches then a hardware reset**, and the counter is
   never zeroed *while the panel is up* — a **boot** clears it, because it lives
   in `.bss` and `supervis` restarts with the system. Both halves matter: the
