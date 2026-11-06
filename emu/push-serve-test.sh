@@ -7,7 +7,7 @@
 #   * the typed API: GetCapabilities (no token), GetSecurityStatus (token),
 #     ArmWithCode / DisarmWithCode (token, plaintext form body, user code at
 #     +0x0C) which return Sucess only once the panel CONFIRMS by a state flip;
-#   * the negatives: arm without a token is 401, arm without a code is 400;
+#   * the negatives: arm without a token is 401, disarm without a code is 400;
 #   * the 80->301 leg preserves the path;
 #   * TLS=1: InstallCertificate replaces the served pair without a restart --
 #     the next connection is served the new leaf, the old CA no longer
@@ -178,11 +178,13 @@ step python3 "$CHK" apicall POST "127.0.0.1:$PORT" "$API/AdvancedSecurity/Disarm
   'pID=1&ucode=1234&operation=set' "$TOKEN" 200 '"Result":{"Result":"Disarmed"}'
 step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/GetSecurityStatus" - "$TOKEN" 200 '"armed":false'
 
-say "8. negatives: no token -> 401, no user code -> 400 (nothing sent)"
+say "8. negatives: no token -> 401, a disarm with no user code -> 400 (nothing sent)"
+# An ARM with no ucode is not a negative any more: it arms with the no-code
+# sentinel 0xFFFF, as the touchscreen does (emu/ui-serve-test.sh proves it).
 step python3 "$CHK" apicall POST "127.0.0.1:$PORT" "$API/AdvancedSecurity/ArmWithCode" \
   'arming=stay&pID=1&ucode=1234&operation=set' - 401 -
-step python3 "$CHK" apicall POST "127.0.0.1:$PORT" "$API/AdvancedSecurity/ArmWithCode" \
-  'arming=stay&pID=1&operation=set' "$TOKEN" 400 'user code'
+step python3 "$CHK" apicall POST "127.0.0.1:$PORT" "$API/AdvancedSecurity/DisarmWithCode" \
+  'pID=1&operation=set' "$TOKEN" 400 'user code'
 step python3 "$CHK" apicall GET "127.0.0.1:$PORT" "$API/Nope" - "$TOKEN" 404 -
 
 say "9. the 80->301 leg preserves the path"

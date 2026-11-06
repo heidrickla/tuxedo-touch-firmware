@@ -34,6 +34,7 @@ mod session;
 mod shim;
 #[cfg(test)]
 mod testcert;
+mod ui;
 mod x509;
 
 use std::io::{Read, Write};
@@ -466,6 +467,8 @@ fn main() {
                                 token_store: sc.token_store,
                                 tls,
                                 silence: sc.silence,
+                                tuxedo: sc.tuxedo,
+                                accounts: sc.accounts,
                             };
                             match serve::run(cfg) {
                                 Ok(()) => std::process::exit(0),
@@ -831,6 +834,16 @@ fn main() {
                 .filter(|&s| s > 0)
                 .map(std::time::Duration::from_secs)
                 .unwrap_or(serve::DEFAULT_SILENCE),
+            // The sign-in page's account list and the binary its key is read
+            // from; the bench points these at throwaway copies.
+            tuxedo: std::env::var("TUXWEB_TUXEDO")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| conf::TUXEDO.to_string()),
+            accounts: std::env::var("TUXWEB_ACCOUNTS")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| accounts::STORE_PATH.to_string()),
         };
         match serve::run(cfg) {
             Ok(()) => std::process::exit(0),

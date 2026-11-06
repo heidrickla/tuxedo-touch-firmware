@@ -332,6 +332,15 @@ impl LiveTls {
         Arc::clone(&self.live.read().unwrap_or_else(|p| p.into_inner()))
     }
 
+    /// The served leaf's `notAfter`, RFC 3339 UTC, read from the chain file.
+    /// An install writes the files before it swaps the config, so the file is
+    /// the pair being served. `None` if the file cannot be read or parsed.
+    pub fn not_after(&self) -> Option<String> {
+        let pem = std::fs::read(&self.chain_path).ok()?;
+        let leaf = CertificateDer::pem_slice_iter(&pem).next()?.ok()?;
+        crate::x509::parse(leaf.as_ref()).map(|l| l.not_after_rfc3339)
+    }
+
     /// Validate, write and swap. Never restarts, execs or exits.
     pub fn install(&self, body: &[u8], now: i64) -> Result<Installed, Failure> {
         let _one = self.one.lock().unwrap_or_else(|p| p.into_inner());
@@ -808,6 +817,9 @@ mod tests {
     fn an_install_writes_the_pair_rotates_prev_and_swaps_the_config() {
         let b = Bench::new("ok");
         let before = b.live.current();
+        // the status page's footer reads the served leaf's expiry from the file
+        let a_leaf = crate::x509::parse(&b.a.leaf_der).unwrap();
+        assert_eq!(b.live.not_after(), Some(a_leaf.not_after_rfc3339.clone()));
         let new = Pair::new("CA B");
         let body = new.body();
         let (r, log) = respond(
@@ -823,6 +835,7 @@ mod tests {
         assert_eq!(v["sha256"], sha256_hex(&new.leaf_der));
         let leaf = crate::x509::parse(&new.leaf_der).unwrap();
         assert_eq!(v["not_after"], leaf.not_after_rfc3339.as_str());
+        assert_eq!(b.live.not_after(), Some(leaf.not_after_rfc3339.clone()));
         assert_eq!(v.as_object().unwrap().len(), 3, "{v}");
         assert!(
             log.contains(&sha256_hex(&new.leaf_der)) && !log.contains("PRIVATE"),

@@ -41,7 +41,15 @@ pub struct ServeConf {
     pub session: u32,
     /// Seconds of reply-queue silence before re-registering (`serve.rs`).
     pub silence: std::time::Duration,
+    /// The `/tuxedo` binary the account store's key is read out of (`ui.rs`
+    /// sign-in, `accounts::Source`).
+    pub tuxedo: String,
+    /// The account store the sign-in page checks against.
+    pub accounts: String,
 }
+
+/// Where `/tuxedo` lives on the panel.
+pub const TUXEDO: &str = "/tuxedo";
 
 /// Parse `key=value` lines. `#` comments and blank lines are ignored; unknown
 /// keys are an error so a typo cannot silently mean "default". Every setting
@@ -60,7 +68,7 @@ pub fn parse(text: &str) -> Result<ServeConf, String> {
         let k = k.trim();
         match k {
             "bind" | "redirect_bind" | "chain" | "key" | "token_store" | "quickarm" | "session"
-            | "silence" => {}
+            | "silence" | "tuxedo" | "accounts" => {}
             other => return Err(format!("line {}: unknown key {other:?}", n + 1)),
         }
         kv.insert(k.to_string(), v.trim().to_string());
@@ -97,6 +105,8 @@ pub fn parse(text: &str) -> Result<ServeConf, String> {
         quickarm: get("quickarm").unwrap_or_else(|| crate::session::QUICKARM_STATE.into()),
         session,
         silence,
+        tuxedo: get("tuxedo").unwrap_or_else(|| TUXEDO.into()),
+        accounts: get("accounts").unwrap_or_else(|| crate::accounts::STORE_PATH.into()),
     })
 }
 
@@ -141,6 +151,8 @@ mod tests {
         assert_eq!(c.session, 4242);
         assert!(c.chain.is_none() && c.key.is_none());
         assert_eq!(c.silence, crate::serve::DEFAULT_SILENCE);
+        assert_eq!(c.tuxedo, "/tuxedo");
+        assert_eq!(c.accounts, crate::accounts::STORE_PATH);
         // the bench sets it short; zero is refused (it would re-register every tick)
         assert_eq!(parse("silence=8").unwrap().silence.as_secs(), 8);
         assert!(parse("silence=0").unwrap_err().contains("non-zero"));
@@ -157,6 +169,11 @@ mod tests {
         assert_eq!(c.redirect_bind.as_deref(), Some("127.0.0.1:48081"));
         assert_eq!(c.chain.as_deref(), Some("/tmp/c.pem"));
         assert_eq!(c.session, 7);
+        let c = parse("tuxedo=/tmp/tux\naccounts=/tmp/acct.enc\n").unwrap();
+        assert_eq!(
+            (c.tuxedo.as_str(), c.accounts.as_str()),
+            ("/tmp/tux", "/tmp/acct.enc")
+        );
         // "none" switches the redirect listener off
         assert_eq!(parse("redirect_bind=none").unwrap().redirect_bind, None);
     }

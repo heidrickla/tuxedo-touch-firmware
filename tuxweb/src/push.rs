@@ -266,11 +266,13 @@ impl PanelState {
         on_reply(raw, quick_arm)
     }
 
+    /// The latest status (a 21, or a 22 while the VISTA reports itself not
+    /// online), read the status-path way: state byte and text, msgType, `+0x08`.
+    pub fn status_reply(&self) -> Option<Reply> {
+        self.last_status.as_ref().and_then(|r| Reply::parse(r))
+    }
+
     /// The current keypad LCD text (msgType 20 payload, raw), if one has been seen.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "staged: tested, not yet called from main")
-    )]
     pub fn console_text(&self) -> Option<Vec<u8>> {
         self.last_20
             .as_ref()

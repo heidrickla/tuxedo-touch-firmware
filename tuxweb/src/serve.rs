@@ -32,10 +32,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::ipc::{cmd, Command, Reply, COMMAND_LEN};
+use crate::ipc::{cmd, Command, Reply, COMMAND_LEN, NO_CODE};
 use crate::mq::{Queue, COMMANDS, REPLIES};
 use crate::push::{self, PanelState};
 use crate::shim::Sink;
+use crate::ui::{self, Outcome};
 
 /// The vendor push path. A GET here subscribes to the stream.
 const PUSH_PATH: &str = "/SimpleDebugger.interface/";
@@ -85,6 +86,10 @@ pub struct Config {
     /// means the flag is off. Re-registering flushes a queue that is empty
     /// anyway and yields a fresh 504, which the stream carries like any other.
     pub silence: Duration,
+    /// The `/tuxedo` binary the account store's key is read from, and the
+    /// account store the sign-in page checks (`accounts::Source`).
+    pub tuxedo: String,
+    pub accounts: String,
 }
 
 /// Default silence before a re-register: four idle status periods.
@@ -225,7 +230,7 @@ fn read_body(sink: &mut Sink, already: &[u8], want: usize) -> Vec<u8> {
 }
 
 /// Get a value from an `application/x-www-form-urlencoded` body, url-decoded.
-fn form_get(body: &str, key: &str) -> Option<String> {
+pub(crate) fn form_get(body: &str, key: &str) -> Option<String> {
     for pair in body.split('&') {
         if let Some((k, v)) = pair.split_once('=') {
             if k == key {
@@ -284,10 +289,99 @@ fn confirm(state: &Arc<Mutex<PanelState>>, target: u8) -> bool {
     }
 }
 
-/// Serve an arm or disarm: send the command, then wait for the panel to confirm
-/// it acted (a state-byte flip on the push stream). The pin comes from the
-/// request body (`ucode`), as the consumer sends it. Response keeps the vendor
-/// JSON shapes (§4.10.4): arm's inner key is `Response`, disarm's is `Result`.
+/// What an API arm or disarm asks the panel to do, decided from the route and
+/// the form alone.
+#[derive(Debug, PartialEq, Eq)]
+struct SecurityCommand {
+    code: u32,
+    /// `+0x0C`: the user code, or [`NO_CODE`] for an arm without one.
+    p2: u32,
+    /// The state byte that confirms it: `0xFF` armed/arming, `0xFE` disarmed.
+    target: u8,
+    disarm: bool,
+}
+
+fn refuse(msg: &str) -> Vec<u8> {
+    json_response(
+        "400 Bad Request",
+        format!("{{\"Status\":\"Failure\",\"Result\":{{\"Response\":\"{msg}\"}}}}").as_bytes(),
+    )
+}
+
+/// The command an API arm or disarm sends, or the answer that refuses it before
+/// anything is sent.
+///
+/// Arming takes no code: a `ucode` that is absent, empty or 0 sends
+/// [`NO_CODE`], as Barracuda's `/handlerequest.html` did for arm Types 1, 2
+/// and 4 and as the touchscreen does. A code that is sent is passed through.
+/// Disarming needs one: missing, 0 or not a number is refused with 400, because
+/// code 0 is the literal code 0000 and the declined path changes panel state
+/// before its own guard (register.rs).
+fn security_command(action: &crate::api::Action, form: &str) -> Result<SecurityCommand, Vec<u8>> {
+    let ucode = form_get(form, "ucode");
+    let ucode = ucode.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    match action {
+        crate::api::Action::Arm { .. } => {
+            let level = form_get(form, "arming").unwrap_or_default();
+            let p2 = match ucode.map(str::parse::<u32>) {
+                None | Some(Ok(0)) => NO_CODE,
+                Some(Ok(n)) => n,
+                Some(Err(_)) => return Err(refuse("the user code is not a number")),
+            };
+            Ok(SecurityCommand {
+                code: crate::api::arm_code_for(&level),
+                p2,
+                target: 0xFF,
+                disarm: false,
+            })
+        }
+        crate::api::Action::Disarm => match ucode.and_then(|v| v.parse::<u32>().ok()) {
+            None | Some(0) => Err(refuse("a user code is required")),
+            Some(n) => Ok(SecurityCommand {
+                code: cmd::DISARM,
+                p2: n,
+                target: 0xFE,
+                disarm: true,
+            }),
+        },
+        _ => Err(json_response(
+            "500 Internal Server Error",
+            b"{\"Status\":\"Failure\"}",
+        )),
+    }
+}
+
+/// Send one command and wait for the panel to confirm it acted (a state-byte
+/// flip on the push stream). The API and the pages both come through here.
+fn send_and_confirm(
+    commands: &Queue,
+    state: &Arc<Mutex<PanelState>>,
+    session: u32,
+    code: u32,
+    p2: u32,
+    target: u8,
+) -> Outcome {
+    let msg = Command {
+        head: session,
+        code,
+        p1: 0,
+        p2,
+    }
+    .encode();
+    if let Err(e) = commands.send(&msg) {
+        eprintln!("serve: command {code} send failed: {e}");
+        return Outcome::SendFailed;
+    }
+    if confirm(state, target) {
+        Outcome::Confirmed
+    } else {
+        Outcome::NotConfirmed
+    }
+}
+
+/// Serve an API arm or disarm: send the command, then wait for the panel to
+/// confirm it acted. Response keeps the vendor JSON shapes (§4.10.4): arm's
+/// inner key is `Response`, disarm's is `Result`.
 fn handle_security(
     action: &crate::api::Action,
     form: &str,
@@ -295,52 +389,90 @@ fn handle_security(
     commands: &Queue,
     state: &Arc<Mutex<PanelState>>,
 ) -> Vec<u8> {
-    let ucode: u32 = form_get(form, "ucode")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    // A command with code 0 is DECLINED, and the declined path changes panel
-    // state before its own guard (register.rs) -- refuse before sending.
-    if ucode == 0 {
-        return json_response(
-            "400 Bad Request",
-            b"{\"Status\":\"Failure\",\"Result\":{\"Response\":\"a user code is required\"}}",
-        );
-    }
-    let (code, target, disarm) = match action {
-        crate::api::Action::Arm { .. } => {
-            let level = form_get(form, "arming").unwrap_or_default();
-            (crate::api::arm_code_for(&level), 0xFFu8, false)
-        }
-        crate::api::Action::Disarm => (cmd::DISARM, 0xFEu8, true),
-        _ => return json_response("500 Internal Server Error", b"{\"Status\":\"Failure\"}"),
+    let c = match security_command(action, form) {
+        Ok(c) => c,
+        Err(r) => return r,
     };
-    let msg = Command {
-        head: session,
-        code,
-        p1: 0,
-        p2: ucode,
-    }
-    .encode();
-    if let Err(e) = commands.send(&msg) {
-        eprintln!("serve: command {code} send failed: {e}");
-        return json_response(
+    match send_and_confirm(commands, state, session, c.code, c.p2, c.target) {
+        Outcome::SendFailed => json_response(
             "502 Bad Gateway",
             b"{\"Status\":\"Failure\",\"Result\":{\"Response\":\"could not reach the panel\"}}",
-        );
-    }
-    if !confirm(state, target) {
+        ),
         // Sent, but not confirmed within the ceiling. Say so rather than the
         // vendor's unconditional Sucess -- the whole point of command_result.
-        return json_response(
+        Outcome::NotConfirmed => json_response(
             "504 Gateway Timeout",
             b"{\"Status\":\"Failure\",\"Result\":{\"Response\":\"command sent but not confirmed\"}}",
-        );
+        ),
+        Outcome::Confirmed if c.disarm => crate::api::disarm_success("Disarmed"),
+        Outcome::Confirmed => crate::api::arm_success(),
     }
-    if disarm {
-        crate::api::disarm_success("Disarmed")
-    } else {
-        crate::api::arm_success()
+}
+
+/// The serve mode as the browser pages see it (`ui::Panel`).
+struct ServePanel {
+    state: Arc<Mutex<PanelState>>,
+    commands: Arc<Queue>,
+    session: u32,
+    /// Shared with the API: one command in flight at a time.
+    security: Arc<Mutex<()>>,
+    accounts: crate::accounts::Source,
+    tls: Option<Arc<crate::certinstall::LiveTls>>,
+}
+
+impl ui::Panel for ServePanel {
+    fn view(&self) -> ui::View {
+        ui::View::from_state(&self.state.lock().unwrap_or_else(|p| p.into_inner()))
     }
+
+    fn command(&self, code: u32, p2: u32, target: u8) -> Outcome {
+        let _one = self.security.lock().unwrap_or_else(|p| p.into_inner());
+        send_and_confirm(&self.commands, &self.state, self.session, code, p2, target)
+    }
+
+    fn authenticate(&self, user: &str, password: &str) -> Result<String, ui::LoginError> {
+        match self.accounts.authenticate(user, password) {
+            Ok(Ok(name)) => Ok(name),
+            Ok(Err(why)) => Err(ui::LoginError::Denied(why)),
+            Err(e) => Err(ui::LoginError::Unavailable(e)),
+        }
+    }
+
+    fn cert_not_after(&self) -> Option<String> {
+        self.tls.as_ref()?.not_after()
+    }
+}
+
+/// An open `/ui/events` stream.
+struct UiStream {
+    sink: Sink,
+    session: String,
+    /// The view JSON this stream last received.
+    sent: String,
+}
+
+/// Bring every open event stream up to date with the current view; on a tick,
+/// also send a keep-alive and close the streams whose session has ended.
+/// Returns how many streams were closed.
+fn fan_out_ui(streams: &Mutex<Vec<UiStream>>, view: &str, ui: &ui::Ui, tick: bool) -> usize {
+    let now = Instant::now();
+    let mut ss = streams.lock().unwrap_or_else(|p| p.into_inner());
+    let before = ss.len();
+    ss.retain_mut(|s| {
+        if tick && !ui.session_alive(&s.session, now) {
+            return false;
+        }
+        let out = if s.sent != view {
+            s.sent = view.to_string();
+            ui::state_event(view)
+        } else if tick {
+            ui::KEEPALIVE.to_vec()
+        } else {
+            return true;
+        };
+        s.sink.write_all(&out).is_ok() && s.sink.flush().is_ok()
+    });
+    before - ss.len()
 }
 
 /// Register, serve the push stream from IPC for the window, unregister.
@@ -441,6 +573,23 @@ pub fn run(cfg: Config) -> Result<(), String> {
         None => println!("serve: *** listener is PLAINTEXT -- bench only ***"),
     }
     let acc_security = Arc::new(Mutex::new(()));
+    // The browser pages: sessions, the sign-in backoff, and the live streams.
+    let pages = Arc::new(ui::Ui::new());
+    let streams: Arc<Mutex<Vec<UiStream>>> = Arc::new(Mutex::new(Vec::new()));
+    let panel = Arc::new(ServePanel {
+        state: Arc::clone(&state),
+        commands: Arc::clone(&commands),
+        session: cfg.session,
+        security: Arc::clone(&acc_security),
+        accounts: crate::accounts::Source::new(&cfg.tuxedo, &cfg.accounts),
+        tls: cfg.tls.clone(),
+    });
+    println!(
+        "serve: pages on / (sign-in against {}, key from {})",
+        cfg.accounts, cfg.tuxedo
+    );
+    let acc_pages = Arc::clone(&pages);
+    let acc_streams = Arc::clone(&streams);
     // A thread per connection (`conn::serve`): a client that stalls in the
     // handshake or the head holds its own thread until the request deadline,
     // never the listener.
@@ -530,7 +679,52 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     }
                 }
             } else {
-                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+                // The browser pages; everything outside them is their 404.
+                let ip = peer
+                    .parse::<std::net::SocketAddr>()
+                    .map(|a| a.ip())
+                    .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+                let req = ui::Request {
+                    head: &head,
+                    peer: ip,
+                    encrypted: sink.is_encrypted(),
+                };
+                let reply = acc_pages.handle(
+                    &req,
+                    &mut |n| read_body(&mut sink, &body0, n),
+                    &*panel,
+                    Instant::now(),
+                );
+                match reply {
+                    ui::Reply::Bytes(b) => b,
+                    ui::Reply::Stream {
+                        head: stream_head,
+                        view,
+                        session,
+                    } => {
+                        let open = acc_streams.lock().unwrap_or_else(|p| p.into_inner()).len();
+                        if open >= ui::MAX_STREAMS {
+                            eprintln!("serve: {peer}: event stream refused, {open} open");
+                            ui::too_many_streams()
+                        } else {
+                            let mut first = stream_head;
+                            first.extend_from_slice(&ui::state_event(&view));
+                            if sink.write_all(&first).is_err() || sink.flush().is_err() {
+                                return;
+                            }
+                            sink.clear_deadline();
+                            acc_streams
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .push(UiStream {
+                                    sink,
+                                    session,
+                                    sent: view,
+                                });
+                            return;
+                        }
+                    }
+                }
             };
             let _ = sink.write_all(&resp);
             let _ = sink.flush();
@@ -550,7 +744,20 @@ pub fn run(cfg: Config) -> Result<(), String> {
     // diagnostic emission was dropped in silence, which is how a msgType 22
     // (the panel-offline status) went unrelayed from the cutover to v16.
     let mut undecoded_seen = std::collections::BTreeSet::new();
+    let mut last_tick = Instant::now();
     loop {
+        // The pages' live streams: every pass brings them up to date (at most
+        // one reader tick, 500 ms, behind a reply), and every STREAM_TICK sends
+        // a keep-alive and closes the streams whose session has ended.
+        let tick = last_tick.elapsed() >= ui::STREAM_TICK;
+        if tick {
+            last_tick = Instant::now();
+        }
+        let view = ui::View::from_state(&state.lock().unwrap()).to_json();
+        let closed = fan_out_ui(&streams, &view, &pages, tick);
+        if closed > 0 {
+            println!("serve: {closed} page stream(s) closed");
+        }
         if let Some(w) = cfg.window {
             if started.elapsed() >= w {
                 break;
@@ -675,6 +882,126 @@ mod tests {
     }
 
     #[test]
+    fn an_api_arm_without_a_code_sends_the_no_code_sentinel() {
+        use crate::api::Action;
+        let arm = Action::Arm { code: 0 };
+        let want = |code, p2| SecurityCommand {
+            code,
+            p2,
+            target: 0xFF,
+            disarm: false,
+        };
+        assert_eq!(
+            security_command(&arm, "arming=stay&pID=1&operation=set"),
+            Ok(want(cmd::ARM_STAY, 0xFFFF))
+        );
+        for form in [
+            "arming=away&pID=1&ucode=&operation=set",
+            "arming=away&pID=1&ucode=0&operation=set",
+            "arming=away&pID=1&ucode=%20&operation=set",
+        ] {
+            assert_eq!(
+                security_command(&arm, form),
+                Ok(want(cmd::ARM_AWAY, 0xFFFF)),
+                "{form}"
+            );
+        }
+        assert_eq!(
+            security_command(&arm, "arming=night&pID=1&operation=set"),
+            Ok(want(cmd::ARM_NIGHT, NO_CODE))
+        );
+        // a code that is sent still goes through, as the consumer sends it
+        assert_eq!(
+            security_command(&arm, "arming=stay&pID=1&ucode=1234&operation=set"),
+            Ok(want(cmd::ARM_STAY, 1234))
+        );
+        // garbage is refused, never read as "no code"
+        let r = security_command(&arm, "arming=stay&ucode=12x4").unwrap_err();
+        assert!(String::from_utf8(r).unwrap().starts_with("HTTP/1.1 400"));
+    }
+
+    #[test]
+    fn an_api_disarm_without_a_code_is_refused_before_sending() {
+        use crate::api::Action;
+        for form in [
+            "pID=1&operation=set",
+            "pID=1&ucode=&operation=set",
+            "pID=1&ucode=0&operation=set",
+            "pID=1&ucode=0000&operation=set",
+            "pID=1&ucode=abcd&operation=set",
+        ] {
+            let r =
+                String::from_utf8(security_command(&Action::Disarm, form).unwrap_err()).unwrap();
+            assert!(r.starts_with("HTTP/1.1 400"), "{form}: {r}");
+            assert!(r.contains("a user code is required"), "{form}: {r}");
+        }
+        assert_eq!(
+            security_command(&Action::Disarm, "pID=1&ucode=1234&operation=set"),
+            Ok(SecurityCommand {
+                code: cmd::DISARM,
+                p2: 1234,
+                target: 0xFE,
+                disarm: true,
+            })
+        );
+    }
+
+    #[test]
+    fn page_streams_get_each_change_once_and_close_with_their_session() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let mut live_client = std::net::TcpStream::connect(addr).unwrap();
+        let (live, _) = l.accept().unwrap();
+        let mut dead_client = std::net::TcpStream::connect(addr).unwrap();
+        let (dead, _) = l.accept().unwrap();
+        let pages = ui::Ui::new();
+        pages.open_session_for_test("live", Instant::now());
+        let streams = Mutex::new(vec![
+            UiStream {
+                sink: Sink::accept(live, None).unwrap(),
+                session: "live".into(),
+                sent: "A".into(),
+            },
+            UiStream {
+                sink: Sink::accept(dead, None).unwrap(),
+                session: "signed-out".into(),
+                sent: "A".into(),
+            },
+        ]);
+        assert_eq!(
+            fan_out_ui(&streams, "A", &pages, false),
+            0,
+            "no change, no tick"
+        );
+        assert_eq!(fan_out_ui(&streams, "B", &pages, false), 0);
+        assert_eq!(
+            fan_out_ui(&streams, "B", &pages, false),
+            0,
+            "B is not sent twice"
+        );
+        assert_eq!(
+            fan_out_ui(&streams, "B", &pages, true),
+            1,
+            "the signed-out one closes"
+        );
+        drop(streams);
+        let read_all = |c: &mut std::net::TcpStream| {
+            c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut v = Vec::new();
+            let _ = c.read_to_end(&mut v);
+            String::from_utf8(v).unwrap()
+        };
+        assert_eq!(
+            read_all(&mut live_client),
+            format!(
+                "event: state\ndata: B\n\n{}",
+                String::from_utf8_lossy(ui::KEEPALIVE)
+            )
+        );
+        assert_eq!(read_all(&mut dead_client), "event: state\ndata: B\n\n");
+    }
+
+    #[test]
     fn a_zero_session_is_refused() {
         let e = run(Config {
             session: 0,
@@ -685,6 +1012,8 @@ mod tests {
             token_store: "/nonexistent".into(),
             tls: None,
             silence: DEFAULT_SILENCE,
+            tuxedo: "/nonexistent".into(),
+            accounts: "/nonexistent".into(),
         })
         .unwrap_err();
         assert!(e.contains("non-zero"), "{e}");

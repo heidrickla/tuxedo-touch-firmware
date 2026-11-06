@@ -181,10 +181,11 @@ of `.rodata` HTML fragments interleaved with runtime substitutions. **READ**
 30 of the 94 JS files read server-injected DOM ids (`hidSession`, `hiddenKey`,
 `curStatus`, `var server=`). **MEASURED**
 
-So: images and CSS carry over verbatim. The vendor JS does not, because it
-depends on page shells we are not generating and on RTL's EventHandler transport
-we are not implementing. The UI is a rewrite. Reuse the PNGs if they look right;
-do not try to keep the app.
+The vendor JS cannot carry over, because it depends on page shells we are not
+generating and on RTL's EventHandler transport we are not implementing. The UI
+is a rewrite, and it uses no vendor asset at all, images and CSS included
+(owner's decision, 2026-11-06): our own pages, CSS and JS, embedded in tuxweb
+(§8d.5).
 
 ### 1.5 What we do not keep
 
@@ -2955,13 +2956,14 @@ here. That is why it needs the same kind of split stage 7 got:
 | sub-stage | where | what |
 |---|---|---|
 | **8a** | bench | persistent IPC session **generates the push stream from replies** (no Barracuda). **DONE — see below.** |
-| 8b | bench | typed API from IPC (arm/disarm/status/zones) + tuxweb's own auth against the account store; own sessions/tokens. **Capability endpoint + vendor response shapes done (`api.rs`); API→queue wiring and auth still to do.** |
-| 8c | bench→emu | production serve mode: bind 80 (301-only) + 443, do **not** bind 6280/9443, deadman OFF (permanent), `push.legacy_plaintext=false`, proxy mode kept compiled in as the revert; reader-thread/ring split (B5). **Push path (`serve.rs`) + the 80→301 leg (`redirect.rs`) done and emu-proven; TLS/API/auth assembly still to do.** |
-| 8d | **window** | the cutover: stage the build, retire the vendor, verify push+arm+disarm+status end-to-end from HA, leave disarmed. Revert = `mv` the vendor back. **Not started — needs Lewis at the panel.** |
+| 8b | bench | typed API from IPC (arm/disarm/status/zones) + tuxweb's own auth against the account store; own sessions/tokens. **DONE: token auth and the write API (8b below); the browser pages' own sign-in and sessions are 8d.5.** |
+| 8c | bench→emu | production serve mode: bind 80 (301-only) + 443, do **not** bind 6280/9443, deadman OFF (permanent), `push.legacy_plaintext=false`, proxy mode kept compiled in as the revert; reader-thread/ring split (B5). **DONE and emu-proven: push path, 80→301 leg, TLS, API, auth (below).** |
+| 8d | **window** | the cutover: stage the build, retire the vendor, verify push+arm+disarm+status end-to-end from HA, leave disarmed. Revert = `mv` the vendor back. **DONE 2026-09-12 (below).** |
 
 The browser UI is a **separate rewrite** (§1.4, §1.5) and does not gate "vendor
 out of the request path"; the only hard compatibility surface is HA's (§2.5:
-byte-identical push + arm/disarm/status by command code).
+byte-identical push + arm/disarm/status by command code). It is built: 8d.5
+below.
 
 #### Stage 8a — the push stream now comes from IPC, bench-proven 2026-09-11
 
@@ -3075,9 +3077,14 @@ update lands alongside.
   `DisarmWithCode` without `arming`, `GET|POST …/GetSecurityStatus` →
   `{"partition","armed","state"}` from the live model (no cache to go stale —
   §4.10.3's first free win). The pin is `ucode` in the body, per request, as the
-  consumer sends it; `ucode` missing/0 is refused with 400 before anything is
-  sent, because code 0 is DECLINED and the declined path changes state before
-  its guard (register.rs).
+  consumer sends it. **Arming takes no code** (owner's decision, 2026-11-06): an
+  `ArmWithCode` whose `ucode` is absent, empty or 0 sends `p2 = 0xFFFF`
+  (`ipc::NO_CODE`), the quick-arm sentinel Barracuda's `/handlerequest.html`
+  stored for arm Types 1, 2 and 4 and the touchscreen sends; a non-numeric
+  `ucode` is 400. **A disarm still needs one**: `DisarmWithCode` with `ucode`
+  missing, 0 or non-numeric is refused with 400 before anything is sent, because
+  code 0 is the literal code 0000, DECLINED, and the declined path changes state
+  before its guard (register.rs).
 - **`Sucess` now means the panel ACTED** (§4.10.3, `command_result`): after
   sending, tuxweb waits up to 8 s for the state byte to flip (`0xFF` arm,
   `0xFE` disarm) on the push path — the same signal the consumer's own client
@@ -3424,6 +3431,37 @@ second CA's leaf on the running server: `401` without a token, `405` on `GET`,
 served that leaf, the old CA fails, the process is the same one, and every later
 step, plus the subscriber that connected at step 3, runs on across the install.
 Without TLS, step 5b gets `409`. `cargo test` 148.
+
+#### 8d.5 The browser pages (in the tree, not flashed)
+
+`https://<panel>/` loads tuxweb's own pages (`tuxweb/src/ui.rs`, assets in `tuxweb/ui/`). Owner's decisions, 2026-11-06: our own code and design, no vendor asset, dark, everything embedded in the binary and served under `Content-Security-Policy: default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'` with no inline script or style; three pages; arming takes no code and only disarm asks for one; the exit delay is the panel's own; no zone bypassing.
+
+| Route | Answer |
+|---|---|
+| `GET /` | the status page when signed in, else `303` to `/login` |
+| `GET /login`, `POST /login` | the sign-in form; a success is `303 /` with the session cookie |
+| `POST /logout` | ends the session and clears the cookie |
+| `GET /ui/events` | Server-Sent Events: a `state` event whenever the view changes, a keep-alive comment every 15 s |
+| `POST /ui/arm` | `mode=stay|away|night`, no code: `p2 = 0xFFFF` |
+| `POST /ui/disarm` | `code=NNNN`, four digits; `0000`, empty or malformed is `400` and nothing is sent |
+| `GET /ui/assets/{app.css,app.js,icon.svg}` | the embedded assets |
+| anything else outside the API and the push path | `404`; port 80 stays `301` only |
+
+Sign-in checks the username and password against the vendor account store through `accounts::Source`, which reads the key out of `/tuxedo` once and the store on every attempt, so the keypad's account screen and the web stay one list (§1.6 decision (a)). Nothing is written to the store. The serve conf gains `tuxedo=` (default `/tuxedo`) and `accounts=` (default the vendor store); the bench sets `TUXWEB_TUXEDO` and `TUXWEB_ACCOUNTS`.
+
+A success opens an in-memory session: a 32-byte CSPRNG id in `tuxweb_session` (`HttpOnly; Secure; SameSite=Strict; Path=/`), idle expiry 12 h, gone on sign-out and on restart, at most 64 held. An open event stream does not keep a session alive, and a stream whose session has ended is closed on the next keep-alive. Failed sign-ins back off per source address: three are free, then 1 s, 2 s, 4 s and so on up to 15 min, forgotten after a day without a failure, cleared by a success. An attempt inside the wait is answered `429` with `Retry-After` and is not checked, so it is not a guess. No account is ever locked, and every refusal says the same "Wrong username or password." State-changing requests need the session's CSRF token in `X-CSRF-Token`, SameSite, and a matching `Origin` when the browser sends one. The API's bearer-token auth is unchanged: a browser session does not open the API and a token does not open the pages.
+
+The status page shows the panel's own state from `PanelState`: the headline, the status text without its bar-colour digit, the keypad LCD, and a banner when `+0x08` is `-1` (the Tuxedo cannot hear the VISTA) or the status is a 22 (the VISTA calls itself offline). During the exit delay it reads "Arming away, 45 s to leave" from the panel's `NN  Secs Remaining` and the mode the LCD names; it shows Armed only once the panel's text does, and Disarm stays available through the countdown. The page keeps no timer. The footer carries the build and the served certificate's `notAfter`, read from the chain file (`LiveTls::not_after`).
+
+Arm and disarm from the page and from the API share one path (`serve::send_and_confirm`) and one lock, and both wait for the state byte as `Sucess` does. Arming an armed panel or disarming a disarmed one from the page is `409` and sends nothing.
+
+Zones are not shown. The zone query (command 12, `ALL_ZONE_STATUS`) is sent only by the stage-7b bench run and its reply has no decoder (`reply-layouts.txt` lists `getAllZoneListFunc` with a pre-filled buffer and no msgType), so the page carries a zone section that stays hidden until the view has zone data, and the view never has any yet.
+
+**Proven on the bench.** `cargo nextest` 171, including the routing, cookie attributes, session expiry, CSRF and origin refusal, the backoff, the `0xFFFF` arm path on the page and the API, the disarm refusals, and the CSP on every response; removing each of those guards in turn turned its test red. `emu/ui-serve-test.sh` (plaintext and `TLS=1`) runs the whole flow on real queues against a fake `/tuxedo` ELF holding a throwaway key and a store encrypted with it: the queue saw `(1, 65535)` from the page's arm away, `(3, 1234)` from the pad, `(2, 65535)` from the API's code-free arm and `(3, 1234)`, and no refused request reached it; the stream showed disarmed, armed, disarmed, the LCD and the fake's link loss, each change once. `emu/push-serve-test.sh` passes in all three modes with step 8 now a disarm without a code. Chromium against the bench at a phone width signed in, rendered the live state, armed away, disarmed through the pad, and signed out, with no console error.
+
+Found that way and fixed: under `Referrer-Policy: no-referrer` Chromium sends `Origin: null` on the sign-in form's POST, which the origin check refused with `403`; the pages now send `Referrer-Policy: same-origin`.
+
+Not yet proven: the pages on the panel's ARM build against the real `/tuxedo` and account store, over the panel's certificate in a browser, and a code-free arm on the real VISTA (the `0xFFFF` value is a static read of `sltRequestArmStay` and Barracuda's handler).
 
 ### Stage 9 — Decommission
 

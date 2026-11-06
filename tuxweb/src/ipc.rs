@@ -162,6 +162,14 @@ pub struct Command {
     pub p2: u32,
 }
 
+/// The `p2` of an arm with no user code: the quick-arm sentinel. It is what
+/// `sltRequestArmStay` substitutes itself when the partition's quick-arm entry
+/// is 0 (see [`Command`]), what Barracuda's `/handlerequest.html` stores for
+/// arm Types 1, 2 and 4 when `uCode` is absent or 0 (`TUXEDO-AUDIT-BUGS.md`
+/// §3.2), and what the touchscreen sends. Arming only: disarm has no such
+/// substitution, and a disarm with `p2 = 0` asks for the literal code 0000.
+pub const NO_CODE: u32 = 0xFFFF;
+
 impl Command {
     pub fn encode(&self) -> Vec<u8> {
         let mut v = vec![0u8; COMMAND_LEN];

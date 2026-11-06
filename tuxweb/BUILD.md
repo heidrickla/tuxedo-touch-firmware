@@ -17,6 +17,8 @@ is not a rustc target — only `arm-*` and `armv7-*` exist.
 target. Linking is still `rust-lld` with `link-self-contained`, so the gnu
 toolchain is only compiling ring's C — nothing gnu ends up linked in.
 
+The browser pages, CSS and JS live in `ui/` and are compiled into the binary (`include_str!` in `src/ui.rs`); the binary serves nothing from disk, so a change there needs a rebuild.
+
 Output: `target/arm-unknown-linux-musleabi/release/tuxweb`, ~839 KB, `ELF 32-bit
 LSB executable, ARM, EABI5, statically linked, stripped`.
 

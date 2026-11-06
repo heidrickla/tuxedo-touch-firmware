@@ -181,6 +181,7 @@ and left sitting there saying the opposite of the truth.
   splay tree keyed on address (`LoginTracker_splayTreeCmpAddr`). I re-raised it
   three times before reading the code. Verify a TODO before repeating it —
   especially one written here.
+- **A request a unit test builds is not the request a browser sends.** tuxweb's sign-in passed every unit test and the Python bench, both of which send `Origin` as written, and Chromium's first sign-in on the bench was refused `403`: under `Referrer-Policy: no-referrer` a browser sends `Origin: null` on a form POST. The pages now send `same-origin`. Drive a security header change through a real browser once (`WEBSERVER-REPLACEMENT.md` §8d.5).
 
 ## 2. Addressing and ARM
 

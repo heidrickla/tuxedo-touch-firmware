@@ -224,10 +224,6 @@ pub fn save(env: &Envelope, store: &Store, main: &str, mirror: &str) -> Result<u
 /// failed and the network must not: "no such user" and "wrong code" told apart
 /// is a user enumeration oracle, and on a four-digit secret that matters more
 /// than usual.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "staged: tested, not yet called from main")
-)]
 #[derive(Debug, PartialEq)]
 pub enum Denied {
     NoSuchUser,
@@ -262,10 +258,6 @@ impl Store {
     ///
     /// Every candidate is examined rather than returning at the first match, so
     /// the work done does not depend on where in the file the user sits.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "staged: tested, not yet called from main")
-    )]
     pub fn authenticate(&self, user_name: &str, password: &str) -> Result<&User, Denied> {
         let mut found: Option<&User> = None;
         for u in &self.users {
@@ -290,6 +282,56 @@ impl Store {
             return Err(Denied::WrongPassword);
         }
         Ok(u)
+    }
+}
+
+/// Where the serve mode finds the account list: the store, and the `/tuxedo`
+/// binary its key is read out of.
+///
+/// The store is read again on every sign-in, so an account added, changed or
+/// disabled on the keypad counts on the next attempt. The key is read once
+/// and kept: it is a constant of the firmware, and reading the binary is the
+/// expensive part. Nothing here writes the store: a failed sign-in is not
+/// recorded in the vendor's lock fields (§1.6, P1).
+pub struct Source {
+    tuxedo: String,
+    store: String,
+    env: std::sync::Mutex<Option<Envelope>>,
+}
+
+impl Source {
+    pub fn new(tuxedo: &str, store: &str) -> Source {
+        Source {
+            tuxedo: tuxedo.into(),
+            store: store.into(),
+            env: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Check a sign-in. The inner result is the store's answer, `Ok` carrying
+    /// the account's stored name; the outer `Err` says the list could not be
+    /// read at all, which is not the client's failure.
+    pub fn authenticate(
+        &self,
+        name: &str,
+        password: &str,
+    ) -> Result<Result<String, Denied>, String> {
+        let env = {
+            let mut cached = self.env.lock().unwrap_or_else(|p| p.into_inner());
+            match *cached {
+                Some(e) => e,
+                None => {
+                    let e = key_from_binary(&self.tuxedo)?;
+                    *cached = Some(e);
+                    e
+                }
+            }
+        };
+        let blob = std::fs::read(&self.store).map_err(|e| format!("{}: {e}", self.store))?;
+        let store = Store::decode(&env, &blob).map_err(|e| format!("{}: {e}", self.store))?;
+        Ok(store
+            .authenticate(name, password)
+            .map(|u| u.user_name.clone()))
     }
 }
 
@@ -575,5 +617,60 @@ mod tests {
         e64[..4].copy_from_slice(b"\x7fELF");
         e64[4] = 2;
         assert!(read_va(&e64, KEY_VA).is_none());
+    }
+
+    /// A minimal 32-bit ELF whose one PT_LOAD maps the key and IV addresses to
+    /// the throwaway envelope, so the sign-in path runs end to end without the
+    /// vendor's binary.
+    fn fake_tuxedo(env: &Envelope) -> Vec<u8> {
+        let mut d = vec![0u8; 0x120];
+        d[..4].copy_from_slice(b"\x7fELF");
+        d[4] = 1;
+        d[0x1C..0x20].copy_from_slice(&52u32.to_le_bytes()); // e_phoff
+        d[0x2A..0x2C].copy_from_slice(&32u16.to_le_bytes()); // e_phentsize
+        d[0x2C..0x2E].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+        let p = 52;
+        d[p..p + 4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+        d[p + 4..p + 8].copy_from_slice(&0x100u32.to_le_bytes()); // p_offset
+        d[p + 8..p + 12].copy_from_slice(&(KEY_VA as u32).to_le_bytes()); // p_vaddr
+        d[p + 16..p + 20].copy_from_slice(&32u32.to_le_bytes()); // p_filesz
+        d[0x100..0x110].copy_from_slice(&env.key);
+        d[0x110..0x120].copy_from_slice(&env.iv);
+        assert_eq!(IV_VA, KEY_VA + 16);
+        d
+    }
+
+    #[test]
+    fn a_source_reads_the_store_again_on_every_sign_in() {
+        let env = test_env();
+        let dir = std::env::temp_dir().join(format!("tuxweb-src-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("tuxedo");
+        let main = dir.join("store.json");
+        let mirror = dir.join("store_sec.json");
+        std::fs::write(&bin, fake_tuxedo(&env)).unwrap();
+        let (m, s) = (main.to_str().unwrap(), mirror.to_str().unwrap());
+        save(&env, &store(), m, s).unwrap();
+
+        let src = Source::new(bin.to_str().unwrap(), m);
+        assert_eq!(src.authenticate("user2", "1234"), Ok(Ok("User2".into())));
+        assert_eq!(
+            src.authenticate("user2", "4321"),
+            Ok(Err(Denied::WrongPassword))
+        );
+        // a change on the keypad counts on the next attempt
+        let mut changed = store();
+        changed.users[1].password = "4321".into();
+        changed.users[1].reseal();
+        save(&env, &changed, m, s).unwrap();
+        assert_eq!(src.authenticate("user2", "4321"), Ok(Ok("User2".into())));
+        // an unreadable store is not a wrong password
+        std::fs::remove_file(&main).unwrap();
+        assert!(src.authenticate("user2", "4321").is_err());
+        // and a sign-in never writes the store
+        assert!(!main.exists());
+        std::fs::remove_dir_all(&dir).ok();
+        let none = Source::new("/nonexistent/tuxedo", m);
+        assert!(none.authenticate("user2", "4321").is_err());
     }
 }

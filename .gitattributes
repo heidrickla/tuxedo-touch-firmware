@@ -18,6 +18,9 @@ tuxedo-upload.sh text eol=lf
 # offset-not-hex, not-lowercase-hex and stock-equals-patched, on a table that
 # had not changed. A checkout broke the check, not an edit.
 *.tsv           text eol=lf
+# tuxweb compiles its pages in with include_str!, so a Windows checkout must
+# not put CRs into the served bytes.
+tuxweb/ui/**    text eol=lf
 
 # Firmware images and binaries.
 *.hdr           binary

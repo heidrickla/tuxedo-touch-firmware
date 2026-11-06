@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="csrf-token" content="{{csrf}}">
+<title>Alarm</title>
+<link rel="icon" href="/ui/assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/assets/app.css">
+<script src="/ui/assets/app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <h1>Alarm</h1>
+  <div class="who"><span>{{user}}</span><button type="button" id="signout" class="link">Sign out</button></div>
+</header>
+<main class="page">
+  <p id="conn" class="banner" role="status" hidden></p>
+  <p id="link" class="banner" role="status" hidden></p>
+  <section class="state" aria-labelledby="headline">
+    <h2 id="headline" class="headline phase-unknown" aria-live="polite">Waiting for the panel</h2>
+    <p id="status" class="sub"></p>
+    <div class="lcd" role="group" aria-label="Keypad display">
+      <span id="lcd1" class="lcd-line"></span>
+      <span id="lcd2" class="lcd-line"></span>
+    </div>
+  </section>
+  <section class="actions" aria-label="Commands">
+    <div class="arms">
+      <button type="button" class="arm" data-mode="stay" disabled>Arm stay</button>
+      <button type="button" class="arm" data-mode="away" disabled>Arm away</button>
+      <button type="button" class="arm" data-mode="night" disabled>Arm night</button>
+    </div>
+    <button type="button" id="disarm" class="disarm" disabled>Disarm</button>
+    <p id="result" class="result" role="status" aria-live="polite"></p>
+  </section>
+  <section id="zones" class="zones" aria-labelledby="zones-h" hidden>
+    <h2 id="zones-h">Zones</h2>
+    <ul id="zone-list"></ul>
+  </section>
+  <noscript><p class="result bad">This page needs JavaScript to show the panel and send commands.</p></noscript>
+</main>
+<div id="pad" class="pad" role="dialog" aria-modal="true" aria-labelledby="pad-title" hidden>
+  <form id="pad-form" class="pad-box">
+    <h2 id="pad-title">Enter your alarm code</h2>
+    <input id="code" class="code" type="password" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="Alarm code">
+    <div class="keys">
+      <button type="button" data-key="1">1</button>
+      <button type="button" data-key="2">2</button>
+      <button type="button" data-key="3">3</button>
+      <button type="button" data-key="4">4</button>
+      <button type="button" data-key="5">5</button>
+      <button type="button" data-key="6">6</button>
+      <button type="button" data-key="7">7</button>
+      <button type="button" data-key="8">8</button>
+      <button type="button" data-key="9">9</button>
+      <button type="button" data-key="clear" class="secondary">Clear</button>
+      <button type="button" data-key="0">0</button>
+      <button type="button" data-key="back" class="secondary">Delete</button>
+    </div>
+    <div class="pad-actions">
+      <button type="button" id="pad-cancel" class="secondary">Cancel</button>
+      <button type="submit" id="pad-ok" class="disarm" disabled>Disarm</button>
+    </div>
+  </form>
+</div>
+<footer class="foot"><span>{{build}}</span><span>{{cert}}</span></footer>
+</body>
+</html>
